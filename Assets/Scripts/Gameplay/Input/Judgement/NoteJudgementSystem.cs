@@ -1,0 +1,351 @@
+using System;
+using System.Collections.Generic;
+using REmind.Gameplay.Chart.Data;
+using REmind.Gameplay.Input.Routing;
+using UnityEngine;
+
+namespace REmind.Gameplay.Input.Judgement
+{
+    [DisallowMultipleComponent]
+    [RequireComponent(typeof(RhythmInputRouter))]
+    public sealed class NoteJudgementSystem : MonoBehaviour
+    {
+        [SerializeField] private RhythmInputRouter inputRouter;
+        [SerializeField] private double userOffsetMs;
+
+        private readonly Dictionary<string, GameObject> noteViews =
+            new Dictionary<string, GameObject>();
+
+        private LaneNoteQueue[] laneQueues = Array.Empty<LaneNoteQueue>();
+        private GameManager gameManager;
+        private GameRule gameRule;
+        private double chartOffsetMs;
+
+        public event Action<NoteJudgementEvent> NoteJudged;
+
+        public Func<NoteData, RuleContext> RuleContextFactory { get; set; }
+        public IReadOnlyList<LaneNoteQueue> LaneQueues => laneQueues;
+        public bool IsInitialized { get; private set; }
+        public double ChartOffsetMs => chartOffsetMs;
+        public double UserOffsetMs => userOffsetMs;
+
+        public int PendingNoteCount
+        {
+            get
+            {
+                int count = 0;
+
+                for (int i = 0; i < laneQueues.Length; i++)
+                {
+                    count += laneQueues[i].PendingCount;
+                }
+
+                return count;
+            }
+        }
+
+        private void Awake()
+        {
+            if (inputRouter == null)
+            {
+                inputRouter = GetComponent<RhythmInputRouter>();
+            }
+
+            gameManager = GetComponent<GameManager>();
+            if (gameManager == null)
+            {
+                gameManager = GameManager.Instance;
+            }
+
+            gameRule = GetComponent<GameRule>();
+            if (gameRule == null && gameManager != null)
+            {
+                gameRule = gameManager.GameRule;
+            }
+
+            if (gameManager == null || gameRule == null)
+            {
+                Debug.LogError(
+                    "NoteJudgementSystem requires an available GameManager and GameRule.",
+                    this);
+                enabled = false;
+            }
+        }
+
+        private void OnEnable()
+        {
+            if (inputRouter != null)
+            {
+                inputRouter.InputPerformed += HandleInputPerformed;
+            }
+        }
+
+        private void OnDisable()
+        {
+            if (inputRouter != null)
+            {
+                inputRouter.InputPerformed -= HandleInputPerformed;
+            }
+        }
+
+        private void Update()
+        {
+            if (!IsInitialized || gameManager.PlaybackState != PlaybackState.Playing)
+            {
+                return;
+            }
+
+            double currentSongTimeMs = gameManager.CorePlayMs;
+
+            for (int lane = 0; lane < laneQueues.Length; lane++)
+            {
+                ProcessExpiredNotes(laneQueues[lane], currentSongTimeMs);
+            }
+        }
+
+        public bool Initialize(ChartData chart)
+        {
+            if (chart == null)
+            {
+                Debug.LogError("Cannot initialize NoteJudgementSystem with a null chart.", this);
+                return false;
+            }
+
+            return Initialize(chart.LaneCount, chart.Notes, chart.ChartOffsetMs);
+        }
+
+        public bool Initialize(
+            int laneCount,
+            IReadOnlyList<NoteData> notes,
+            double noteChartOffsetMs = 0d)
+        {
+            if (laneCount <= 0)
+            {
+                Debug.LogError("Lane count must be greater than zero.", this);
+                return false;
+            }
+
+            if (notes == null)
+            {
+                Debug.LogError("Note list cannot be null.", this);
+                return false;
+            }
+
+            if (double.IsNaN(noteChartOffsetMs) || double.IsInfinity(noteChartOffsetMs))
+            {
+                Debug.LogError("Chart offset must be a finite number.", this);
+                return false;
+            }
+
+            LaneNoteQueue[] newQueues = new LaneNoteQueue[laneCount];
+            for (int lane = 0; lane < laneCount; lane++)
+            {
+                newQueues[lane] = new LaneNoteQueue(lane);
+            }
+
+            for (int i = 0; i < notes.Count; i++)
+            {
+                NoteData note = notes[i];
+                if (note == null || note.Lane < 0 || note.Lane >= laneCount)
+                {
+                    Debug.LogError($"Invalid note at index {i}.", this);
+                    return false;
+                }
+
+                newQueues[note.Lane].Add(note);
+            }
+
+            for (int lane = 0; lane < newQueues.Length; lane++)
+            {
+                newQueues[lane].Sort();
+            }
+
+            laneQueues = newQueues;
+            chartOffsetMs = noteChartOffsetMs;
+            IsInitialized = true;
+            return true;
+        }
+
+        public void ResetJudgements(bool reactivateRegisteredViews = true)
+        {
+            for (int lane = 0; lane < laneQueues.Length; lane++)
+            {
+                laneQueues[lane].ResetProgress();
+            }
+
+            if (!reactivateRegisteredViews)
+            {
+                return;
+            }
+
+            foreach (KeyValuePair<string, GameObject> pair in noteViews)
+            {
+                if (pair.Value != null)
+                {
+                    pair.Value.SetActive(true);
+                }
+            }
+        }
+
+        public void SetUserOffsetMs(double value)
+        {
+            if (double.IsNaN(value) || double.IsInfinity(value))
+            {
+                throw new ArgumentOutOfRangeException(nameof(value));
+            }
+
+            userOffsetMs = value;
+        }
+
+        public bool RegisterNoteView(string noteId, GameObject noteView)
+        {
+            if (string.IsNullOrWhiteSpace(noteId) || noteView == null)
+            {
+                return false;
+            }
+
+            noteViews[noteId] = noteView;
+            return true;
+        }
+
+        public bool UnregisterNoteView(string noteId)
+        {
+            return !string.IsNullOrWhiteSpace(noteId) && noteViews.Remove(noteId);
+        }
+
+        public bool TryGetRegisteredNoteView(string noteId, out GameObject noteView)
+        {
+            if (!string.IsNullOrWhiteSpace(noteId) &&
+                noteViews.TryGetValue(noteId, out noteView) &&
+                noteView != null)
+            {
+                return true;
+            }
+
+            noteView = null;
+            return false;
+        }
+
+        public void ClearRegisteredNoteViews()
+        {
+            noteViews.Clear();
+        }
+
+        private void HandleInputPerformed(RhythmInputEvent inputEvent)
+        {
+            if (!IsInitialized || gameManager.PlaybackState != PlaybackState.Playing ||
+                inputEvent.Lane < 0 || inputEvent.Lane >= laneQueues.Length)
+            {
+                return;
+            }
+
+            LaneNoteQueue queue = laneQueues[inputEvent.Lane];
+            ProcessExpiredNotes(queue, gameManager.CorePlayMs);
+
+            if (!queue.TryPeek(out NoteData note))
+            {
+                return;
+            }
+
+            RuleContext context = CreateRuleContext(note);
+            double effectiveHitTimeMs = GetEffectiveHitTimeMs(note);
+
+            if (!gameManager.TryGetJudgeOffsetMs(
+                    inputEvent.EventTime,
+                    effectiveHitTimeMs,
+                    userOffsetMs,
+                    out double offsetMs))
+            {
+                return;
+            }
+
+            JudgeResult result = gameRule.Judge(offsetMs, context);
+            if (result == JudgeResult.None)
+            {
+                return;
+            }
+
+            ResolveCurrentNote(
+                queue,
+                note,
+                result,
+                offsetMs,
+                effectiveHitTimeMs,
+                false);
+        }
+
+        private void ProcessExpiredNotes(LaneNoteQueue queue, double currentSongTimeMs)
+        {
+            while (queue.TryPeek(out NoteData note))
+            {
+                RuleContext context = CreateRuleContext(note);
+                double effectiveHitTimeMs = GetEffectiveHitTimeMs(note);
+                int missWindowMs = gameRule.GetJudgeWindows(context).MissWindowMs;
+                double offsetMs = currentSongTimeMs - effectiveHitTimeMs;
+
+                if (offsetMs <= missWindowMs)
+                {
+                    return;
+                }
+
+                ResolveCurrentNote(
+                    queue,
+                    note,
+                    JudgeResult.Miss,
+                    offsetMs,
+                    effectiveHitTimeMs,
+                    true);
+            }
+        }
+
+        private void ResolveCurrentNote(
+            LaneNoteQueue queue,
+            NoteData note,
+            JudgeResult result,
+            double offsetMs,
+            double effectiveHitTimeMs,
+            bool isAutomaticMiss)
+        {
+            if (!queue.TryAdvance(out NoteData advancedNote) || !ReferenceEquals(note, advancedNote))
+            {
+                Debug.LogError("Lane note queue changed during judgement.", this);
+                return;
+            }
+
+            if (noteViews.TryGetValue(note.Id, out GameObject noteView) && noteView != null)
+            {
+                noteView.SetActive(false);
+            }
+
+            NoteJudged?.Invoke(
+                new NoteJudgementEvent(
+                    note,
+                    result,
+                    gameRule.GetTimingSide(offsetMs),
+                    offsetMs,
+                    effectiveHitTimeMs,
+                    isAutomaticMiss));
+        }
+
+        private RuleContext CreateRuleContext(NoteData note)
+        {
+            if (RuleContextFactory != null)
+            {
+                return RuleContextFactory(note);
+            }
+
+            return new RuleContext(
+                0,
+                0,
+                note.Type,
+                false,
+                false,
+                false);
+        }
+
+        private double GetEffectiveHitTimeMs(NoteData note)
+        {
+            return note.TimeMs + chartOffsetMs;
+        }
+    }
+}

@@ -7,16 +7,16 @@
             "id": "a1000000-0000-4000-8000-000000000000",
             "actions": [
                 {
-                    "name": "HitZ",
+                    "name": "Lane01",
                     "type": "Button",
                     "id": "a1000000-0000-4000-8000-000000000001",
-                    "expectedControlType": "",
+                    "expectedControlType": "Button",
                     "processors": "",
                     "interactions": "",
                     "initialStateCheck": false
                 },
                 {
-                    "name": "HitX",
+                    "name": "Lane02",
                     "type": "Button",
                     "id": "a1000000-0000-4000-8000-000000000002",
                     "expectedControlType": "Button",
@@ -25,7 +25,7 @@
                     "initialStateCheck": false
                 },
                 {
-                    "name": "HitC",
+                    "name": "Lane03",
                     "type": "Button",
                     "id": "a1000000-0000-4000-8000-000000000003",
                     "expectedControlType": "Button",
@@ -34,7 +34,7 @@
                     "initialStateCheck": false
                 },
                 {
-                    "name": "HitV",
+                    "name": "Lane04",
                     "type": "Button",
                     "id": "a1000000-0000-4000-8000-000000000004",
                     "expectedControlType": "Button",
@@ -43,7 +43,7 @@
                     "initialStateCheck": false
                 },
                 {
-                    "name": "HitM",
+                    "name": "Lane05",
                     "type": "Button",
                     "id": "a1000000-0000-4000-8000-000000000005",
                     "expectedControlType": "Button",
@@ -52,7 +52,7 @@
                     "initialStateCheck": false
                 },
                 {
-                    "name": "HitComma",
+                    "name": "Lane06",
                     "type": "Button",
                     "id": "a1000000-0000-4000-8000-000000000006",
                     "expectedControlType": "Button",
@@ -61,7 +61,7 @@
                     "initialStateCheck": false
                 },
                 {
-                    "name": "HitPeriod",
+                    "name": "Lane07",
                     "type": "Button",
                     "id": "a1000000-0000-4000-8000-000000000007",
                     "expectedControlType": "Button",
@@ -70,7 +70,7 @@
                     "initialStateCheck": false
                 },
                 {
-                    "name": "HitSlash",
+                    "name": "Lane08",
                     "type": "Button",
                     "id": "a1000000-0000-4000-8000-000000000008",
                     "expectedControlType": "Button",
@@ -79,7 +79,7 @@
                     "initialStateCheck": false
                 },
                 {
-                    "name": "HitLeftShift",
+                    "name": "Lane09",
                     "type": "Button",
                     "id": "a1000000-0000-4000-8000-000000000009",
                     "expectedControlType": "Button",
@@ -88,7 +88,7 @@
                     "initialStateCheck": false
                 },
                 {
-                    "name": "HitRightShift",
+                    "name": "Lane10",
                     "type": "Button",
                     "id": "a1000000-0000-4000-8000-000000000010",
                     "expectedControlType": "Button",
@@ -105,7 +105,7 @@
                     "interactions": "",
                     "processors": "",
                     "groups": "Keyboard&Mouse",
-                    "action": "HitZ",
+                    "action": "Lane01",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
@@ -116,7 +116,7 @@
                     "interactions": "",
                     "processors": "",
                     "groups": "Keyboard&Mouse",
-                    "action": "HitX",
+                    "action": "Lane02",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
@@ -127,7 +127,7 @@
                     "interactions": "",
                     "processors": "",
                     "groups": "Keyboard&Mouse",
-                    "action": "HitC",
+                    "action": "Lane03",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
@@ -138,7 +138,7 @@
                     "interactions": "",
                     "processors": "",
                     "groups": "Keyboard&Mouse",
-                    "action": "HitV",
+                    "action": "Lane04",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
@@ -149,7 +149,7 @@
                     "interactions": "",
                     "processors": "",
                     "groups": "Keyboard&Mouse",
-                    "action": "HitM",
+                    "action": "Lane01",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
@@ -160,7 +160,7 @@
                     "interactions": "",
                     "processors": "",
                     "groups": "Keyboard&Mouse",
-                    "action": "HitComma",
+                    "action": "Lane02",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
@@ -171,7 +171,7 @@
                     "interactions": "",
                     "processors": "",
                     "groups": "Keyboard&Mouse",
-                    "action": "HitPeriod",
+                    "action": "Lane03",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
@@ -182,7 +182,7 @@
                     "interactions": "",
                     "processors": "",
                     "groups": "Keyboard&Mouse",
-                    "action": "HitSlash",
+                    "action": "Lane04",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
@@ -193,7 +193,7 @@
                     "interactions": "",
                     "processors": "",
                     "groups": "Keyboard&Mouse",
-                    "action": "HitLeftShift",
+                    "action": "Lane09",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
@@ -204,7 +204,7 @@
                     "interactions": "",
                     "processors": "",
                     "groups": "Keyboard&Mouse",
-                    "action": "HitRightShift",
+                    "action": "Lane10",
                     "isComposite": false,
                     "isPartOfComposite": false
                 }
