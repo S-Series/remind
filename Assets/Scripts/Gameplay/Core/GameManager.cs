@@ -3,8 +3,12 @@ using UnityEngine;
 [DisallowMultipleComponent]
 public sealed class GameManager : MonoSingleton<GameManager>
 {
-    public GamePlay GamePlay { get; private set; }
-    public GameRule GameRule { get; private set; }
+    [Header("Systems")]
+    [SerializeField] private GamePlay gamePlay;
+    [SerializeField] private GameRule gameRule;
+
+    public GamePlay GamePlay => gamePlay;
+    public GameRule GameRule => gameRule;
 
     public double CorePlayMs => GamePlay != null ? GamePlay.SongTimeMs : 0d;
     public PlaybackState PlaybackState => GamePlay != null
@@ -20,22 +24,24 @@ public sealed class GameManager : MonoSingleton<GameManager>
             return;
         }
 
-        if (!TryGetComponent(out GamePlay gamePlay))
+        if (gamePlay == null)
         {
-            Debug.LogError("GamePlay is missing from the GameManager GameObject.", this);
-        }
-        else
-        {
-            GamePlay = gamePlay;
+            gamePlay = GetComponentInChildren<GamePlay>(true);
         }
 
-        if (!TryGetComponent(out GameRule gameRule))
+        if (gamePlay == null)
         {
-            Debug.LogError("GameRule is missing from the GameManager GameObject.", this);
+            Debug.LogError("GamePlay is missing under Core System.", this);
         }
-        else
+
+        if (gameRule == null)
         {
-            GameRule = gameRule;
+            gameRule = GetComponentInChildren<GameRule>(true);
+        }
+
+        if (gameRule == null)
+        {
+            Debug.LogError("GameRule is missing under Core System.", this);
         }
     }
 
@@ -62,6 +68,11 @@ public sealed class GameManager : MonoSingleton<GameManager>
     public bool RestartGame()
     {
         return GamePlay != null && GamePlay.Restart();
+    }
+
+    public bool PlayHitSound()
+    {
+        return GamePlay != null && GamePlay.PlayHitSound();
     }
 
     public bool TryGetJudgeOffsetMs(

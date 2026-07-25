@@ -11,14 +11,14 @@ namespace REmind.Gameplay.Input.Judgement
     public sealed class NoteJudgementSystem : MonoBehaviour
     {
         [SerializeField] private RhythmInputRouter inputRouter;
+        [SerializeField] private GameManager gameManager;
+        [SerializeField] private GameRule gameRule;
         [SerializeField] private double userOffsetMs;
 
         private readonly Dictionary<string, GameObject> noteViews =
             new Dictionary<string, GameObject>();
 
         private LaneNoteQueue[] laneQueues = Array.Empty<LaneNoteQueue>();
-        private GameManager gameManager;
-        private GameRule gameRule;
         private double chartOffsetMs;
 
         public event Action<NoteJudgementEvent> NoteJudged;
@@ -26,6 +26,7 @@ namespace REmind.Gameplay.Input.Judgement
         public Func<NoteData, RuleContext> RuleContextFactory { get; set; }
         public IReadOnlyList<LaneNoteQueue> LaneQueues => laneQueues;
         public bool IsInitialized { get; private set; }
+        public bool IsAutoPlayEnabled { get; private set; }
         public double ChartOffsetMs => chartOffsetMs;
         public double UserOffsetMs => userOffsetMs;
 
@@ -51,13 +52,16 @@ namespace REmind.Gameplay.Input.Judgement
                 inputRouter = GetComponent<RhythmInputRouter>();
             }
 
-            gameManager = GetComponent<GameManager>();
+            if (gameManager == null)
+            {
+                gameManager = GetComponentInParent<GameManager>();
+            }
+
             if (gameManager == null)
             {
                 gameManager = GameManager.Instance;
             }
 
-            gameRule = GetComponent<GameRule>();
             if (gameRule == null && gameManager != null)
             {
                 gameRule = gameManager.GameRule;
@@ -96,6 +100,12 @@ namespace REmind.Gameplay.Input.Judgement
             }
 
             double currentSongTimeMs = gameManager.CorePlayMs;
+
+            if (IsAutoPlayEnabled)
+            {
+                ProcessAutoPlayNotes(currentSongTimeMs);
+                return;
+            }
 
             for (int lane = 0; lane < laneQueues.Length; lane++)
             {
@@ -197,6 +207,11 @@ namespace REmind.Gameplay.Input.Judgement
             userOffsetMs = value;
         }
 
+        public void SetAutoPlayEnabled(bool value)
+        {
+            IsAutoPlayEnabled = value;
+        }
+
         public bool RegisterNoteView(string noteId, GameObject noteView)
         {
             if (string.IsNullOrWhiteSpace(noteId) || noteView == null)
@@ -233,7 +248,8 @@ namespace REmind.Gameplay.Input.Judgement
 
         private void HandleInputPerformed(RhythmInputEvent inputEvent)
         {
-            if (!IsInitialized || gameManager.PlaybackState != PlaybackState.Playing ||
+            if (IsAutoPlayEnabled || !IsInitialized ||
+                gameManager.PlaybackState != PlaybackState.Playing ||
                 inputEvent.Lane < 0 || inputEvent.Lane >= laneQueues.Length)
             {
                 return;
@@ -272,6 +288,49 @@ namespace REmind.Gameplay.Input.Judgement
                 offsetMs,
                 effectiveHitTimeMs,
                 false);
+        }
+
+        private void ProcessAutoPlayNotes(double currentSongTimeMs)
+        {
+            while (true)
+            {
+                LaneNoteQueue nextQueue = null;
+                NoteData nextNote = null;
+                double nextHitTimeMs = double.MaxValue;
+
+                for (int lane = 0; lane < laneQueues.Length; lane++)
+                {
+                    LaneNoteQueue queue = laneQueues[lane];
+                    if (!queue.TryPeek(out NoteData note))
+                    {
+                        continue;
+                    }
+
+                    double effectiveHitTimeMs = GetEffectiveHitTimeMs(note);
+                    if (effectiveHitTimeMs > currentSongTimeMs ||
+                        effectiveHitTimeMs >= nextHitTimeMs)
+                    {
+                        continue;
+                    }
+
+                    nextQueue = queue;
+                    nextNote = note;
+                    nextHitTimeMs = effectiveHitTimeMs;
+                }
+
+                if (nextQueue == null)
+                {
+                    return;
+                }
+
+                ResolveCurrentNote(
+                    nextQueue,
+                    nextNote,
+                    JudgeResult.Perfect,
+                    0d,
+                    nextHitTimeMs,
+                    false);
+            }
         }
 
         private void ProcessExpiredNotes(LaneNoteQueue queue, double currentSongTimeMs)

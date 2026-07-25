@@ -10,7 +10,7 @@
                     "name": "Lane01",
                     "type": "Button",
                     "id": "a1000000-0000-4000-8000-000000000001",
-                    "expectedControlType": "Button",
+                    "expectedControlType": "",
                     "processors": "",
                     "interactions": "",
                     "initialStateCheck": false

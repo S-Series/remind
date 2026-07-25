@@ -20,6 +20,8 @@ public sealed class Test : MonoBehaviour
     [Header("Display")]
     [SerializeField] private TextMeshPro TestTMpro;
     [SerializeField] private Button TestButton;
+    [SerializeField] private Button ResetButton;
+    [SerializeField] private Toggle AutoToggle;
 
     [Header("Movement")]
     [SerializeField] private Transform CameraTransform;
@@ -53,6 +55,8 @@ public sealed class Test : MonoBehaviour
         }
 
         TestButton.onClick.AddListener(TogglePlayback);
+        ResetButton.onClick.AddListener(ResetPlayback);
+        AutoToggle.onValueChanged.AddListener(SetAutoPlayEnabled);
         initialCameraPosition = CameraTransform.position;
         initialPlayCanvasScale = playCanvasTransform.localScale;
         ApplySpeedMultiplier();
@@ -63,7 +67,7 @@ public sealed class Test : MonoBehaviour
             return;
         }
 
-        gameManager.StopGame();
+        SetAutoPlayEnabled(AutoToggle.isOn);
         SetDisplayedSongTime(0d);
     }
 
@@ -82,6 +86,21 @@ public sealed class Test : MonoBehaviour
         if (TestButton != null)
         {
             TestButton.onClick.RemoveListener(TogglePlayback);
+        }
+
+        if (ResetButton != null)
+        {
+            ResetButton.onClick.RemoveListener(ResetPlayback);
+        }
+
+        if (AutoToggle != null)
+        {
+            AutoToggle.onValueChanged.RemoveListener(SetAutoPlayEnabled);
+        }
+
+        if (NoteJudgementSystem != null)
+        {
+            NoteJudgementSystem.SetAutoPlayEnabled(false);
         }
     }
 
@@ -117,6 +136,14 @@ public sealed class Test : MonoBehaviour
         }
     }
 
+    public void ResetPlayback()
+    {
+        gameManager.StopGame();
+        NoteJudgementSystem.ResetJudgements();
+        CameraTransform.position = initialCameraPosition;
+        SetDisplayedSongTime(0d);
+    }
+
     public double MsToPosition(double ms)
     {
         return Bpm * ms / 1500d;
@@ -130,6 +157,11 @@ public sealed class Test : MonoBehaviour
     public void ChangeText(string value)
     {
         TestTMpro.SetText(value);
+    }
+
+    private void SetAutoPlayEnabled(bool value)
+    {
+        NoteJudgementSystem.SetAutoPlayEnabled(value);
     }
 
     private void SetDisplayedSongTime(double valueMs)
@@ -159,6 +191,20 @@ public sealed class Test : MonoBehaviour
         {
             TestTMpro.SetText("TestButton not found");
             Debug.LogError("TestButton is not assigned and could not be found by name.", this);
+            return false;
+        }
+
+        if (ResetButton == null)
+        {
+            TestTMpro.SetText("ResetButton not found");
+            Debug.LogError("ResetButton is not assigned to Test.", this);
+            return false;
+        }
+
+        if (AutoToggle == null)
+        {
+            TestTMpro.SetText("AutoToggle not found");
+            Debug.LogError("AutoToggle is not assigned to Test.", this);
             return false;
         }
 

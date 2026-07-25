@@ -1,13 +1,18 @@
 using System;
+using REmind.Gameplay.Input.Judgement;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 [DisallowMultipleComponent]
-[RequireComponent(typeof(AudioSource))]
 public sealed class GamePlay : MonoBehaviour
 {
     [Header("Scene")]
     [SerializeField] private Transform cameraTransform;
     [SerializeField] private AudioSource audioSource;
+    [FormerlySerializedAs("HitSource")]
+    [SerializeField] private AudioSource hitSource;
+    [SerializeField] private NoteJudgementSystem judgementSystem;
+    [SerializeField, Min(0f)] private float hitSoundTrimStartMs;
 
     [Header("Playback")]
     [SerializeField] private AudioClip initialSong;
@@ -18,6 +23,7 @@ public sealed class GamePlay : MonoBehaviour
     private double songStartDspTime;
     private double heldSongTimeMs;
     private double scheduledSongTimeMs;
+    private AudioClip preparedHitClip;
 
     public event Action<PlaybackState> PlaybackStateChanged;
     public event Action PlaybackCompleted;
@@ -62,12 +68,53 @@ public sealed class GamePlay : MonoBehaviour
     {
         if (audioSource == null)
         {
-            audioSource = GetComponent<AudioSource>();
+            AudioSource[] sources = GetComponentsInChildren<AudioSource>(true);
+            if (sources.Length > 0)
+            {
+                audioSource = sources[0];
+            }
+        }
+
+        if (hitSource == null)
+        {
+            AudioSource[] sources = GetComponentsInChildren<AudioSource>(true);
+            for (int i = 0; i < sources.Length; i++)
+            {
+                if (sources[i] != audioSource)
+                {
+                    hitSource = sources[i];
+                    break;
+                }
+            }
+        }
+
+        if (judgementSystem == null)
+        {
+            GameManager manager = GetComponentInParent<GameManager>();
+            if (manager != null)
+            {
+                judgementSystem = manager.GetComponentInChildren<NoteJudgementSystem>(true);
+            }
+        }
+
+        if (audioSource == null)
+        {
+            Debug.LogError("Music AudioSource is not assigned under Playback System.", this);
+            enabled = false;
+            return;
         }
 
         audioSource.playOnAwake = false;
         audioSource.loop = false;
         audioSource.spatialBlend = 0f;
+
+        if (hitSource != null)
+        {
+            hitSource.playOnAwake = false;
+            hitSource.loop = false;
+            hitSource.spatialBlend = 0f;
+            PrepareHitSound();
+        }
 
         if (cameraTransform == null)
         {
@@ -77,6 +124,30 @@ public sealed class GamePlay : MonoBehaviour
         if (initialSong != null)
         {
             PrepareSong(initialSong, musicVolume);
+        }
+    }
+
+    private void OnEnable()
+    {
+        if (judgementSystem != null)
+        {
+            judgementSystem.NoteJudged += HandleNoteJudged;
+        }
+    }
+
+    private void OnDisable()
+    {
+        if (judgementSystem != null)
+        {
+            judgementSystem.NoteJudged -= HandleNoteJudged;
+        }
+    }
+
+    private void OnDestroy()
+    {
+        if (preparedHitClip != null)
+        {
+            Destroy(preparedHitClip);
         }
     }
 
@@ -166,6 +237,23 @@ public sealed class GamePlay : MonoBehaviour
         return ScheduleFrom(0d);
     }
 
+    public bool PlayHitSound()
+    {
+        if (hitSource == null)
+        {
+            return false;
+        }
+
+        AudioClip clip = preparedHitClip != null ? preparedHitClip : hitSource.clip;
+        if (clip == null)
+        {
+            return false;
+        }
+
+        hitSource.PlayOneShot(clip);
+        return true;
+    }
+
     public bool TryGetInputSongTimeMs(double inputEventTime, out double inputSongTimeMs)
     {
         if (State != PlaybackState.Playing || double.IsNaN(inputEventTime) || double.IsInfinity(inputEventTime))
@@ -200,6 +288,11 @@ public sealed class GamePlay : MonoBehaviour
     public void Stop()
     {
         audioSource.Stop();
+        if (CurrentSong != null)
+        {
+            audioSource.timeSamples = 0;
+        }
+
         heldSongTimeMs = 0d;
         scheduledSongTimeMs = 0d;
         SetState(CurrentSong == null ? PlaybackState.Empty : PlaybackState.Ready);
@@ -252,6 +345,71 @@ public sealed class GamePlay : MonoBehaviour
 
         State = state;
         PlaybackStateChanged?.Invoke(state);
+    }
+
+    private void HandleNoteJudged(NoteJudgementEvent judgementEvent)
+    {
+        if (judgementEvent.Result == JudgeResult.Perfect)
+        {
+            PlayHitSound();
+        }
+    }
+
+    private void PrepareHitSound()
+    {
+        AudioClip sourceClip = hitSource.clip;
+        if (sourceClip == null || hitSoundTrimStartMs <= 0f)
+        {
+            return;
+        }
+
+        if (sourceClip.loadState == AudioDataLoadState.Unloaded &&
+            !sourceClip.LoadAudioData())
+        {
+            Debug.LogWarning($"Could not preload hit sound: {sourceClip.name}", this);
+            return;
+        }
+
+        int trimFrames = Mathf.RoundToInt(
+            hitSoundTrimStartMs / 1000f * sourceClip.frequency);
+        trimFrames = Mathf.Clamp(trimFrames, 0, sourceClip.samples - 1);
+        if (trimFrames == 0)
+        {
+            return;
+        }
+
+        int channelCount = sourceClip.channels;
+        float[] sourceData = new float[sourceClip.samples * channelCount];
+        if (!sourceClip.GetData(sourceData, 0))
+        {
+            Debug.LogWarning($"Could not read hit sound data: {sourceClip.name}", this);
+            return;
+        }
+
+        int remainingFrames = sourceClip.samples - trimFrames;
+        float[] trimmedData = new float[remainingFrames * channelCount];
+        Array.Copy(
+            sourceData,
+            trimFrames * channelCount,
+            trimmedData,
+            0,
+            trimmedData.Length);
+
+        AudioClip trimmedClip = AudioClip.Create(
+            $"{sourceClip.name}_RuntimeTrimmed",
+            remainingFrames,
+            channelCount,
+            sourceClip.frequency,
+            false);
+
+        if (!trimmedClip.SetData(trimmedData, 0))
+        {
+            Destroy(trimmedClip);
+            Debug.LogWarning($"Could not prepare hit sound: {sourceClip.name}", this);
+            return;
+        }
+
+        preparedHitClip = trimmedClip;
     }
 
     private static double Clamp(double value, double min, double max)
