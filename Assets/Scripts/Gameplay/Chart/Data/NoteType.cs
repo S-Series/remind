@@ -9,5 +9,7 @@ namespace REmind.Gameplay.Chart.Data
         Hold = 2,
         Air = 3,
         Flick = 4,
+        Speed = 5,
+        Action = 6,
     }
 }
