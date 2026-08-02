@@ -4,6 +4,7 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
+using REmind.Gameplay.Chart.Data;
 
 [RequireComponent(typeof(BoxCollider2D))]
 public class ChartInput : MonoBehaviour
@@ -63,8 +64,7 @@ public class ChartInput : MonoBehaviour
             ? EventSystem.current.pixelDragThreshold
             : 10f;
 
-        if (Vector2.Distance(pointerPressPosition, screenPosition) > dragThreshold ||
-            IsPointerOverBlockingUi(screenPosition))
+        if (Vector2.Distance(pointerPressPosition, screenPosition) > dragThreshold)
         {
             return;
         }
@@ -107,26 +107,8 @@ public class ChartInput : MonoBehaviour
         return true;
     }
 
-    private bool IsPointerOverBlockingUi(Vector2 screenPosition)
+    public void GenerateNote(NoteType type)
     {
-        if (EventSystem.current == null)
-        {
-            return false;
-        }
-
-        PointerEventData eventData = new PointerEventData(EventSystem.current)
-        {
-            position = screenPosition
-        };
-
-        uiRaycastResults.Clear();
-        EventSystem.current.RaycastAll(eventData, uiRaycastResults);
-
-        if (uiRaycastResults.Count == 0)
-        {
-            return false;
-        }
-
-        return uiRaycastResults[0].gameObject.GetComponentInParent<ScrollRect>() == null;
+        
     }
 }

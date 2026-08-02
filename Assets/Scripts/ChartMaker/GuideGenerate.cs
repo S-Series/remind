@@ -6,12 +6,14 @@ using UnityEngine.Pool;
 [DisallowMultipleComponent]
 public sealed class GuideGenerate : MonoBehaviour
 {
+    public static GuideGenerate self;
+    public static float ReferenceY { get; private set; }
+
     private const float IndexEpsilon = 0.001f;
 
     [Header("References")]
     [SerializeField] private GameObject guidePrefab;
     [SerializeField] private Transform guideField;
-    [SerializeField] private ChartScroll chartScroll;
 
     [Header("Chart")]
     [SerializeField, Min(1)] private int measureCount = 1000;
@@ -45,16 +47,22 @@ public sealed class GuideGenerate : MonoBehaviour
     public int VisibleGuideCount => visibleGuides.Count;
     public float GuideSpacing => measureHeight / guidesPerMeasure;
     public float ScrollToChartRatio => measureHeight / scrollMeasureHeight;
-    public float ReferenceY => chartScroll != null
-        ? -chartScroll.ScrollY * ScrollToChartRatio
-        : 0f;
 
     private void Awake()
     {
-        if (!guidePrefab || !guideField || !chartScroll)
+        if (self != null && self != this)
+        {
+            enabled = false;
+            return;
+        }
+
+        self = this;
+        ReferenceY = 0f;
+
+        if (!guidePrefab || !guideField)
         {
             Debug.LogError(
-                "GuideGenerate requires a guide prefab, guide field, and ChartScroll.",
+                "GuideGenerate requires a guide prefab and guide field.",
                 this);
             enabled = false;
             return;
@@ -76,40 +84,25 @@ public sealed class GuideGenerate : MonoBehaviour
             maxPoolSize);
     }
 
-    private void OnEnable()
-    {
-        if (chartScroll != null)
-        {
-            chartScroll.ScrollYChanged += HandleScrollYChanged;
-        }
-    }
-
     private void Start()
     {
         RefreshVisibleGuides(true);
     }
 
-    private void OnDisable()
-    {
-        if (chartScroll != null)
-        {
-            chartScroll.ScrollYChanged -= HandleScrollYChanged;
-        }
-    }
-
     private void OnDestroy()
     {
         Pool?.Clear();
+
+        if (self == this)
+        {
+            self = null;
+            ReferenceY = 0f;
+        }
     }
 
     private void OnValidate()
     {
         maxPoolSize = Math.Max(initialPoolSize, maxPoolSize);
-    }
-
-    private void HandleScrollYChanged(float _)
-    {
-        RefreshVisibleGuides(false);
     }
 
     [ContextMenu("Refresh Visible Guides")]
@@ -299,5 +292,26 @@ public sealed class GuideGenerate : MonoBehaviour
         {
             Destroy(guide);
         }
+    }
+
+    public static void SetReferenceY(float value)
+    {
+        if (self == null || float.IsNaN(value) || float.IsInfinity(value))
+        {
+            return;
+        }
+
+        ReferenceY = value;
+        self.RefreshVisibleGuides(false);
+    }
+
+    public static void SetReferenceFromScrollY(float scrollY)
+    {
+        if (self == null)
+        {
+            return;
+        }
+
+        SetReferenceY(-scrollY * self.ScrollToChartRatio);
     }
 }
