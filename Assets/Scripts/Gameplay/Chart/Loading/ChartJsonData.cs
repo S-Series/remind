@@ -1,5 +1,7 @@
 using System;
 
+#pragma warning disable CS0649 // Populated by JsonUtility through serialized fields.
+
 namespace REmind.Gameplay.Chart.Loading
 {
     [Serializable]
@@ -68,3 +70,5 @@ namespace REmind.Gameplay.Chart.Loading
         public long durationMs;
     }
 }
+
+#pragma warning restore CS0649

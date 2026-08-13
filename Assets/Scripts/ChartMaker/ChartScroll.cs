@@ -4,7 +4,7 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
-public class ChartScroll : MonoBehaviour
+public sealed class ChartScroll : MonoBehaviour
 {
     private const float BoundsEpsilon = 0.001f;
 
@@ -104,11 +104,16 @@ public class ChartScroll : MonoBehaviour
     {
         scrollRect.horizontal = false;
         scrollRect.vertical = true;
-        scrollRect.movementType = ScrollRect.MovementType.Clamped;
-        scrollRect.inertia = false;
+        scrollRect.movementType = ScrollRect.MovementType.Elastic;
+        scrollRect.elasticity = 0.1f;
+        scrollRect.inertia = true;
+        scrollRect.decelerationRate = 0.135f;
+        // Wheel input is accumulated by ApplyScrollDelta for smooth movement.
+        // Disable ScrollRect's immediate wheel movement to avoid applying it twice.
         scrollRect.scrollSensitivity = 0f;
     }
 
+    /// <summary>스크롤 목표 Y를 설정하고 필요하면 현재 위치에 즉시 반영합니다.</summary>
     public void SetScrollY(float positionY, bool smooth = false)
     {
         if (scrollRect == null)
@@ -128,6 +133,12 @@ public class ChartScroll : MonoBehaviour
 
         smoothVelocity = Vector2.zero;
         SetScrollPosition(targetPosition);
+    }
+
+    /// <summary>외부 입력 영역에서 받은 휠 이동량을 현재 스크롤 목표에 더합니다.</summary>
+    public void RequestScroll(Vector2 scrollDelta)
+    {
+        ApplyScrollDelta(scrollDelta);
     }
 
     private void HandleScrollChanged(Vector2 _)
@@ -199,7 +210,18 @@ public class ChartScroll : MonoBehaviour
             return;
         }
 
-        Vector2 delta = pointerEvent.scrollDelta;
+        ApplyScrollDelta(pointerEvent.scrollDelta);
+        pointerEvent.Use();
+    }
+
+    private void ApplyScrollDelta(Vector2 scrollDelta)
+    {
+        if (!isActiveAndEnabled || scrollRect == null)
+        {
+            return;
+        }
+
+        Vector2 delta = scrollDelta;
         delta.y *= -1f;
 
         if (Mathf.Abs(delta.x) > Mathf.Abs(delta.y))
@@ -238,6 +260,8 @@ public class ChartScroll : MonoBehaviour
 
     private Vector2 ClampContentPosition(Vector2 requestedPosition)
     {
+        // ScrollRect의 내부 Bounds 계산과 같은 좌표계를 사용해 콘텐츠가
+        // 뷰포트 밖으로 완전히 빠져나가지 않도록 목표 위치를 제한합니다.
         RectTransform content = scrollRect.content;
         RectTransform viewport = scrollRect.viewport
             ? scrollRect.viewport

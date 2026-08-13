@@ -1,0 +1,103 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" editor-extension-mode="False">
+    <Style src="ChartMakerTopMenu.uss" />
+
+    <ui:VisualElement name="chart-maker-top-menu" class="chart-maker-top-menu" picking-mode="Ignore">
+        <ui:VisualElement name="menu-dismiss-layer" class="menu-dismiss-layer" />
+
+        <ui:VisualElement name="top-menu-bar" class="top-menu-bar">
+            <ui:Button name="file-menu-button" text="File" class="top-menu-button" />
+            <ui:Button name="edit-menu-button" text="Edit" class="top-menu-button" />
+            <ui:Button name="view-menu-button" text="View" class="top-menu-button" />
+            <ui:Button name="playback-menu-button" text="Playback" class="top-menu-button playback-menu-button" />
+            <ui:VisualElement class="top-menu-spacer" />
+        </ui:VisualElement>
+
+        <ui:VisualElement name="note-edit-window" class="note-edit-window" picking-mode="Position">
+            <ui:VisualElement name="note-edit-title-bar" class="note-edit-title-bar">
+                <ui:Label name="note-edit-title" text="Note" class="note-edit-title" />
+                <ui:Button name="note-edit-close-button" text="X" class="note-edit-close-button" tooltip="Close" />
+            </ui:VisualElement>
+
+            <ui:VisualElement class="note-edit-content">
+                <ui:Label text="Position" class="note-edit-section-title" />
+                <ui:VisualElement class="note-edit-field-row">
+                    <ui:IntegerField name="note-measure-field" label="Measure" class="note-edit-field compact-field first-compact-field" />
+                    <ui:IntegerField name="note-position-field" label="Pos" class="note-edit-field compact-field" />
+                </ui:VisualElement>
+
+                <ui:VisualElement name="tap-note-edit-panel" class="note-type-edit-panel">
+                    <ui:Label text="Tap" class="note-edit-section-title" />
+                    <ui:DropdownField name="tap-line-field" label="Line" class="note-edit-field" />
+                    <ui:DropdownField name="tap-hand-field" label="Hand" class="note-edit-field" />
+                    <ui:Toggle name="tap-powered-field" label="Powered" class="note-edit-field" />
+                    <ui:Label name="tap-long-pair-label" text="Pairing: Automatic" class="note-edit-meta" />
+                </ui:VisualElement>
+
+                <ui:VisualElement name="scratch-note-edit-panel" class="note-type-edit-panel">
+                    <ui:Label text="Scratch" class="note-edit-section-title" />
+                    <ui:DropdownField name="scratch-side-field" label="Side" class="note-edit-field" />
+                    <ui:Toggle name="scratch-powered-field" label="Powered" class="note-edit-field" />
+                    <ui:Label name="scratch-long-pair-label" text="Pairing: Automatic" class="note-edit-meta" />
+                </ui:VisualElement>
+
+                <ui:VisualElement name="air-note-edit-panel" class="note-type-edit-panel">
+                    <ui:Label text="Air" class="note-edit-section-title" />
+                    <ui:DropdownField name="air-line-field" label="Line" class="note-edit-field" />
+                    <ui:IntegerField name="air-value-field" label="Value" class="note-edit-field" />
+                </ui:VisualElement>
+            </ui:VisualElement>
+
+            <ui:Label name="note-edit-error" class="note-edit-error" />
+
+            <ui:VisualElement class="note-edit-actions">
+                <ui:Button name="note-edit-delete-button" text="Delete" class="note-edit-action danger-action" />
+                <ui:VisualElement class="note-edit-action-spacer" />
+                <ui:Button name="note-edit-cancel-button" text="Cancel" class="note-edit-action" />
+                <ui:Button name="note-edit-apply-button" text="Apply" class="note-edit-action primary-action" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+
+        <ui:VisualElement name="menu-popup-host" class="menu-popup-host">
+            <ui:VisualElement name="file-menu-popup" class="menu-popup">
+                <ui:Button name="new-chart-menu-item" text="New" class="menu-item" />
+                <ui:Button name="open-chart-menu-item" text="Open...                         Ctrl+O" class="menu-item" />
+                <ui:Button name="open-music-menu-item" text="Open Music...       Ctrl+Shift+O" class="menu-item" />
+                <ui:VisualElement class="menu-separator" />
+                <ui:Button name="save-chart-menu-item" text="Save" class="menu-item" />
+                <ui:Button name="save-as-chart-menu-item" text="Save As..." class="menu-item" />
+                <ui:VisualElement class="menu-separator" />
+                <ui:Button name="exit-chart-maker-menu-item" text="Exit" class="menu-item" />
+            </ui:VisualElement>
+
+            <ui:VisualElement name="edit-menu-popup" class="menu-popup">
+                <ui:Button name="undo-menu-item" text="Undo                         Ctrl+Z" class="menu-item" />
+                <ui:Button name="redo-menu-item" text="Redo                  Ctrl+Shift+Z" class="menu-item" />
+                <ui:VisualElement class="menu-separator" />
+                <ui:Button name="delete-menu-item" text="Delete                          Del" class="menu-item" />
+                <ui:Button name="cancel-menu-item" text="Cancel Selection           Esc" class="menu-item" />
+            </ui:VisualElement>
+
+            <ui:VisualElement name="view-menu-popup" class="menu-popup">
+                <ui:Button name="show-guides-menu-item" text="[x] Show Guides" class="menu-item" />
+                <ui:Button name="snap-guides-menu-item" text="[x] Snap to Guides" class="menu-item" />
+            </ui:VisualElement>
+
+            <ui:VisualElement name="playback-menu-popup" class="menu-popup">
+                <ui:Button name="start-test-play-menu-item" text="Start Test Play" class="menu-item" />
+                <ui:Button name="end-test-play-menu-item" text="End Test Play" class="menu-item" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+
+        <ui:VisualElement name="unsaved-changes-overlay" class="modal-overlay">
+            <ui:VisualElement class="modal-dialog">
+                <ui:Label text="Unsaved changes" class="modal-title" />
+                <ui:Label name="unsaved-changes-message" class="modal-message" />
+                <ui:VisualElement class="modal-actions">
+                    <ui:Button name="cancel-pending-action-button" text="Cancel" class="modal-button" />
+                    <ui:Button name="discard-pending-action-button" text="Discard" class="modal-button danger-button" />
+                    <ui:Button name="save-pending-action-button" text="Save" class="modal-button primary-button" />
+                </ui:VisualElement>
+            </ui:VisualElement>
+        </ui:VisualElement>
+    </ui:VisualElement>
+</ui:UXML>

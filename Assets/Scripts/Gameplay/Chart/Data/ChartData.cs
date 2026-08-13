@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace REmind.Gameplay.Chart.Data
+namespace REmind.Data
 {
     public sealed class ChartData
     {
@@ -46,7 +46,10 @@ namespace REmind.Gameplay.Chart.Data
             ChartOffsetMs = chartOffsetMs;
             Preview = preview;
             Timing = timing;
-            Notes = Array.AsReadOnly(notes);
+            Notes = Array.AsReadOnly(
+                notes != null
+                    ? (NoteData[])notes.Clone()
+                    : Array.Empty<NoteData>());
         }
     }
 
@@ -88,8 +91,14 @@ namespace REmind.Gameplay.Chart.Data
             TimeSignatureData[] timeSignatures)
         {
             BaseBpm = baseBpm;
-            BpmChanges = Array.AsReadOnly(bpmChanges);
-            TimeSignatures = Array.AsReadOnly(timeSignatures);
+            BpmChanges = Array.AsReadOnly(
+                bpmChanges != null
+                    ? (BpmChangeData[])bpmChanges.Clone()
+                    : Array.Empty<BpmChangeData>());
+            TimeSignatures = Array.AsReadOnly(
+                timeSignatures != null
+                    ? (TimeSignatureData[])timeSignatures.Clone()
+                    : Array.Empty<TimeSignatureData>());
         }
     }
 

@@ -1,4 +1,4 @@
-namespace REmind.Gameplay.Chart.Data
+namespace REmind.Data
 {
     public sealed class NoteData
     {

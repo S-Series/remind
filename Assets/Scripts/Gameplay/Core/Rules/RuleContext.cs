@@ -1,4 +1,4 @@
-using REmind.Gameplay.Chart.Data;
+using REmind.Data;
 
 public readonly struct RuleContext
 {

@@ -1,20 +1,21 @@
 using UnityEngine;
 
-public class NoteLength : MonoBehaviour
+[DisallowMultipleComponent]
+public sealed class NoteLength : MonoBehaviour
 {
-    [SerializeField] Transform bodyTransform;
-    [SerializeField] Transform endCapTransform;
+    [SerializeField] private Transform bodyTransform;
 
-    private static readonly Vector2 normalScale = new Vector2(0.6000001f, 15.72f);
+    private const float ReferenceLength = 160f;
+    private static readonly Vector2 NormalScale =
+        new Vector2(0.6f, 15.72f);
 
-    
-
-    public void SetLength(float height)
+    /// <summary>시작점에서 위쪽으로 표시할 로컬 Y 길이를 적용합니다.</summary>
+    public void SetLength(float length)
     {
-        Vector2 prev = transform.position;
-        endCapTransform.position = new Vector2(prev.x, height);
+        if (!bodyTransform) return;
 
-        float scaleY = normalScale.y * height / 160;
-        bodyTransform.localScale = new Vector3(normalScale.x, scaleY, 1);
+        float clampedLength = Mathf.Max(0f, length);
+        float scaleY = NormalScale.y * clampedLength / ReferenceLength;
+        bodyTransform.localScale = new Vector3(NormalScale.x, scaleY, 1f);
     }
 }

@@ -1651,17 +1651,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e7fc7651f2c5deb47a796887b60e31fc, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Test
-  TestTMpro: {fileID: 1776144740}
-  TestButton: {fileID: 1857765334}
-  ResetButton: {fileID: 1376549263}
-  AutoToggle: {fileID: 661137014}
-  CameraTransform: {fileID: 414375661}
-  Bpm: 225
-  SpeedMultiplier: 7.5
-  TapNotePrefab: {fileID: 6411114154168028441, guid: 83a4d291b183dfe4e9d87831e90514dc, type: 3}
-  NoteField: {fileID: 418015322}
-  NoteCorrectionMs: -1050
-  NoteJudgementSystem: {fileID: 0}
+  timeText: {fileID: 1776144740}
+  playButton: {fileID: 1857765334}
+  resetButton: {fileID: 1376549263}
+  autoToggle: {fileID: 661137014}
+  gameManager: {fileID: 1721417052}
+  demoPlayController: {fileID: 2200000002}
 --- !u!4 &763775015
 Transform:
   m_ObjectHideFlags: 0
@@ -2649,6 +2644,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1721417051}
   - component: {fileID: 1721417052}
+  - component: {fileID: 2200000002}
   m_Layer: 0
   m_Name: Core System
   m_TagString: Untagged
@@ -2767,11 +2763,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::GamePlay
   cameraTransform: {fileID: 414375661}
   audioSource: {fileID: 1721417049}
-  hitSource: {fileID: 1721417062}
-  judgementSystem: {fileID: 1721417054}
-  hitSoundTrimStartMs: 55
   initialSong: {fileID: 8300000, guid: 78bbcd18f077b6e45a2a3165214242fd, type: 3}
-  playOnStart: 1
+  playOnStart: 0
   musicVolume: 0.5
   schedulingLeadTimeSeconds: 0.2
 --- !u!4 &1721417051
@@ -2924,6 +2917,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1721417061}
   - component: {fileID: 1721417062}
+  - component: {fileID: 2200000001}
   m_Layer: 0
   m_Name: Hit Source
   m_TagString: Untagged
@@ -3667,7 +3661,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 120615be03225444ba0c2ef1f4b7922a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::REmind.Gameplay.Chart.TempLoader
-  TapNotePrefab: {fileID: 6411114154168028441, guid: 83a4d291b183dfe4e9d87831e90514dc, type: 3}
+  TapNotePrefab: {fileID: 7256374167690495269, guid: ef722f8fe35a808468de9c43ee1ca0a2, type: 3}
   NoteField: {fileID: 418015322}
   chartFile: {fileID: 4900000, guid: 3e163746740054b419788d0359379e7b, type: 3}
 --- !u!1 &1869660258
@@ -4190,6 +4184,42 @@ MeshRenderer:
   m_SortingOrder: 3
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
+--- !u!114 &2200000001
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1721417060}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7e31167db3474f4eb928114f5e19eed9, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::REmind.Gameplay.Effects.HitSoundPlayer
+  judgementSystem: {fileID: 1721417054}
+  audioSource: {fileID: 1721417062}
+  trimStartMs: 55
+--- !u!114 &2200000002
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1721417048}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d7ce75290b104af8b44a46b9f3310e14, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::REmind.Gameplay.Demo.DemoPlayController
+  gameManager: {fileID: 1721417052}
+  judgementSystem: {fileID: 1721417054}
+  cameraTransform: {fileID: 414375661}
+  bpm: 225
+  speedMultiplier: 7.5
+  tapNotePrefab: {fileID: 7256374167690495269, guid: ef722f8fe35a808468de9c43ee1ca0a2, type: 3}
+  noteField: {fileID: 418015322}
+  noteCorrectionMs: -1200
+  playOnReady: 1
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

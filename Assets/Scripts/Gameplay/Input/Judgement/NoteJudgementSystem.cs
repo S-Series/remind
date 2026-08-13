@@ -1,6 +1,6 @@
 using System;
 using System.Collections.Generic;
-using REmind.Gameplay.Chart.Data;
+using REmind.Data;
 using REmind.Gameplay.Input.Routing;
 using UnityEngine;
 
@@ -117,6 +117,7 @@ namespace REmind.Gameplay.Input.Judgement
         {
             if (chart == null)
             {
+                ClearInitialization();
                 Debug.LogError("Cannot initialize NoteJudgementSystem with a null chart.", this);
                 return false;
             }
@@ -129,6 +130,8 @@ namespace REmind.Gameplay.Input.Judgement
             IReadOnlyList<NoteData> notes,
             double noteChartOffsetMs = 0d)
         {
+            ClearInitialization();
+
             if (laneCount <= 0)
             {
                 Debug.LogError("Lane count must be greater than zero.", this);
@@ -148,6 +151,10 @@ namespace REmind.Gameplay.Input.Judgement
             }
 
             LaneNoteQueue[] newQueues = new LaneNoteQueue[laneCount];
+            HashSet<string> noteIds = new HashSet<string>(StringComparer.Ordinal);
+            HashSet<(long TimeMs, int Lane)> occupiedSlots =
+                new HashSet<(long TimeMs, int Lane)>();
+
             for (int lane = 0; lane < laneCount; lane++)
             {
                 newQueues[lane] = new LaneNoteQueue(lane);
@@ -156,9 +163,32 @@ namespace REmind.Gameplay.Input.Judgement
             for (int i = 0; i < notes.Count; i++)
             {
                 NoteData note = notes[i];
-                if (note == null || note.Lane < 0 || note.Lane >= laneCount)
+                if (note == null ||
+                    !note.Type.IsGameplayNote() ||
+                    note.Lane < 0 ||
+                    note.Lane >= laneCount ||
+                    string.IsNullOrWhiteSpace(note.Id) ||
+                    note.TimeMs < 0 ||
+                    (note.Type.IsLong()
+                        ? note.DurationMs <= 0
+                        : note.DurationMs != 0) ||
+                    !noteIds.Add(note.Id) ||
+                    !occupiedSlots.Add((note.TimeMs, note.Lane)))
                 {
                     Debug.LogError($"Invalid note at index {i}.", this);
+                    return false;
+                }
+
+                try
+                {
+                    checked
+                    {
+                        _ = note.TimeMs + note.DurationMs;
+                    }
+                }
+                catch (OverflowException)
+                {
+                    Debug.LogError($"Note time overflows at index {i}.", this);
                     return false;
                 }
 
@@ -219,7 +249,12 @@ namespace REmind.Gameplay.Input.Judgement
                 return false;
             }
 
-            noteViews[noteId] = noteView;
+            if (noteViews.TryGetValue(noteId, out GameObject currentView))
+            {
+                return currentView == noteView;
+            }
+
+            noteViews.Add(noteId, noteView);
             return true;
         }
 
@@ -244,6 +279,13 @@ namespace REmind.Gameplay.Input.Judgement
         public void ClearRegisteredNoteViews()
         {
             noteViews.Clear();
+        }
+
+        public void ClearInitialization()
+        {
+            laneQueues = Array.Empty<LaneNoteQueue>();
+            chartOffsetMs = 0d;
+            IsInitialized = false;
         }
 
         private void HandleInputPerformed(RhythmInputEvent inputEvent)

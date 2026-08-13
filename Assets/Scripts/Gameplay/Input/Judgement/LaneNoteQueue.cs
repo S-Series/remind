@@ -1,6 +1,6 @@
 using System;
 using System.Collections.Generic;
-using REmind.Gameplay.Chart.Data;
+using REmind.Data;
 
 namespace REmind.Gameplay.Input.Judgement
 {

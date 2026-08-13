@@ -2,12 +2,14 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Pool;
+using TMPro;
 
 [DisallowMultipleComponent]
 public sealed class GuideGenerate : MonoBehaviour
 {
-    public static GuideGenerate self;
+    public static GuideGenerate Instance { get; private set; }
     public static float ReferenceY { get; private set; }
+    public static event Action<float> ReferenceYChanged;
 
     private const float IndexEpsilon = 0.001f;
 
@@ -41,23 +43,26 @@ public sealed class GuideGenerate : MonoBehaviour
 
     private int currentFirstIndex = -1;
     private int currentLastIndex = -1;
+    private bool guidesVisible = true;
 
     public ObjectPool<GameObject> Pool { get; private set; }
     public int TotalGuideCount => measureCount * guidesPerMeasure;
     public int VisibleGuideCount => visibleGuides.Count;
     public float GuideSpacing => measureHeight / guidesPerMeasure;
     public float ScrollToChartRatio => measureHeight / scrollMeasureHeight;
+    public bool GuidesVisible => guidesVisible;
 
     private void Awake()
     {
-        if (self != null && self != this)
+        if (Instance != null && Instance != this)
         {
             enabled = false;
             return;
         }
 
-        self = this;
+        Instance = this;
         ReferenceY = 0f;
+        ChartPlacementController.SetYGuideCount(guidesPerMeasure);
 
         if (!guidePrefab || !guideField)
         {
@@ -91,12 +96,18 @@ public sealed class GuideGenerate : MonoBehaviour
 
     private void OnDestroy()
     {
-        Pool?.Clear();
-
-        if (self == this)
+        if (Pool != null)
         {
-            self = null;
+            DestroyVisibleGuides();
+            Pool.Clear();
+            Pool = null;
+        }
+
+        if (Instance == this)
+        {
+            Instance = null;
             ReferenceY = 0f;
+            ReferenceYChanged = null;
         }
     }
 
@@ -111,6 +122,7 @@ public sealed class GuideGenerate : MonoBehaviour
         RefreshVisibleGuides(true);
     }
 
+    /// <summary>UI 입력 문자열을 가이드 분할 수로 해석해 다시 생성합니다.</summary>
     public void ReGenerate(string input)
     {
         if (!int.TryParse(input, out int newGuidesPerMeasure) ||
@@ -125,9 +137,13 @@ public sealed class GuideGenerate : MonoBehaviour
         ReGenerate(newGuidesPerMeasure);
     }
 
+    /// <summary>
+    /// 한 마디의 가이드 개수를 변경하고 현재 보이는 범위만 풀에서 다시 배치합니다.
+    /// </summary>
     public void ReGenerate(int newGuidesPerMeasure)
     {
         guidesPerMeasure = Mathf.Max(1, newGuidesPerMeasure);
+        ChartPlacementController.SetYGuideCount(guidesPerMeasure);
         currentFirstIndex = -1;
         currentLastIndex = -1;
 
@@ -140,6 +156,9 @@ public sealed class GuideGenerate : MonoBehaviour
         RefreshVisibleGuides(true);
     }
 
+    /// <summary>
+    /// 기준 Y 주변의 가이드만 활성화하고 범위를 벗어난 가이드는 풀로 돌려보냅니다.
+    /// </summary>
     public void RefreshVisibleGuides(bool force)
     {
         if (Pool == null)
@@ -150,12 +169,8 @@ public sealed class GuideGenerate : MonoBehaviour
         float spacing = GuideSpacing;
         float rangeMin = ReferenceY - visibleBefore;
         float rangeMax = ReferenceY + visibleAfter;
-        int firstIndex = Mathf.Max(
-            1,
-            Mathf.CeilToInt((rangeMin - IndexEpsilon) / spacing));
-        int lastIndex = Mathf.Min(
-            TotalGuideCount,
-            Mathf.FloorToInt((rangeMax + IndexEpsilon) / spacing));
+        int firstIndex = GetFirstVisibleIndex(rangeMin, spacing);
+        int lastIndex = GetLastVisibleIndex(rangeMax, spacing);
 
         if (firstIndex > lastIndex)
         {
@@ -178,6 +193,42 @@ public sealed class GuideGenerate : MonoBehaviour
         currentLastIndex = lastIndex;
     }
 
+    /// <summary>가이드 데이터와 풀은 유지한 채 화면 표시 여부만 전환합니다.</summary>
+    public void SetGuidesVisible(bool visible)
+    {
+        guidesVisible = visible;
+
+        if (guideField)
+        {
+            guideField.gameObject.SetActive(visible);
+        }
+
+        if (visible)
+        {
+            RefreshVisibleGuides(true);
+        }
+    }
+
+    public void ToggleGuidesVisible()
+    {
+        SetGuidesVisible(!guidesVisible);
+    }
+
+    private int GetFirstVisibleIndex(float rangeMin, float spacing)
+    {
+        // guide index 1 is placed at Y=0, so range indices need a +1 offset.
+        return Mathf.Max(
+            1,
+            Mathf.CeilToInt((rangeMin - IndexEpsilon) / spacing) + 1);
+    }
+
+    private int GetLastVisibleIndex(float rangeMax, float spacing)
+    {
+        return Mathf.Min(
+            TotalGuideCount,
+            Mathf.FloorToInt((rangeMax + IndexEpsilon) / spacing) + 1);
+    }
+
     private void ReleaseOutsideRange(int firstIndex, int lastIndex)
     {
         releaseIndices.Clear();
@@ -193,7 +244,12 @@ public sealed class GuideGenerate : MonoBehaviour
         for (int i = 0; i < releaseIndices.Count; i++)
         {
             int index = releaseIndices[i];
-            Pool.Release(visibleGuides[index]);
+            GameObject guide = visibleGuides[index];
+            if (guide)
+            {
+                Pool.Release(guide);
+            }
+
             visibleGuides.Remove(index);
         }
     }
@@ -217,6 +273,16 @@ public sealed class GuideGenerate : MonoBehaviour
                 templatePosition.x,
                 GetGuidePositionY(sectionIndex, indexInSection, spacing),
                 templatePosition.z);
+
+            string format = string.Format(
+                "{0:D3}\n{1}/{2}",
+                (indexInSection / guidesPerMeasure),
+                (indexInSection % guidesPerMeasure),
+                (guidesPerMeasure)
+            );
+            guide.transform.GetChild(0)
+                .GetComponent<TextMeshPro>().text = format;
+
             ApplyGuideColor(guide, index);
             visibleGuides.Add(index, guide);
         }
@@ -229,7 +295,7 @@ public sealed class GuideGenerate : MonoBehaviour
             return;
         }
 
-        bool isMeasureGuide = guideIndex % guidesPerMeasure == 0;
+        bool isMeasureGuide = (guideIndex - 1) % guidesPerMeasure == 0;
         spriteRenderer.color = isMeasureGuide
             ? measureGuideColor
             : guideColor;
@@ -256,7 +322,7 @@ public sealed class GuideGenerate : MonoBehaviour
         float spacing)
     {
         float sectionOffsetY = sectionIndex * sectionHeight;
-        float positionInSectionY = (indexInSection + 1) * spacing;
+        float positionInSectionY = indexInSection * spacing;
         return sectionOffsetY + positionInSectionY;
     }
 
@@ -264,7 +330,23 @@ public sealed class GuideGenerate : MonoBehaviour
     {
         foreach (GameObject guide in visibleGuides.Values)
         {
-            Pool.Release(guide);
+            if (guide)
+            {
+                Pool.Release(guide);
+            }
+        }
+
+        visibleGuides.Clear();
+    }
+
+    private void DestroyVisibleGuides()
+    {
+        foreach (GameObject guide in visibleGuides.Values)
+        {
+            if (guide)
+            {
+                Destroy(guide);
+            }
         }
 
         visibleGuides.Clear();
@@ -278,12 +360,18 @@ public sealed class GuideGenerate : MonoBehaviour
 
     private static void OnTakeFromPool(GameObject guide)
     {
-        guide.SetActive(true);
+        if (guide)
+        {
+            guide.SetActive(true);
+        }
     }
 
     private static void OnReturnedToPool(GameObject guide)
     {
-        guide.SetActive(false);
+        if (guide)
+        {
+            guide.SetActive(false);
+        }
     }
 
     private static void OnDestroyPooledGuide(GameObject guide)
@@ -294,24 +382,32 @@ public sealed class GuideGenerate : MonoBehaviour
         }
     }
 
+    /// <summary>외부 시스템이 사용할 현재 채보 기준 Y를 설정합니다.</summary>
     public static void SetReferenceY(float value)
     {
-        if (self == null || float.IsNaN(value) || float.IsInfinity(value))
+        if (Instance == null || float.IsNaN(value) || float.IsInfinity(value))
+        {
+            return;
+        }
+
+        if (Mathf.Approximately(ReferenceY, value))
         {
             return;
         }
 
         ReferenceY = value;
-        self.RefreshVisibleGuides(false);
+        Instance.RefreshVisibleGuides(false);
+        ReferenceYChanged?.Invoke(value);
     }
 
+    /// <summary>ScrollRect의 Y 좌표를 채보 좌표계로 환산해 기준 Y에 적용합니다.</summary>
     public static void SetReferenceFromScrollY(float scrollY)
     {
-        if (self == null)
+        if (Instance == null)
         {
             return;
         }
 
-        SetReferenceY(-scrollY * self.ScrollToChartRatio);
+        SetReferenceY(-scrollY * Instance.ScrollToChartRatio);
     }
 }

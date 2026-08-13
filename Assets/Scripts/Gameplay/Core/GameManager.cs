@@ -70,11 +70,6 @@ public sealed class GameManager : MonoSingleton<GameManager>
         return GamePlay != null && GamePlay.Restart();
     }
 
-    public bool PlayHitSound()
-    {
-        return GamePlay != null && GamePlay.PlayHitSound();
-    }
-
     public bool TryGetJudgeOffsetMs(
         double inputEventTime,
         double noteHitTimeMs,

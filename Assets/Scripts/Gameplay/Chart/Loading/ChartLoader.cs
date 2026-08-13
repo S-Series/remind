@@ -1,6 +1,6 @@
 using System;
 using System.Collections.Generic;
-using REmind.Gameplay.Chart.Data;
+using REmind.Data;
 using UnityEngine;
 
 namespace REmind.Gameplay.Chart.Loading
@@ -215,6 +215,12 @@ namespace REmind.Gameplay.Chart.Loading
 
             Array.Sort(result, (left, right) => left.TimeMs.CompareTo(right.TimeMs));
 
+            if (result[0].TimeMs != 0)
+            {
+                throw new ChartLoadException(
+                    $"{sourceName}: The first time signature must be at 0ms.");
+            }
+
             for (int i = 1; i < result.Length; i++)
             {
                 if (result[i - 1].TimeMs == result[i].TimeMs)
@@ -236,7 +242,7 @@ namespace REmind.Gameplay.Chart.Loading
 
             var result = new NoteData[source.Length];
             var noteIds = new HashSet<string>(StringComparer.Ordinal);
-            var occupiedSlots = new HashSet<(long TimeMs, int Lane, NoteType Type)>();
+            var occupiedSlots = new HashSet<(long TimeMs, int Lane)>();
 
             for (int i = 0; i < source.Length; i++)
             {
@@ -254,10 +260,11 @@ namespace REmind.Gameplay.Chart.Loading
                     throw new ChartLoadException($"{sourceName}: Duplicate note ID '{note.id}'.");
                 }
 
-                if (!Enum.TryParse(note.type, true, out NoteType noteType) || noteType == NoteType.Unknown)
+                if (!Enum.TryParse(note.type, true, out NoteType noteType) ||
+                    !noteType.IsGameplayNote())
                 {
                     throw new ChartLoadException(
-                        $"{sourceName}: notes[{i}].type '{note.type}' is not supported.");
+                        $"{sourceName}: notes[{i}].type '{note.type}' is not a gameplay note.");
                 }
 
                 if (note.lane < 0 || note.lane >= laneCount)
@@ -271,16 +278,16 @@ namespace REmind.Gameplay.Chart.Loading
                     throw new ChartLoadException($"{sourceName}: notes[{i}].timeMs must be non-negative.");
                 }
 
-                if (noteType == NoteType.Hold && note.durationMs <= 0)
+                if (noteType.IsLong() && note.durationMs <= 0)
                 {
                     throw new ChartLoadException(
-                        $"{sourceName}: Hold note '{note.id}' must have a positive durationMs.");
+                        $"{sourceName}: Long note '{note.id}' must have a positive durationMs.");
                 }
 
-                if (noteType != NoteType.Hold && note.durationMs != 0)
+                if (!noteType.IsLong() && note.durationMs != 0)
                 {
                     throw new ChartLoadException(
-                        $"{sourceName}: Non-Hold note '{note.id}' cannot have durationMs.");
+                        $"{sourceName}: Non-long note '{note.id}' cannot have durationMs.");
                 }
 
                 try
@@ -296,10 +303,11 @@ namespace REmind.Gameplay.Chart.Loading
                         $"{sourceName}: End time for note '{note.id}' is out of range.", exception);
                 }
 
-                if (!occupiedSlots.Add((note.timeMs, note.lane, noteType)))
+                if (!occupiedSlots.Add((note.timeMs, note.lane)))
                 {
                     throw new ChartLoadException(
-                        $"{sourceName}: Duplicate {noteType} note at {note.timeMs}ms on lane {note.lane}.");
+                        $"{sourceName}: Multiple notes at {note.timeMs}ms " +
+                        $"on lane {note.lane} would require the same input.");
                 }
 
                 result[i] = new NoteData(note.id, noteType, note.lane, note.timeMs, note.durationMs);
