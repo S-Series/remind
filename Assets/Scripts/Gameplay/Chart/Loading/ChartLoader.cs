@@ -310,11 +310,71 @@ namespace REmind.Gameplay.Chart.Loading
                         $"on lane {note.lane} would require the same input.");
                 }
 
-                result[i] = new NoteData(note.id, noteType, note.lane, note.timeMs, note.durationMs);
+                ScratchMotionData scratchMotion = ConvertScratchMotion(
+                    note,
+                    noteType,
+                    i,
+                    sourceName);
+                result[i] = new NoteData(
+                    note.id,
+                    noteType,
+                    note.lane,
+                    note.timeMs,
+                    note.durationMs,
+                    scratchMotion);
             }
 
             Array.Sort(result, CompareNotes);
             return result;
+        }
+
+        private static ScratchMotionData ConvertScratchMotion(
+            NoteJsonData note,
+            NoteType noteType,
+            int noteIndex,
+            string sourceName)
+        {
+            if (!noteType.IsScratch())
+            {
+                if (note.scratchMotion != null)
+                {
+                    throw new ChartLoadException(
+                        $"{sourceName}: notes[{noteIndex}].scratchMotion is " +
+                        "only valid for Scratch notes.");
+                }
+
+                return null;
+            }
+
+            if (note.scratchMotion == null)
+            {
+                return ScratchMotionData.CreateDefault(noteType);
+            }
+
+            if (!Enum.TryParse(
+                    note.scratchMotion.motionType,
+                    true,
+                    out ScratchMotionType motionType) ||
+                !Enum.IsDefined(typeof(ScratchMotionType), motionType))
+            {
+                throw new ChartLoadException(
+                    $"{sourceName}: notes[{noteIndex}].scratchMotion." +
+                    $"motionType '{note.scratchMotion.motionType}' must be " +
+                    "Instant or Gradual.");
+            }
+
+            if (noteType == NoteType.Scratch &&
+                motionType != ScratchMotionType.Instant)
+            {
+                throw new ChartLoadException(
+                    $"{sourceName}: Single Scratch note '{note.id}' must " +
+                    "use Instant motion.");
+            }
+
+            return new ScratchMotionData(
+                note.scratchMotion.startOffsetUnits,
+                note.scratchMotion.endOffsetUnits,
+                motionType);
         }
 
         private static int CompareNotes(NoteData left, NoteData right)

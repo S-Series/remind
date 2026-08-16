@@ -63,6 +63,7 @@ public sealed class ChartPlacementController : MonoBehaviour
     [SerializeField] private Transform leftNoteField;
     [SerializeField] private Transform middleNoteField;
     [SerializeField] private Transform rightNoteField;
+    [SerializeField] private Transform chartPreviewNoteField;
 
     [Header("Prefabs")]
     [FormerlySerializedAs("TapNotePrefab")]
@@ -146,11 +147,13 @@ public sealed class ChartPlacementController : MonoBehaviour
             !previewField ||
             !leftNoteField ||
             !middleNoteField ||
-            !rightNoteField)
+            !rightNoteField ||
+            !chartPreviewNoteField)
         {
             Debug.LogError(
                 "ChartPlacementController requires an Input Router, a Tap Note prefab, " +
-                "Preview Field, and all three Note Fields.",
+                "Preview Field, all three editing Note Fields, and the chart Preview " +
+                "NoteField.",
                 this);
             enabled = false;
             return;
@@ -264,7 +267,31 @@ public sealed class ChartPlacementController : MonoBehaviour
         }
 
         dragSourceAbsolutePosition = sourceHolder.AbsoluteChartPosition;
-        CaptureDragTransforms(selectionController.SelectedNoteObjects);
+        GameObject[] linkedNoteObjects;
+
+        if (draggedNoteType == NoteType.Air)
+        {
+            sourceHolder.TryGetAirNote(
+                dragSourceLine,
+                out _,
+                out linkedNoteObjects);
+        }
+        else
+        {
+            sourceHolder.TryGetNote(
+                dragSourceLine,
+                out _,
+                out linkedNoteObjects);
+        }
+
+        IReadOnlyList<GameObject> dragTargets = linkedNoteObjects;
+
+        if (dragTargets == null)
+        {
+            dragTargets = selectionController.SelectedNoteObjects;
+        }
+
+        CaptureDragTransforms(dragTargets);
         isDraggingNote = true;
         RefreshPreviewVisibility();
         UpdateNoteDrag(normalizedPosition, positionCorrection);
@@ -424,10 +451,9 @@ public sealed class ChartPlacementController : MonoBehaviour
                 continue;
             }
 
-            Transform targetParent =
-                noteObject.transform.parent == middleNoteField
-                    ? middleNoteField
-                    : handField;
+            Transform targetParent = GetTargetNoteField(
+                noteObject.transform.parent,
+                handField);
             noteObject.transform.SetParent(targetParent, false);
             noteObject.transform.localPosition = dragTargetPosition;
         }
@@ -624,6 +650,7 @@ public sealed class ChartPlacementController : MonoBehaviour
             handleType,
             isPowered,
             0,
+            null,
             out error);
     }
 
@@ -634,6 +661,9 @@ public sealed class ChartPlacementController : MonoBehaviour
         int measurePosition,
         NoteHandleType side,
         bool isPowered,
+        int startOffsetUnits,
+        int endOffsetUnits,
+        ScratchMotionType motionType,
         out string error)
     {
         if (!TryRequireNoteType(
@@ -646,6 +676,17 @@ public sealed class ChartPlacementController : MonoBehaviour
             return false;
         }
 
+        if (!System.Enum.IsDefined(typeof(ScratchMotionType), motionType))
+        {
+            error = $"Unsupported Scratch motion type: {motionType}.";
+            return false;
+        }
+
+        if (noteType == NoteType.Scratch)
+        {
+            motionType = ScratchMotionType.Instant;
+        }
+
         int line = side == NoteHandleType.Right ? -2 : -1;
         return TryApplyNoteEdit(
             noteObject,
@@ -656,6 +697,10 @@ public sealed class ChartPlacementController : MonoBehaviour
             side,
             isPowered,
             0,
+            new ScratchMotionData(
+                startOffsetUnits,
+                endOffsetUnits,
+                motionType),
             out error);
     }
 
@@ -689,6 +734,7 @@ public sealed class ChartPlacementController : MonoBehaviour
             handleType,
             false,
             airValue,
+            null,
             out error);
     }
 
@@ -701,6 +747,7 @@ public sealed class ChartPlacementController : MonoBehaviour
         NoteHandleType handleType,
         bool isPowered,
         int airValue,
+        ScratchMotionData scratchMotion,
         out string error)
     {
         if (!TryGetAbsolutePosition(
@@ -723,12 +770,17 @@ public sealed class ChartPlacementController : MonoBehaviour
         int sourceAirValue = noteType == NoteType.Air
             ? sourceHolder.airNoteValues[sourceLine - 1]
             : 0;
+        ScratchMotionData sourceScratchMotion = noteType.IsScratch()
+            ? sourceHolder.GetScratchMotion(sourceLine)
+            : null;
         bool isUnchanged =
             sourceHolder.AbsoluteChartPosition == targetAbsolutePosition &&
             sourceLine == line &&
             (noteType.IsScratch() || sourceHandle == handleType) &&
             sourcePowered == isPowered &&
-            (noteType != NoteType.Air || sourceAirValue == airValue);
+            (noteType != NoteType.Air || sourceAirValue == airValue) &&
+            (!noteType.IsScratch() ||
+             sourceScratchMotion.Equals(scratchMotion));
 
         if (isUnchanged)
         {
@@ -748,6 +800,7 @@ public sealed class ChartPlacementController : MonoBehaviour
                 handleType,
                 isPowered,
                 airValue,
+                scratchMotion,
                 out error))
         {
             return false;
@@ -814,7 +867,7 @@ public sealed class ChartPlacementController : MonoBehaviour
             }
 
             current.transform.SetParent(
-                i == 0 ? middleNoteField : handField,
+                GetTargetNoteField(current.transform.parent, handField),
                 false);
             current.transform.localPosition = localPosition;
         }
@@ -1015,8 +1068,7 @@ public sealed class ChartPlacementController : MonoBehaviour
         NoteHandleType handleType,
         NoteType noteType)
     {
-        // 하나의 채보 노트를 중앙 필드와 손 방향 필드에 각각 생성합니다.
-        // 두 오브젝트는 부모만 다르고 완전히 같은 로컬 좌표를 사용합니다.
+        // 편집 필드 두 곳과 표시 전용 Preview 필드에 같은 노트를 생성합니다.
         GameObject middleNote = Instantiate(prefab, middleNoteField, false);
         middleNote.transform.localPosition = notePosition;
 
@@ -1026,8 +1078,17 @@ public sealed class ChartPlacementController : MonoBehaviour
         GameObject handNote = Instantiate(prefab, handField, false);
         handNote.transform.localPosition = notePosition;
 
-        GameObject[] noteObjects = { middleNote, handNote };
-        InitializeSelectionTargets(noteObjects, noteType);
+        GameObject chartPreviewNote = Instantiate(
+            prefab,
+            chartPreviewNoteField,
+            false);
+        chartPreviewNote.transform.localPosition = notePosition;
+        PrepareDisplayOnlyNote(chartPreviewNote);
+
+        GameObject[] noteObjects =
+            { middleNote, handNote, chartPreviewNote };
+        GameObject[] selectableNoteObjects = { middleNote, handNote };
+        InitializeSelectionTargets(selectableNoteObjects, noteType);
         return noteObjects;
     }
 
@@ -1048,6 +1109,56 @@ public sealed class ChartPlacementController : MonoBehaviour
 
             selectable.Configure(noteType, noteObjects);
         }
+    }
+
+    private void PrepareDisplayOnlyNote(GameObject noteObject)
+    {
+        Transform[] childTransforms =
+            noteObject.GetComponentsInChildren<Transform>(true);
+
+        for (int i = 0; i < childTransforms.Length; i++)
+        {
+            childTransforms[i].gameObject.layer =
+                chartPreviewNoteField.gameObject.layer;
+        }
+
+        Collider2D[] colliders2D =
+            noteObject.GetComponentsInChildren<Collider2D>(true);
+
+        for (int i = 0; i < colliders2D.Length; i++)
+        {
+            colliders2D[i].enabled = false;
+        }
+
+        Collider[] colliders =
+            noteObject.GetComponentsInChildren<Collider>(true);
+
+        for (int i = 0; i < colliders.Length; i++)
+        {
+            colliders[i].enabled = false;
+        }
+
+        UnityEngine.UI.Graphic[] graphics =
+            noteObject.GetComponentsInChildren<UnityEngine.UI.Graphic>(true);
+
+        for (int i = 0; i < graphics.Length; i++)
+        {
+            graphics[i].raycastTarget = false;
+        }
+    }
+
+    private Transform GetTargetNoteField(
+        Transform currentParent,
+        Transform handField)
+    {
+        if (currentParent == middleNoteField)
+        {
+            return middleNoteField;
+        }
+
+        return currentParent == chartPreviewNoteField
+            ? chartPreviewNoteField
+            : handField;
     }
 
     private static void DestroyNoteObjects(GameObject[] noteObjects)

@@ -20,16 +20,21 @@ internal static class ChartFileDialog
     public static string OpenChartFile(string initialPath)
     {
 #if UNITY_EDITOR
-        return EditorUtility.OpenFilePanel(
+        return EditorUtility.OpenFilePanelWithFilters(
             "Open Chart",
             GetInitialDirectory(initialPath),
-            "txt");
+            new[]
+            {
+                "Chart Files", "txt,json",
+                "All Files", "*"
+            });
 #elif UNITY_STANDALONE_WIN
         return ShowWindowsDialog(
             false,
             initialPath,
             "Open Chart",
-            "Chart Files (*.txt)\0*.txt\0All Files (*.*)\0*.*\0\0",
+            "Chart Files (*.txt;*.json)\0*.txt;*.json\0" +
+            "All Files (*.*)\0*.*\0\0",
             "txt");
 #else
         Debug.LogError(

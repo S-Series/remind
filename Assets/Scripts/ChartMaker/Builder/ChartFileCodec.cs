@@ -7,7 +7,14 @@ using REmind.Data;
 
 public static class ChartFileCodec
 {
-    private const int FieldCount = 8;
+    public const int CurrentFormatVersion = 2;
+
+    private const string FormatHeader = "#REmindChart";
+    private const string BpmHeader = "#BPM";
+    private const string MusicStartCorrectionHeader =
+        "#MUSIC_START_CORRECTION_MS";
+    private const int LegacyFieldCount = 8;
+    private const int CurrentFieldCount = 9;
     private const int MainNoteTextLength = 8;
     private const int ScratchNoteTextLength = 4;
     private const int AirNoteTextLength = 8;
@@ -15,13 +22,21 @@ public static class ChartFileCodec
     private static readonly CultureInfo Invariant =
         CultureInfo.InvariantCulture;
 
-    /// <summary>현재 채보 데이터를 한 행 단위 텍스트 포맷으로 변환합니다.</summary>
-    public static string Serialize(IReadOnlyList<ChartHolder> holders)
+    /// <summary>현재 채보와 편집용 타이밍 설정을 행 단위 텍스트 포맷으로 변환합니다.</summary>
+    public static string Serialize(
+        IReadOnlyList<ChartHolder> holders,
+        double baseBpm,
+        double musicStartCorrectionMs)
     {
         if (holders == null)
         {
             throw new ArgumentNullException(nameof(holders));
         }
+
+        ValidateBaseBpm(baseBpm);
+        ValidateFinite(
+            musicStartCorrectionMs,
+            nameof(musicStartCorrectionMs));
 
         List<ChartHolder> ordered = new List<ChartHolder>(holders.Count);
 
@@ -39,6 +54,10 @@ public static class ChartFileCodec
                 right.AbsoluteChartPosition));
 
         StringBuilder output = new StringBuilder();
+        AppendMetadata(
+            output,
+            baseBpm,
+            musicStartCorrectionMs);
         bool[] openLongs = new bool[ChartHolder.TotalLineCount];
         int previousPosition = -1;
 
@@ -54,7 +73,7 @@ public static class ChartFileCodec
                     $"{holder.ChartNumber:D3}|{holder.ChartPos:D4}");
             }
 
-            if (output.Length > 0)
+            if (i > 0)
             {
                 output.Append('\n');
             }
@@ -74,6 +93,8 @@ public static class ChartFileCodec
             output.Append(holder.isEffect ? 'T' : 'F');
             output.Append('|');
             output.Append(holder.isCameraMove ? 'T' : 'F');
+            output.Append('|');
+            AppendScratchMotions(output, holder);
 
             previousPosition = holder.AbsoluteChartPosition;
         }
@@ -92,6 +113,12 @@ public static class ChartFileCodec
 
         List<ChartHolder> holders = new List<ChartHolder>();
         bool[] openLongs = new bool[ChartHolder.TotalLineCount];
+        int formatVersion = 0;
+        bool hasFormatVersion = false;
+        bool hasBaseBpm = false;
+        double baseBpm = 0d;
+        bool hasMusicStartCorrectionMs = false;
+        double musicStartCorrectionMs = 0d;
         int previousPosition = -1;
         int lineNumber = 0;
 
@@ -103,18 +130,36 @@ public static class ChartFileCodec
             lineNumber++;
             line = line.Trim();
 
-            if (line.Length == 0 || line.StartsWith("#", StringComparison.Ordinal))
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            if (TryParseMetadata(
+                    line,
+                    lineNumber,
+                    ref formatVersion,
+                    ref hasFormatVersion,
+                    ref baseBpm,
+                    ref hasBaseBpm,
+                    ref musicStartCorrectionMs,
+                    ref hasMusicStartCorrectionMs))
             {
                 continue;
             }
 
             string[] fields = line.Split('|');
 
-            if (fields.Length != FieldCount)
+            int expectedFieldCount = formatVersion >= 2
+                ? CurrentFieldCount
+                : LegacyFieldCount;
+
+            if (fields.Length != expectedFieldCount)
             {
                 throw CreateFormatException(
                     lineNumber,
-                    $"Expected {FieldCount} fields but found {fields.Length}.");
+                    $"Expected {expectedFieldCount} fields but found " +
+                    $"{fields.Length}.");
             }
 
             int chartNumber = ParseFixedDigits(
@@ -153,15 +198,138 @@ public static class ChartFileCodec
                 lineNumber,
                 "camera movement");
 
+            if (formatVersion >= 2)
+            {
+                ParseScratchMotions(fields[8], holder, lineNumber);
+            }
+            else
+            {
+                holder.EnsureStorage();
+            }
+
             holders.Add(holder);
             previousPosition = absolutePosition;
         }
 
         EnsureAllLongsClosed(openLongs, "End of file");
+
+        if (hasFormatVersion &&
+            (!hasBaseBpm || !hasMusicStartCorrectionMs))
+        {
+            throw new FormatException(
+                $"Chart format {formatVersion} requires both {BpmHeader} and " +
+                $"{MusicStartCorrectionHeader} headers.");
+        }
+
         return new ChartFile
         {
+            FormatVersion = formatVersion,
+            HasBaseBpm = hasBaseBpm,
+            BaseBpm = baseBpm,
+            HasMusicStartCorrectionMs = hasMusicStartCorrectionMs,
+            MusicStartCorrectionMs = musicStartCorrectionMs,
             chartDatas = holders.ToArray()
         };
+    }
+
+    private static void AppendMetadata(
+        StringBuilder output,
+        double baseBpm,
+        double musicStartCorrectionMs)
+    {
+        output.Append(FormatHeader);
+        output.Append('|');
+        output.Append(CurrentFormatVersion.ToString(Invariant));
+        output.Append('\n');
+        output.Append(BpmHeader);
+        output.Append('|');
+        output.Append(baseBpm.ToString("R", Invariant));
+        output.Append('\n');
+        output.Append(MusicStartCorrectionHeader);
+        output.Append('|');
+        output.Append(musicStartCorrectionMs.ToString("R", Invariant));
+        output.Append('\n');
+    }
+
+    /// <summary>알려진 메타데이터와 일반 주석을 처리하고 채보 행 여부를 반환합니다.</summary>
+    private static bool TryParseMetadata(
+        string line,
+        int lineNumber,
+        ref int formatVersion,
+        ref bool hasFormatVersion,
+        ref double baseBpm,
+        ref bool hasBaseBpm,
+        ref double musicStartCorrectionMs,
+        ref bool hasMusicStartCorrectionMs)
+    {
+        if (!line.StartsWith("#", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        string[] fields = line.Split('|');
+
+        switch (fields[0])
+        {
+            case FormatHeader:
+                EnsureUniqueHeader(
+                    hasFormatVersion,
+                    lineNumber,
+                    FormatHeader);
+                EnsureHeaderFieldCount(fields, lineNumber, FormatHeader);
+
+                if (!int.TryParse(
+                        fields[1],
+                        NumberStyles.None,
+                        Invariant,
+                        out formatVersion) ||
+                    formatVersion < 1 ||
+                    formatVersion > CurrentFormatVersion)
+                {
+                    throw CreateFormatException(
+                        lineNumber,
+                        $"Unsupported chart format version '{fields[1]}'.");
+                }
+
+                hasFormatVersion = true;
+                break;
+
+            case BpmHeader:
+                EnsureUniqueHeader(hasBaseBpm, lineNumber, BpmHeader);
+                EnsureHeaderFieldCount(fields, lineNumber, BpmHeader);
+                baseBpm = ParseMetadataDouble(
+                    fields[1],
+                    lineNumber,
+                    "BPM");
+
+                if (baseBpm <= 0d)
+                {
+                    throw CreateFormatException(
+                        lineNumber,
+                        $"BPM must be greater than zero: '{fields[1]}'.");
+                }
+
+                hasBaseBpm = true;
+                break;
+
+            case MusicStartCorrectionHeader:
+                EnsureUniqueHeader(
+                    hasMusicStartCorrectionMs,
+                    lineNumber,
+                    MusicStartCorrectionHeader);
+                EnsureHeaderFieldCount(
+                    fields,
+                    lineNumber,
+                    MusicStartCorrectionHeader);
+                musicStartCorrectionMs = ParseMetadataDouble(
+                    fields[1],
+                    lineNumber,
+                    "music start correction ms");
+                hasMusicStartCorrectionMs = true;
+                break;
+        }
+
+        return true;
     }
 
     private static void AppendMainNotes(
@@ -261,6 +429,55 @@ public static class ChartFileCodec
             }
 
             output.Append(value.ToString("D2", Invariant));
+        }
+    }
+
+    private static void AppendScratchMotions(
+        StringBuilder output,
+        ChartHolder holder)
+    {
+        for (int scratchIndex = 0;
+             scratchIndex < ChartHolder.ScratchLineCount;
+             scratchIndex++)
+        {
+            if (scratchIndex > 0)
+            {
+                output.Append(';');
+            }
+
+            int noteIndex = ChartHolder.MainLineCount + scratchIndex;
+            NoteType noteType = holder.noteTypes[noteIndex];
+
+            if (!noteType.IsScratch())
+            {
+                output.Append('-');
+                continue;
+            }
+
+            ScratchMotionData motion = holder.scratchMotions[scratchIndex] ??
+                ScratchMotionData.CreateDefault(noteType);
+
+            if (!Enum.IsDefined(typeof(ScratchMotionType), motion.MotionType))
+            {
+                throw new InvalidOperationException(
+                    $"Scratch line {scratchIndex + 1} has an unsupported " +
+                    $"motion type: {motion.MotionType}.");
+            }
+
+            if (noteType == NoteType.Scratch &&
+                motion.MotionType != ScratchMotionType.Instant)
+            {
+                throw new InvalidOperationException(
+                    $"Single Scratch on line {scratchIndex + 1} must use " +
+                    "Instant motion.");
+            }
+
+            output.Append(motion.StartOffsetUnits.ToString(Invariant));
+            output.Append(',');
+            output.Append(motion.EndOffsetUnits.ToString(Invariant));
+            output.Append(',');
+            output.Append(
+                motion.MotionType == ScratchMotionType.Instant ? 'I' : 'G');
         }
     }
 
@@ -399,6 +616,87 @@ public static class ChartFileCodec
         }
     }
 
+    private static void ParseScratchMotions(
+        string value,
+        ChartHolder holder,
+        int lineNumber)
+    {
+        string[] tokens = value.Split(';');
+
+        if (tokens.Length != ChartHolder.ScratchLineCount)
+        {
+            throw CreateFormatException(
+                lineNumber,
+                $"Scratch motion field must contain exactly " +
+                $"{ChartHolder.ScratchLineCount} tokens.");
+        }
+
+        for (int scratchIndex = 0;
+             scratchIndex < ChartHolder.ScratchLineCount;
+             scratchIndex++)
+        {
+            int noteIndex = ChartHolder.MainLineCount + scratchIndex;
+            NoteType noteType = holder.noteTypes[noteIndex];
+            string token = tokens[scratchIndex];
+
+            if (!noteType.IsScratch())
+            {
+                if (token != "-")
+                {
+                    throw CreateFormatException(
+                        lineNumber,
+                        $"Scratch line {scratchIndex + 1} has motion data " +
+                        "without a Scratch note.");
+                }
+
+                continue;
+            }
+
+            string[] values = token.Split(',');
+
+            if (values.Length != 3 ||
+                !int.TryParse(
+                    values[0],
+                    NumberStyles.Integer,
+                    Invariant,
+                    out int startOffsetUnits) ||
+                !int.TryParse(
+                    values[1],
+                    NumberStyles.Integer,
+                    Invariant,
+                    out int endOffsetUnits))
+            {
+                throw CreateFormatException(
+                    lineNumber,
+                    $"Invalid motion data for scratch line " +
+                    $"{scratchIndex + 1}: '{token}'.");
+            }
+
+            ScratchMotionType motionType = values[2] switch
+            {
+                "I" => ScratchMotionType.Instant,
+                "G" => ScratchMotionType.Gradual,
+                _ => throw CreateFormatException(
+                    lineNumber,
+                    $"Scratch motion type must be I or G: '{values[2]}'.")
+            };
+
+            if (noteType == NoteType.Scratch &&
+                motionType != ScratchMotionType.Instant)
+            {
+                throw CreateFormatException(
+                    lineNumber,
+                    $"Single Scratch on line {scratchIndex + 1} must use " +
+                    "Instant motion.");
+            }
+
+            holder.scratchMotions[scratchIndex] = new ScratchMotionData(
+                startOffsetUnits,
+                endOffsetUnits,
+                motionType);
+        }
+    }
+
     private static char ToggleLong(bool[] openLongs, int index)
     {
         bool isEnd = openLongs[index];
@@ -522,6 +820,52 @@ public static class ChartFileCodec
         };
     }
 
+    private static double ParseMetadataDouble(
+        string value,
+        int lineNumber,
+        string fieldName)
+    {
+        if (!double.TryParse(
+                value,
+                NumberStyles.Float,
+                Invariant,
+                out double result) ||
+            !IsFinite(result))
+        {
+            throw CreateFormatException(
+                lineNumber,
+                $"{fieldName} must be a finite number: '{value}'.");
+        }
+
+        return result;
+    }
+
+    private static void EnsureHeaderFieldCount(
+        string[] fields,
+        int lineNumber,
+        string header)
+    {
+        if (fields.Length != 2)
+        {
+            throw CreateFormatException(
+                lineNumber,
+                $"{header} must contain exactly one value.");
+        }
+    }
+
+    private static void EnsureUniqueHeader(
+        bool alreadyRead,
+        int lineNumber,
+        string header)
+    {
+        if (alreadyRead)
+        {
+            throw CreateFormatException(
+                lineNumber,
+                $"Duplicate metadata header: {header}.");
+        }
+    }
+
     private static int ParseFixedDigits(
         string value,
         int length,
@@ -576,8 +920,35 @@ public static class ChartFileCodec
         return new FormatException($"Line {lineNumber}: {message}");
     }
 
+    private static void ValidateBaseBpm(double value)
+    {
+        ValidateFinite(value, nameof(value));
+
+        if (value <= 0d)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(value),
+                "Base BPM must be greater than zero.");
+        }
+    }
+
+    private static void ValidateFinite(double value, string parameterName)
+    {
+        if (!IsFinite(value))
+        {
+            throw new ArgumentOutOfRangeException(
+                parameterName,
+                "A finite number is required.");
+        }
+    }
+
     private static bool IsFinite(float value)
     {
         return !float.IsNaN(value) && !float.IsInfinity(value);
+    }
+
+    private static bool IsFinite(double value)
+    {
+        return !double.IsNaN(value) && !double.IsInfinity(value);
     }
 }

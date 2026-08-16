@@ -48,6 +48,7 @@ public sealed class GuideGenerate : MonoBehaviour
     public ObjectPool<GameObject> Pool { get; private set; }
     public int TotalGuideCount => measureCount * guidesPerMeasure;
     public int VisibleGuideCount => visibleGuides.Count;
+    public float MeasureHeight => measureHeight;
     public float GuideSpacing => measureHeight / guidesPerMeasure;
     public float ScrollToChartRatio => measureHeight / scrollMeasureHeight;
     public bool GuidesVisible => guidesVisible;

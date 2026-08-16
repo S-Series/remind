@@ -68,6 +68,15 @@ namespace REmind.Gameplay.Chart.Loading
         public int lane;
         public long timeMs;
         public long durationMs;
+        public ScratchMotionJsonData scratchMotion;
+    }
+
+    [Serializable]
+    internal sealed class ScratchMotionJsonData
+    {
+        public int startOffsetUnits;
+        public int endOffsetUnits;
+        public string motionType;
     }
 }
 

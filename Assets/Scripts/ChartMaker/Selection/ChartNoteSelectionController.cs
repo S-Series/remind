@@ -451,12 +451,17 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
                 break;
             case NoteType.Scratch:
             case NoteType.LongScratch:
+                ScratchMotionData scratchMotion =
+                    holder.GetScratchMotion(sourceLine);
                 moved = placementController.TryEditScratchNote(
                     selectedObject,
                     targetMeasure,
                     targetPosition,
                     targetHandle,
                     isPowered,
+                    scratchMotion.StartOffsetUnits,
+                    scratchMotion.EndOffsetUnits,
+                    scratchMotion.MotionType,
                     out error);
                 break;
             case NoteType.Air:

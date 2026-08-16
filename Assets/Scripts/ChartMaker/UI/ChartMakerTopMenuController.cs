@@ -63,6 +63,19 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
     private bool isMenuBound;
 
     public VisualElement RootVisualElement => document?.rootVisualElement;
+    public event Action ChartOpened;
+
+    /// <summary>미저장 변경 확인을 포함한 채보 파일 열기 흐름을 요청합니다.</summary>
+    public void RequestOpenChartFile()
+    {
+        HandleOpenRequested();
+    }
+
+    /// <summary>음악 파일 선택 대화상자를 열고 선택한 음악을 로드합니다.</summary>
+    public void RequestOpenMusicFile()
+    {
+        HandleOpenMusicRequested();
+    }
 
     private void Awake()
     {
@@ -689,6 +702,7 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
         }
 
         ChartEditHistory.Clear();
+        ChartOpened?.Invoke();
         Debug.Log($"Chart opened: {Path.GetFullPath(filePath)}", this);
     }
 

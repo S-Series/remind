@@ -19,6 +19,8 @@ public class ChartHolder
     // 0-3: main lines 1-4, 4-5: left/right scratch lines.
     public NoteType[] noteTypes;
     public bool[] isPoweredNotes;
+    // Scratch motion data corresponds to left/right scratch lines.
+    public ScratchMotionData[] scratchMotions;
     // Air note values correspond to main lines 1-4 and range from 00 to 99.
     public int[] airNoteValues;
     public float targetBpm = -1f; // -1 means that the BPM does not change.
@@ -95,6 +97,26 @@ public class ChartHolder
             : HasNote(line);
     }
 
+    public ScratchMotionData GetScratchMotion(int line)
+    {
+        EnsureStorage();
+        int scratchIndex = GetLineIndex(line) - MainLineCount;
+
+        if (scratchIndex < 0 || scratchIndex >= ScratchLineCount)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(line),
+                line,
+                "Scratch motion requires line -1 or -2.");
+        }
+
+        NoteType noteType = noteTypes[MainLineCount + scratchIndex];
+        return noteType.IsScratch()
+            ? (scratchMotions[scratchIndex] ??
+                ScratchMotionData.CreateDefault(noteType)).Clone()
+            : null;
+    }
+
     /// <summary>지정한 라인의 노트 종류와 모든 표현 오브젝트를 반환합니다.</summary>
     public bool TryGetNote(
         int line,
@@ -132,7 +154,8 @@ public class ChartHolder
         GameObject[] noteObjects,
         NoteHandleType? handleType,
         bool isPowered = false,
-        int airValue = 1)
+        int airValue = 1,
+        ScratchMotionData scratchMotion = null)
     {
         EnsureStorage();
 
@@ -173,6 +196,33 @@ public class ChartHolder
             return false;
         }
 
+        bool isScratchLine = index >= MainLineCount;
+
+        if (noteType.IsScratch() != isScratchLine)
+        {
+            throw new ArgumentException(
+                "Scratch notes must use a Scratch line and Tap notes must " +
+                "use a main line.",
+                nameof(noteType));
+        }
+
+        ScratchMotionData storedScratchMotion = null;
+
+        if (isScratchLine)
+        {
+            storedScratchMotion =
+                (scratchMotion ??
+                    ScratchMotionData.CreateDefault(noteType)).Clone();
+
+            if (noteType == NoteType.Scratch &&
+                storedScratchMotion.MotionType != ScratchMotionType.Instant)
+            {
+                throw new ArgumentException(
+                    "Single Scratch notes must use Instant motion.",
+                    nameof(scratchMotion));
+            }
+        }
+
         noteTypes[index] = noteType;
         isPoweredNotes[index] = isPowered;
 
@@ -195,6 +245,7 @@ public class ChartHolder
         }
 
         scratchNoteObjectGroups[index - MainLineCount] = noteObjects;
+        scratchMotions[index - MainLineCount] = storedScratchMotion;
 
         if (noteType.IsLong())
         {
@@ -392,7 +443,8 @@ public class ChartHolder
         out GameObject[] noteObjects,
         out NoteHandleType handleType,
         out bool isPowered,
-        out int airValue)
+        out int airValue,
+        out ScratchMotionData scratchMotion)
     {
         EnsureStorage();
         int tapIndex = FindNoteGroup(tapNoteObjectGroups, noteObject);
@@ -405,6 +457,7 @@ public class ChartHolder
             handleType = noteHandles[tapIndex];
             isPowered = isPoweredNotes[tapIndex];
             airValue = 0;
+            scratchMotion = null;
             tapNoteObjectGroups[tapIndex] = null;
             noteTypes[tapIndex] = NoteType.Unknown;
             noteHandles[tapIndex] = NoteHandleType.Unknown;
@@ -424,6 +477,7 @@ public class ChartHolder
                 : NoteHandleType.Right;
             isPowered = false;
             airValue = airNoteValues[airIndex];
+            scratchMotion = null;
             airNoteObjectGroups[airIndex] = null;
             airNoteValues[airIndex] = 0;
             return true;
@@ -442,9 +496,12 @@ public class ChartHolder
             handleType = NoteHandleType.Unknown;
             isPowered = isPoweredNotes[storageIndex];
             airValue = 0;
+            scratchMotion = scratchMotions[scratchIndex]?.Clone() ??
+                ScratchMotionData.CreateDefault(noteType);
             scratchNoteObjectGroups[scratchIndex] = null;
             noteTypes[storageIndex] = NoteType.Unknown;
             isPoweredNotes[storageIndex] = false;
+            scratchMotions[scratchIndex] = null;
             return true;
         }
 
@@ -454,6 +511,7 @@ public class ChartHolder
         handleType = NoteHandleType.Unknown;
         isPowered = false;
         airValue = 0;
+        scratchMotion = null;
         return false;
     }
 
@@ -558,6 +616,7 @@ public class ChartHolder
         scratchNoteObjectGroups[index] = null;
         noteTypes[index + MainLineCount] = NoteType.Unknown;
         isPoweredNotes[index + MainLineCount] = false;
+        scratchMotions[index] = null;
     }
 
     private void DeleteAirNote(int index)
@@ -642,11 +701,29 @@ public class ChartHolder
         Resize(ref noteHandles, MainLineCount);
         Resize(ref noteTypes, TotalLineCount);
         Resize(ref isPoweredNotes, TotalLineCount);
+        Resize(ref scratchMotions, ScratchLineCount);
         Resize(ref airNoteValues, AirNoteCount);
         Resize(ref tapNoteObjectGroups, MainLineCount);
         Resize(ref scratchNoteObjectGroups, ScratchLineCount);
         Resize(ref airNoteObjectGroups, AirNoteCount);
         Resize(ref actionNoteObjects, MainLineCount);
+
+        for (int scratchIndex = 0;
+             scratchIndex < ScratchLineCount;
+             scratchIndex++)
+        {
+            NoteType noteType = noteTypes[MainLineCount + scratchIndex];
+
+            if (noteType.IsScratch() && scratchMotions[scratchIndex] == null)
+            {
+                scratchMotions[scratchIndex] =
+                    ScratchMotionData.CreateDefault(noteType);
+            }
+            else if (!noteType.IsScratch())
+            {
+                scratchMotions[scratchIndex] = null;
+            }
+        }
     }
 
     /// <summary>런타임 오브젝트 참조를 제외한 채보 데이터 복사본을 만듭니다.</summary>
@@ -664,6 +741,12 @@ public class ChartHolder
         Array.Copy(noteTypes, clone.noteTypes, TotalLineCount);
         Array.Copy(isPoweredNotes, clone.isPoweredNotes, TotalLineCount);
         Array.Copy(airNoteValues, clone.airNoteValues, AirNoteCount);
+
+        for (int i = 0; i < ScratchLineCount; i++)
+        {
+            clone.scratchMotions[i] = scratchMotions[i]?.Clone();
+        }
+
         return clone;
     }
 

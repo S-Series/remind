@@ -11,6 +11,7 @@ public sealed class ChartToFile : MonoBehaviour
 
     [SerializeField] private string defaultFileName = FallbackFileName;
     [SerializeField] private string currentFilePath;
+    [SerializeField] private ChartCore chartCore;
 
     private string savedChartText = string.Empty;
 
@@ -38,6 +39,7 @@ public sealed class ChartToFile : MonoBehaviour
 
     private void Awake()
     {
+        ResolveChartCore();
         MarkCurrentStateAsSaved();
     }
 
@@ -49,10 +51,21 @@ public sealed class ChartToFile : MonoBehaviour
         }
     }
 
-    /// <summary>현재 ChartManager 데이터를 파일 포맷 문자열로 만듭니다.</summary>
+    /// <summary>현재 채보 데이터와 편집용 타이밍 설정을 파일 포맷 문자열로 만듭니다.</summary>
     public string BuildText()
     {
-        return ChartFileCodec.Serialize(ChartManager.ChartHolders);
+        ResolveChartCore();
+
+        if (!chartCore)
+        {
+            throw new InvalidOperationException(
+                "ChartToFile requires ChartCore to save timing metadata.");
+        }
+
+        return ChartFileCodec.Serialize(
+            ChartManager.ChartHolders,
+            chartCore.Bpm,
+            chartCore.StartCorrectionMs);
     }
 
     /// <summary>현재 채보를 지정한 경로에 UTF-8(BOM 없음)로 저장합니다.</summary>
@@ -138,6 +151,16 @@ public sealed class ChartToFile : MonoBehaviour
             Application.persistentDataPath,
             DefaultDirectoryName,
             defaultFileName);
+    }
+
+    private void ResolveChartCore()
+    {
+        if (!chartCore)
+        {
+            chartCore = ChartCore.Instance != null
+                ? ChartCore.Instance
+                : FindFirstObjectByType<ChartCore>();
+        }
     }
 
     private static void WriteAtomically(string fullPath, string chartText)

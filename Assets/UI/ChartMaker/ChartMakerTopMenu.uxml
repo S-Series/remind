@@ -37,6 +37,9 @@
                     <ui:Label text="Scratch" class="note-edit-section-title" />
                     <ui:DropdownField name="scratch-side-field" label="Side" class="note-edit-field" />
                     <ui:Toggle name="scratch-powered-field" label="Powered" class="note-edit-field" />
+                    <ui:IntegerField name="scratch-start-offset-field" label="Start Offset" class="note-edit-field" />
+                    <ui:IntegerField name="scratch-end-offset-field" label="End Offset" class="note-edit-field" />
+                    <ui:DropdownField name="scratch-motion-field" label="Motion" class="note-edit-field" />
                     <ui:Label name="scratch-long-pair-label" text="Pairing: Automatic" class="note-edit-meta" />
                 </ui:VisualElement>
 

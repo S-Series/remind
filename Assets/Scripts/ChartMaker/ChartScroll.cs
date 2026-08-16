@@ -13,6 +13,12 @@ public sealed class ChartScroll : MonoBehaviour
     [SerializeField, Min(0.01f)] private float smoothTime = 0.08f;
     [SerializeField, Min(0.0001f)] private float snapThreshold = 0.01f;
 
+    [Header("Camera Scrolling")]
+    [SerializeField] private Transform scrollCameraTransform;
+    [SerializeField] private Transform previewCameraTransform;
+    [SerializeField] private RectTransform[] cameraFollowRects =
+        Array.Empty<RectTransform>();
+
     private ScrollRect scrollRect;
     private EventTrigger eventTrigger;
     private EventTrigger.Entry scrollEntry;
@@ -23,6 +29,13 @@ public sealed class ChartScroll : MonoBehaviour
     private bool isDragging;
     private bool ignoreNextScrollRectCallback;
     private bool ownsEventTrigger;
+    private bool externalTimelineControl;
+    private Vector3 cameraBasePosition;
+    private Vector3 previewCameraBasePosition;
+    private Vector2 scrollViewportBasePosition;
+    private Vector2[] cameraFollowBasePositions = Array.Empty<Vector2>();
+    private GuideGenerate guideGenerate;
+    private bool cameraScrollingReady;
 
     public event Action<float> ScrollYChanged;
     public event Action<Vector2> ScrollPositionChanged;
@@ -31,6 +44,9 @@ public sealed class ChartScroll : MonoBehaviour
         ? scrollRect.content.anchoredPosition
         : Vector2.zero;
     public float ScrollY => ScrollPosition.y;
+    public float CameraY => scrollCameraTransform
+        ? scrollCameraTransform.position.y
+        : 0f;
 
     private void Awake()
     {
@@ -44,6 +60,8 @@ public sealed class ChartScroll : MonoBehaviour
         ApplySettings();
         ConfigurePointerEvents();
         targetPosition = ScrollPosition;
+        InitializeCameraScrolling();
+        ApplyCameraScrolling(ScrollY);
     }
 
     private void OnEnable()
@@ -65,7 +83,7 @@ public sealed class ChartScroll : MonoBehaviour
 
     private void Update()
     {
-        if (scrollRect == null || isDragging)
+        if (scrollRect == null || isDragging || externalTimelineControl)
         {
             return;
         }
@@ -105,7 +123,7 @@ public sealed class ChartScroll : MonoBehaviour
         scrollRect.horizontal = false;
         scrollRect.vertical = true;
         scrollRect.movementType = ScrollRect.MovementType.Elastic;
-        scrollRect.elasticity = 0.1f;
+        scrollRect.elasticity = 0f;
         scrollRect.inertia = true;
         scrollRect.decelerationRate = 0.135f;
         // Wheel input is accumulated by ApplyScrollDelta for smooth movement.
@@ -133,6 +151,93 @@ public sealed class ChartScroll : MonoBehaviour
 
         smoothVelocity = Vector2.zero;
         SetScrollPosition(targetPosition);
+    }
+
+    /// <summary>
+    /// 테스트 재생이 타임라인을 제어하는 동안 스크롤 입력과 가이드 기준 갱신을 잠급니다.
+    /// </summary>
+    public void SetExternalTimelineControl(bool active)
+    {
+        if (externalTimelineControl == active)
+        {
+            return;
+        }
+
+        externalTimelineControl = active;
+
+        if (scrollRect == null)
+        {
+            return;
+        }
+
+        scrollRect.StopMovement();
+        scrollRect.enabled = !active;
+        isDragging = false;
+        ignoreNextScrollRectCallback = false;
+        smoothVelocity = Vector2.zero;
+        targetPosition = ScrollPosition;
+
+        if (!active)
+        {
+            GuideGenerate.SetReferenceFromScrollY(ScrollY);
+        }
+    }
+
+    /// <summary>테스트 타임라인의 채보 Y를 일반 스크롤과 같은 카메라 좌표로 적용합니다.</summary>
+    public void SetExternalChartY(float chartY)
+    {
+        if (!externalTimelineControl ||
+            float.IsNaN(chartY) ||
+            float.IsInfinity(chartY))
+        {
+            return;
+        }
+
+        GuideGenerate guideGenerate = GuideGenerate.Instance;
+
+        if (!guideGenerate ||
+            guideGenerate.ScrollToChartRatio <= Mathf.Epsilon)
+        {
+            return;
+        }
+
+        Vector2 externalPosition = ScrollPosition;
+        externalPosition.y = -chartY / guideGenerate.ScrollToChartRatio;
+        targetPosition = externalPosition;
+        smoothVelocity = Vector2.zero;
+        SetScrollPosition(externalPosition);
+        GuideGenerate.SetReferenceY(chartY);
+    }
+
+    /// <summary>현재 스크롤 위치를 가장 가까운 마디선으로 부드럽게 이동합니다.</summary>
+    public void ClampToNearestMeasure()
+    {
+        GuideGenerate guideGenerate = GuideGenerate.Instance;
+
+        if (scrollRect == null || !guideGenerate)
+        {
+            Debug.LogWarning(
+                "ChartScroll requires GuideGenerate to clamp to a measure.",
+                this);
+            return;
+        }
+
+        float scrollToChartRatio = guideGenerate.ScrollToChartRatio;
+
+        if (scrollToChartRatio <= Mathf.Epsilon)
+        {
+            return;
+        }
+
+        float chartPositionY = -ScrollY * scrollToChartRatio;
+        float nearestMeasureY = Mathf.Round(
+            chartPositionY / guideGenerate.MeasureHeight) *
+            guideGenerate.MeasureHeight;
+        float targetScrollY = -nearestMeasureY / scrollToChartRatio;
+
+        scrollRect.StopMovement();
+        smoothVelocity = Vector2.zero;
+        SetScrollY(targetScrollY, smooth: true);
     }
 
     /// <summary>외부 입력 영역에서 받은 휠 이동량을 현재 스크롤 목표에 더합니다.</summary>
@@ -216,7 +321,9 @@ public sealed class ChartScroll : MonoBehaviour
 
     private void ApplyScrollDelta(Vector2 scrollDelta)
     {
-        if (!isActiveAndEnabled || scrollRect == null)
+        if (!isActiveAndEnabled ||
+            scrollRect == null ||
+            externalTimelineControl)
         {
             return;
         }
@@ -236,7 +343,7 @@ public sealed class ChartScroll : MonoBehaviour
 
     private void HandleBeginDrag(BaseEventData _)
     {
-        if (!isActiveAndEnabled)
+        if (!isActiveAndEnabled || externalTimelineControl)
         {
             return;
         }
@@ -248,7 +355,7 @@ public sealed class ChartScroll : MonoBehaviour
 
     private void HandleEndDrag(BaseEventData _)
     {
-        if (!isActiveAndEnabled)
+        if (!isActiveAndEnabled || externalTimelineControl)
         {
             return;
         }
@@ -306,8 +413,124 @@ public sealed class ChartScroll : MonoBehaviour
     private void NotifyScrollPositionChanged()
     {
         Vector2 position = ScrollPosition;
-        GuideGenerate.SetReferenceFromScrollY(position.y);
+        ApplyCameraScrolling(position.y);
+
+        if (!externalTimelineControl)
+        {
+            GuideGenerate.SetReferenceFromScrollY(position.y);
+        }
+
         ScrollPositionChanged?.Invoke(position);
         ScrollYChanged?.Invoke(position.y);
+    }
+
+    private void InitializeCameraScrolling()
+    {
+        if (!scrollCameraTransform && Camera.main)
+        {
+            scrollCameraTransform = Camera.main.transform;
+        }
+
+        guideGenerate = GuideGenerate.Instance;
+
+        if (!guideGenerate)
+        {
+            guideGenerate = FindFirstObjectByType<GuideGenerate>();
+        }
+
+        if (!scrollCameraTransform || !scrollTrans.parent)
+        {
+            Debug.LogWarning(
+                "ChartScroll camera scrolling requires a camera transform " +
+                "and a parent for Scroll Field.",
+                this);
+            return;
+        }
+
+        float initialViewportOffsetY = -ScrollY;
+        Vector3 initialWorldOffset =
+            GetCameraWorldOffset(initialViewportOffsetY);
+        cameraBasePosition =
+            scrollCameraTransform.position - initialWorldOffset;
+
+        if (previewCameraTransform && guideGenerate)
+        {
+            previewCameraBasePosition =
+                previewCameraTransform.position -
+                Vector3.forward * GetPreviewCameraZOffset(
+                    initialViewportOffsetY);
+        }
+        else if (previewCameraTransform)
+        {
+            Debug.LogWarning(
+                "Preview Camera scrolling requires GuideGenerate.",
+                this);
+        }
+
+        scrollViewportBasePosition =
+            scrollTrans.anchoredPosition -
+            Vector2.up * initialViewportOffsetY;
+        cameraFollowBasePositions =
+            new Vector2[cameraFollowRects.Length];
+
+        for (int i = 0; i < cameraFollowRects.Length; i++)
+        {
+            RectTransform followRect = cameraFollowRects[i];
+
+            if (followRect)
+            {
+                cameraFollowBasePositions[i] =
+                    followRect.anchoredPosition -
+                    Vector2.up * initialViewportOffsetY;
+            }
+        }
+
+        cameraScrollingReady = true;
+    }
+
+    private void ApplyCameraScrolling(float scrollY)
+    {
+        if (!cameraScrollingReady)
+        {
+            return;
+        }
+
+        float viewportOffsetY = -scrollY;
+        // Content의 로컬 스크롤을 뷰포트 이동으로 상쇄해 채보는 월드에 고정합니다.
+        scrollTrans.anchoredPosition =
+            scrollViewportBasePosition + Vector2.up * viewportOffsetY;
+
+        for (int i = 0; i < cameraFollowRects.Length; i++)
+        {
+            RectTransform followRect = cameraFollowRects[i];
+
+            if (followRect)
+            {
+                followRect.anchoredPosition =
+                    cameraFollowBasePositions[i] +
+                    Vector2.up * viewportOffsetY;
+            }
+        }
+
+        scrollCameraTransform.position =
+            cameraBasePosition + GetCameraWorldOffset(viewportOffsetY);
+
+        if (previewCameraTransform && guideGenerate)
+        {
+            previewCameraTransform.position =
+                previewCameraBasePosition +
+                Vector3.forward * GetPreviewCameraZOffset(viewportOffsetY);
+        }
+    }
+
+    private Vector3 GetCameraWorldOffset(float viewportOffsetY)
+    {
+        return scrollTrans.parent.TransformVector(
+            Vector3.up * viewportOffsetY);
+    }
+
+    private float GetPreviewCameraZOffset(float viewportOffsetY)
+    {
+        return viewportOffsetY * guideGenerate.ScrollToChartRatio;
     }
 }

@@ -7,7 +7,7 @@ public sealed class NoteLength : MonoBehaviour
 
     private const float ReferenceLength = 160f;
     private static readonly Vector2 NormalScale =
-        new Vector2(0.6f, 15.72f);
+        new Vector2(0.6f, 15.625f);
 
     /// <summary>시작점에서 위쪽으로 표시할 로컬 Y 길이를 적용합니다.</summary>
     public void SetLength(float length)

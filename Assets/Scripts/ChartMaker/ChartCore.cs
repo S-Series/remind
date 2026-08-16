@@ -18,12 +18,15 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
     [SerializeField, Min(0.01f)] private float schedulingLeadTimeSeconds = 0.2f;
 
     private double songStartDspTime;
+    private double playbackStartMs;
     private bool isTestPlaying;
     private AudioClip loadedAudioClip;
 
     public event Action<double> TestMsChanged;
     public event Action<double> BpmChanged;
+    public event Action<double> StartCorrectionMsChanged;
     public event Action<bool> TestPlaybackChanged;
+    public event Action<AudioClip> AudioClipChanged;
 
     public AudioSource AudioSource => audioSource;
     public bool IsTestPlaying => isTestPlaying;
@@ -53,9 +56,12 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
                 return TestMs;
             }
 
-            double elapsedMs =
-                (AudioSettings.dspTime - songStartDspTime) * 1000d;
-            return Math.Max(0d, Math.Min(elapsedMs, AudioDurationMs));
+            double elapsedMs = Math.Max(
+                0d,
+                (AudioSettings.dspTime - songStartDspTime) * 1000d);
+            return Math.Max(
+                0d,
+                Math.Min(playbackStartMs + elapsedMs, AudioDurationMs));
         }
     }
 
@@ -208,6 +214,12 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
     /// </summary>
     public void StartTestPlay()
     {
+        StartTestPlay(0d);
+    }
+
+    /// <summary>지정한 음악 위치부터 DSP 예약 재생을 시작합니다.</summary>
+    public void StartTestPlay(double startMs)
+    {
         AudioClip clip = audioSource != null ? audioSource.clip : null;
 
         if (clip == null ||
@@ -223,8 +235,15 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
         }
 
         audioSource.Stop();
-        ResetAudioPosition();
-        SetTestMs(0d);
+        int startSample = (int)Math.Min(
+            clip.samples - 1L,
+            Math.Max(
+                0L,
+                (long)Math.Round(
+                    NormalizeTestMs(startMs) * clip.frequency / 1000d)));
+        audioSource.timeSamples = startSample;
+        playbackStartMs = startSample * 1000d / clip.frequency;
+        SetTestMs(playbackStartMs);
         songStartDspTime = AudioSettings.dspTime + schedulingLeadTimeSeconds;
         SetPlaybackState(true);
         audioSource.PlayScheduled(songStartDspTime);
@@ -268,7 +287,15 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
     /// <summary>음악 시작점과 채보 시작점 사이의 밀리초 보정값을 설정합니다.</summary>
     public void SetStartCorrectionMs(double value)
     {
-        startCorrectionMs = NormalizeCorrectionMs(value);
+        double normalizedValue = NormalizeCorrectionMs(value);
+
+        if (startCorrectionMs.Equals(normalizedValue))
+        {
+            return;
+        }
+
+        startCorrectionMs = normalizedValue;
+        StartCorrectionMsChanged?.Invoke(startCorrectionMs);
     }
 
     public void SetStartCorrectionMs(string input)
@@ -323,6 +350,7 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
         audioSource.clip = loadedAudioClip;
         CurrentAudioFilePath = fullPath;
         IsAudioLoading = false;
+        AudioClipChanged?.Invoke(loadedAudioClip);
 
         if (previousLoadedClip)
         {
@@ -367,6 +395,7 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
 
     private void ResetAudioPosition()
     {
+        playbackStartMs = 0d;
         AudioClip clip = audioSource != null ? audioSource.clip : null;
 
         if (clip != null && clip.samples > 0)

@@ -32,6 +32,9 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
     private VisualElement scratchPanel;
     private DropdownField scratchSideField;
     private Toggle scratchPoweredField;
+    private IntegerField scratchStartOffsetField;
+    private IntegerField scratchEndOffsetField;
+    private DropdownField scratchMotionField;
     private Label scratchLongPairLabel;
     private VisualElement airPanel;
     private DropdownField airLineField;
@@ -77,6 +80,11 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
         scratchPanel = root.Q<VisualElement>("scratch-note-edit-panel");
         scratchSideField = root.Q<DropdownField>("scratch-side-field");
         scratchPoweredField = root.Q<Toggle>("scratch-powered-field");
+        scratchStartOffsetField =
+            root.Q<IntegerField>("scratch-start-offset-field");
+        scratchEndOffsetField =
+            root.Q<IntegerField>("scratch-end-offset-field");
+        scratchMotionField = root.Q<DropdownField>("scratch-motion-field");
         scratchLongPairLabel = root.Q<Label>("scratch-long-pair-label");
         airPanel = root.Q<VisualElement>("air-note-edit-panel");
         airLineField = root.Q<DropdownField>("air-line-field");
@@ -99,6 +107,8 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
         airLineField.choices = CreateMainLineChoices();
         tapHandField.choices = new List<string> { "Left", "Right" };
         scratchSideField.choices = new List<string> { "Left", "Right" };
+        scratchMotionField.choices =
+            new List<string> { "Instant", "Gradual" };
         applyButton.SetEnabled(false);
 
         closeButton.clicked += HandleCloseRequested;
@@ -189,6 +199,14 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
             scratchSideField.SetValueWithoutNotify(
                 line == -2 ? "Right" : "Left");
             scratchPoweredField.SetValueWithoutNotify(isPowered);
+            ScratchMotionData scratchMotion = holder.GetScratchMotion(line);
+            scratchStartOffsetField.SetValueWithoutNotify(
+                scratchMotion.StartOffsetUnits);
+            scratchEndOffsetField.SetValueWithoutNotify(
+                scratchMotion.EndOffsetUnits);
+            scratchMotionField.SetValueWithoutNotify(
+                scratchMotion.MotionType.ToString());
+            scratchMotionField.SetEnabled(noteType == NoteType.LongScratch);
             scratchLongPairLabel.style.display =
                 noteType == NoteType.LongScratch
                     ? DisplayStyle.Flex
@@ -550,12 +568,19 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
         NoteHandleType side = scratchSideField.value == "Right"
             ? NoteHandleType.Right
             : NoteHandleType.Left;
+        ScratchMotionType motionType =
+            scratchMotionField.value == "Gradual"
+                ? ScratchMotionType.Gradual
+                : ScratchMotionType.Instant;
         return placementController.TryEditScratchNote(
             selectedNoteObject,
             measureField.value,
             positionField.value,
             side,
             scratchPoweredField.value,
+            scratchStartOffsetField.value,
+            scratchEndOffsetField.value,
+            motionType,
             out error);
     }
 
@@ -619,6 +644,9 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
                scratchPanel != null &&
                scratchSideField != null &&
                scratchPoweredField != null &&
+               scratchStartOffsetField != null &&
+               scratchEndOffsetField != null &&
+               scratchMotionField != null &&
                scratchLongPairLabel != null &&
                airPanel != null &&
                airLineField != null &&

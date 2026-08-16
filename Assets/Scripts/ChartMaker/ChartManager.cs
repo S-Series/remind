@@ -246,6 +246,7 @@ public static class ChartManager
         NoteHandleType targetHandle,
         bool targetPowered,
         int targetAirValue,
+        ScratchMotionData targetScratchMotion,
         out string error)
     {
         if (!TryGetNoteData(
@@ -316,7 +317,8 @@ public static class ChartManager
                 out GameObject[] noteObjects,
                 out NoteHandleType detachedHandle,
                 out bool detachedPowered,
-                out int detachedAirValue))
+                out int detachedAirValue,
+                out ScratchMotionData detachedScratchMotion))
         {
             error = "Selected note could not be detached from its source.";
             return false;
@@ -335,6 +337,9 @@ public static class ChartManager
         int airValue = detachedType == NoteType.Air
             ? targetAirValue
             : detachedAirValue;
+        ScratchMotionData scratchMotion = detachedType.IsScratch()
+            ? targetScratchMotion ?? detachedScratchMotion
+            : null;
 
         if (!targetHolder.AddNote(
                 targetLine,
@@ -342,7 +347,8 @@ public static class ChartManager
                 noteObjects,
                 storedHandle,
                 powered,
-                airValue))
+                airValue,
+                scratchMotion))
         {
             sourceHolder.AddNote(
                 detachedLine,
@@ -350,7 +356,8 @@ public static class ChartManager
                 noteObjects,
                 detachedHandle,
                 detachedPowered,
-                detachedAirValue);
+                detachedAirValue,
+                detachedScratchMotion);
 
             if (createdTargetHolder && !targetHolder.HasChartData)
             {
@@ -408,6 +415,7 @@ public static class ChartManager
             targetHandle,
             isPowered,
             airValue,
+            null,
             out _);
     }
 

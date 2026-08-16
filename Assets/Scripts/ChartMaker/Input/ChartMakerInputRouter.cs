@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using REmind.Common.Systems;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -314,7 +315,10 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
 
     private void HandleCancelPerformed(InputAction.CallbackContext _)
     {
-        CancelTool();
+        if (!PopupContext.HasOpenPopup)
+        {
+            CancelTool();
+        }
     }
 
     private void HandleDeletePerformed(InputAction.CallbackContext _)
@@ -327,7 +331,10 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
 
     private void HandleSavePerformed(InputAction.CallbackContext _)
     {
-        SaveRequested?.Invoke();
+        if (!PopupContext.HasOpenPopup)
+        {
+            SaveRequested?.Invoke();
+        }
     }
 
     private void HandleUndoPerformed(InputAction.CallbackContext _)
@@ -349,7 +356,10 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
 
     private void HandleTogglePoweredPerformed(InputAction.CallbackContext _)
     {
-        TogglePoweredRequested?.Invoke();
+        if (!PopupContext.HasOpenPopup)
+        {
+            TogglePoweredRequested?.Invoke();
+        }
     }
 
     private void HandleMoveSelectionLeftPerformed(InputAction.CallbackContext _)
@@ -387,7 +397,8 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
     private void HandleOpenChartPerformed(InputAction.CallbackContext _)
     {
         // Ctrl+Shift+O also satisfies the Ctrl+O composite.
-        if (Keyboard.current?.shiftKey.isPressed != true)
+        if (!PopupContext.HasOpenPopup &&
+            Keyboard.current?.shiftKey.isPressed != true)
         {
             OpenChartRequested?.Invoke();
         }
@@ -395,11 +406,19 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
 
     private void HandleOpenMusicPerformed(InputAction.CallbackContext _)
     {
-        OpenMusicRequested?.Invoke();
+        if (!PopupContext.HasOpenPopup)
+        {
+            OpenMusicRequested?.Invoke();
+        }
     }
 
     private static bool IsEditingText()
     {
+        if (PopupContext.HasOpenPopup)
+        {
+            return true;
+        }
+
         GameObject selectedObject = EventSystem.current?.currentSelectedGameObject;
 
         if (selectedObject != null &&
