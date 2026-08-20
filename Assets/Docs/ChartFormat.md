@@ -396,3 +396,22 @@ JSON Text
 - 추가 노트 타입
 - BPM 이벤트의 에디터 내부 tick 표현
 - JSON Schema 파일의 위치와 자동 생성 방식
+
+## 18. ChartMaker Native 좌표 호환성
+
+현재 ChartMaker의 native 텍스트 포맷(`#REmindChart`)은 위 JSON 초안과 별개다.
+native 포맷 v3의 위치 좌표는 다음 규칙을 사용한다.
+
+- 한 마디의 리듬 기준은 `240 pulses`다.
+- 한 pulse는 저장 정밀도 `20 position units`를 가진다.
+- 따라서 한 마디는 `4800 position units`이며 유효한 마디 내부 위치는 `0`~`4799`다.
+- 화면상의 한 마디 높이는 이전과 동일한 `160 world units`다.
+- 좌표 변환은 `30 position units = 1 world unit`이다.
+- 3분할은 `1600`, 5분할은 `960`, 16분할은 `300` position units 간격이므로 모두 정수 좌표다.
+
+native v1, v2와 버전 헤더가 없는 파일은 기존 `1600 units/measure`로 해석한 뒤
+로드 시 정확히 3배하여 v3 좌표로 변환한다. 저장 시에는 항상 v3를 출력한다.
+이전 정수 좌표는 전부 손실 없이 변환되며 화면 위치와 BPM 기반 재생 시각은 변하지 않는다.
+
+레거시 `TempChartData` JSON의 `NotePos`도 기존 1600 단위로 해석한다. 이 경로는
+호환용이며, 향후 위 JSON 초안을 실제 런타임 포맷으로 확정할 때 명시적인 버전 변환을 거쳐야 한다.

@@ -11,7 +11,8 @@ public sealed class ChartPlacementController : MonoBehaviour
     private const float NormalizedMinX = -1f;
     private const float NormalizedMaxX = 1f;
     private const float PreviewMaxNormalizedY = 0.8f;
-    private const float PreviewReferenceY = 160f;
+    private const float PreviewReferenceY =
+        ChartHolder.WorldUnitsPerMeasure;
     private const float SidePositionCorrection = 40f;
 
     private static readonly float[] TapXClampValues = { -0.75f, -0.25f, 0.25f, 0.75f };
@@ -464,9 +465,7 @@ public sealed class ChartPlacementController : MonoBehaviour
     {
         int targetAbsolutePosition = Mathf.Max(
             0,
-            Mathf.RoundToInt(
-                dragTargetPosition.y *
-                ChartHolder.PositionUnitsPerWorldUnit));
+            ChartHolder.WorldYToAbsolutePosition(dragTargetPosition.y));
         bool positionChanged =
             targetAbsolutePosition != dragSourceAbsolutePosition ||
             dragTargetLine != dragSourceLine ||
@@ -582,8 +581,8 @@ public sealed class ChartPlacementController : MonoBehaviour
             out Vector3 notePosition,
             out int line,
             out NoteHandleType handleType);
-        int chartPosition = Mathf.RoundToInt(notePosition.y);
-        ChartHolder holder = ChartManager.GetOrCreateHolder(chartPosition);
+        ChartHolder holder = ChartManager.GetOrCreateHolder(notePosition.y);
+        notePosition.y = holder.WorldY;
 
         if (holder.HasNote(line, currentNoteType))
         {
@@ -597,7 +596,8 @@ public sealed class ChartPlacementController : MonoBehaviour
         {
             Debug.Log(
                 $"Place {CurrentTool}: normalized={NormalizedPosition}, " +
-                $"line={line}, chartY={chartPosition}",
+                $"line={line}, chartY={notePosition.y}, " +
+                $"position={holder.AbsoluteChartPosition}",
                 this);
         }
 
@@ -618,6 +618,7 @@ public sealed class ChartPlacementController : MonoBehaviour
             return;
         }
 
+        ChartManager.NotifyChartChanged();
         ChartEditHistory.CommitChange(editTransaction);
     }
 
@@ -851,7 +852,7 @@ public sealed class ChartPlacementController : MonoBehaviour
 
         Vector3 localPosition = new Vector3(
             GetStoredLineX(line),
-            absolutePosition / ChartHolder.PositionUnitsPerWorldUnit,
+            ChartHolder.AbsolutePositionToWorldY(absolutePosition),
             0f);
         Transform handField = handleType == NoteHandleType.Right
             ? rightNoteField
@@ -912,16 +913,19 @@ public sealed class ChartPlacementController : MonoBehaviour
     {
         absolutePosition = 0;
 
-        if (measure < 0 || measure > 999)
+        if (measure < 0 ||
+            measure > ChartHolder.MaximumMeasureNumber)
         {
             error = "Measure must be between 0 and 999.";
             return false;
         }
 
         if (measurePosition < 0 ||
-            measurePosition > ChartHolder.PositionUnitsPerMeasure)
+            measurePosition >= ChartHolder.PositionUnitsPerMeasure)
         {
-            error = "Position must be between 0 and 1600.";
+            error =
+                $"Position must be between 0 and " +
+                $"{ChartHolder.PositionUnitsPerMeasure - 1}.";
             return false;
         }
 
@@ -929,12 +933,13 @@ public sealed class ChartPlacementController : MonoBehaviour
             (long)measure * ChartHolder.PositionUnitsPerMeasure +
             measurePosition;
         long maximumPosition =
-            999L * ChartHolder.PositionUnitsPerMeasure +
-            ChartHolder.PositionUnitsPerMeasure - 1;
+            ChartHolder.MaximumAbsolutePosition;
 
         if (calculatedPosition > maximumPosition)
         {
-            error = "The normalized measure would exceed 999.";
+            error =
+                $"The normalized measure would exceed " +
+                $"{ChartHolder.MaximumMeasureNumber}.";
             return false;
         }
 
@@ -1468,7 +1473,7 @@ public sealed class ChartPlacementController : MonoBehaviour
         NoteType noteType,
         bool? positionCorrection)
     {
-        // 입력 영역의 (0,0)~(1,0.8)을 채보의 X -15~15, Y 0~160으로 변환합니다.
+        // 입력 영역을 기존 화면 높이로 변환하고 저장 시 240-pulse 좌표로 환산합니다.
         float normalizedX = Mathf.Lerp(
             NormalizedMinX,
             NormalizedMaxX,
@@ -1492,7 +1497,7 @@ public sealed class ChartPlacementController : MonoBehaviour
         float calculatedY = UseYClamp
             ? ClampChartYToGuide(chartY)
             : chartY;
-        int appliedY = Mathf.RoundToInt(calculatedY);
+        float appliedY = calculatedY;
 
         Vector3 ret = new Vector3(
             x,
@@ -1548,6 +1553,11 @@ public sealed class ChartPlacementController : MonoBehaviour
         notePosition = ToNoteFieldPosition(
             previewPosition,
             positionCorrection);
+        int absolutePosition = Mathf.Max(
+            0,
+            ChartHolder.WorldYToAbsolutePosition(notePosition.y));
+        notePosition.y =
+            ChartHolder.AbsolutePositionToWorldY(absolutePosition);
         int mainLine = GetLine(notePosition.x);
         handleType = GetHandleType(positionCorrection, mainLine);
         line = GetStorageLine(noteType, mainLine, handleType);
@@ -1555,12 +1565,18 @@ public sealed class ChartPlacementController : MonoBehaviour
 
     private static float ClampChartYToGuide(float chartY)
     {
-        float guideSpacing = PreviewReferenceY / YGuideCount;
         int guideIndex = Mathf.Max(
             0,
-            Mathf.RoundToInt(chartY / guideSpacing));
+            Mathf.RoundToInt(
+                chartY /
+                ChartHolder.WorldUnitsPerMeasure *
+                YGuideCount));
+        int absolutePosition =
+            ChartHolder.GridIndexToAbsolutePosition(
+                guideIndex,
+                YGuideCount);
 
-        return guideIndex * guideSpacing;
+        return ChartHolder.AbsolutePositionToWorldY(absolutePosition);
     }
 
     private static float ClampX(

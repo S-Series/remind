@@ -9,8 +9,22 @@ public class ChartHolder
     public const int ScratchLineCount = 2;
     public const int TotalLineCount = MainLineCount + ScratchLineCount;
     public const int AirNoteCount = 4;
-    public const int PositionUnitsPerMeasure = 1600;
-    public const float PositionUnitsPerWorldUnit = 10f;
+
+    // Timeline resolution is based on 240 pulses so 1/3, 1/5, and 1/16
+    // measure grids all land on exact integer positions. Twenty subunits per
+    // pulse produce 4800 units per measure, which is also an exact multiple of
+    // the legacy 1600-unit grid. Display geometry remains 160 units per measure.
+    public const int PulsesPerMeasure = 240;
+    public const int PositionUnitsPerPulse = 20;
+    public const int PositionUnitsPerMeasure =
+        PulsesPerMeasure * PositionUnitsPerPulse;
+    public const int MeasureCount = 1000;
+    public const int MaximumMeasureNumber = MeasureCount - 1;
+    public const int MaximumAbsolutePosition =
+        MeasureCount * PositionUnitsPerMeasure - 1;
+    public const float WorldUnitsPerMeasure = 160f;
+    public const float PositionUnitsPerWorldUnit =
+        PositionUnitsPerMeasure / WorldUnitsPerMeasure;
 
     public int ChartNumber;
     public int ChartPos;
@@ -35,7 +49,7 @@ public class ChartHolder
     public int AbsoluteChartPosition =>
         checked(ChartNumber * PositionUnitsPerMeasure + ChartPos);
     public float WorldY =>
-        AbsoluteChartPosition / PositionUnitsPerWorldUnit;
+        AbsolutePositionToWorldY(AbsoluteChartPosition);
     public bool HasChartData
     {
         get
@@ -72,6 +86,77 @@ public class ChartHolder
     {
         ChartNumber = chartNumber;
         ChartPos = chartPos;
+    }
+
+    public static int WorldYToAbsolutePosition(float worldY)
+    {
+        if (float.IsNaN(worldY) || float.IsInfinity(worldY))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(worldY),
+                worldY,
+                "World Y must be finite.");
+        }
+
+        return checked((int)Math.Round(
+            (double)worldY * PositionUnitsPerWorldUnit,
+            MidpointRounding.AwayFromZero));
+    }
+
+    public static float AbsolutePositionToWorldY(int absolutePosition)
+    {
+        return absolutePosition / PositionUnitsPerWorldUnit;
+    }
+
+    public static float PositionDeltaToWorldLength(int positionDelta)
+    {
+        return positionDelta / PositionUnitsPerWorldUnit;
+    }
+
+    public static int GridIndexToAbsolutePosition(
+        int gridIndex,
+        int divisionsPerMeasure)
+    {
+        if (gridIndex < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(gridIndex));
+        }
+
+        if (divisionsPerMeasure <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(divisionsPerMeasure));
+        }
+
+        long numerator = checked(
+            (long)gridIndex * PositionUnitsPerMeasure);
+        long rounded = checked(
+            (numerator + divisionsPerMeasure / 2L) /
+            divisionsPerMeasure);
+        return checked((int)rounded);
+    }
+
+    public static int ConvertAbsolutePosition(
+        int sourceAbsolutePosition,
+        int sourceUnitsPerMeasure)
+    {
+        if (sourceAbsolutePosition < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(sourceAbsolutePosition));
+        }
+
+        if (sourceUnitsPerMeasure <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(sourceUnitsPerMeasure));
+        }
+
+        long numerator = checked(
+            (long)sourceAbsolutePosition * PositionUnitsPerMeasure);
+        long rounded = checked(
+            (numerator + sourceUnitsPerMeasure / 2L) /
+            sourceUnitsPerMeasure);
+        return checked((int)rounded);
     }
 
     /// <summary>지정한 라인에 이미 노트 데이터가 있는지 확인합니다.</summary>

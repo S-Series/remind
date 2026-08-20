@@ -13,7 +13,8 @@ namespace REmind.Gameplay.Chart
             11.25f,
         };
 
-        private const double NotePositionScale = 0.1d;
+        // Temp JSON stores the original 1600-units-per-measure coordinates.
+        private const double LegacyNotePositionScale = 0.1d;
 
         [SerializeField] private GameObject TapNotePrefab;
         [SerializeField] private Transform NoteField;
@@ -119,7 +120,7 @@ namespace REmind.Gameplay.Chart
 
                 var localPosition = new Vector3(
                     LineXPositions[lineIndex],
-                    (float)(Chart.NotePos[i] * NotePositionScale),
+                    (float)(Chart.NotePos[i] * LegacyNotePositionScale),
                     0f);
 
                 GameObject noteObject = Instantiate(TapNotePrefab, NoteField, false);

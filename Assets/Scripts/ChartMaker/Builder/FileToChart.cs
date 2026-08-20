@@ -193,13 +193,16 @@ public sealed class FileToChart : MonoBehaviour
                 $"Legacy note {noteIndex} has an invalid position: {value}");
         }
 
-        int absolutePosition = checked((int)Math.Round(
+        int legacyAbsolutePosition = checked((int)Math.Round(
             value,
             MidpointRounding.AwayFromZero));
+        int absolutePosition = ChartHolder.ConvertAbsolutePosition(
+            legacyAbsolutePosition,
+            ChartFileCodec.LegacyPositionUnitsPerMeasure);
         int chartNumber = absolutePosition /
             ChartHolder.PositionUnitsPerMeasure;
 
-        if (chartNumber > 999)
+        if (chartNumber > ChartHolder.MaximumMeasureNumber)
         {
             throw new FormatException(
                 $"Legacy note {noteIndex} is beyond measure 999: {value}");

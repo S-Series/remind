@@ -36,6 +36,7 @@ public sealed class ChartScroll : MonoBehaviour
     private Vector2[] cameraFollowBasePositions = Array.Empty<Vector2>();
     private GuideGenerate guideGenerate;
     private bool cameraScrollingReady;
+    private float previewHighSpeedScale = 1f;
 
     public event Action<float> ScrollYChanged;
     public event Action<Vector2> ScrollPositionChanged;
@@ -47,6 +48,7 @@ public sealed class ChartScroll : MonoBehaviour
     public float CameraY => scrollCameraTransform
         ? scrollCameraTransform.position.y
         : 0f;
+    public float PreviewHighSpeedScale => previewHighSpeedScale;
 
     private void Awake()
     {
@@ -207,6 +209,34 @@ public sealed class ChartScroll : MonoBehaviour
         smoothVelocity = Vector2.zero;
         SetScrollPosition(externalPosition);
         GuideGenerate.SetReferenceY(chartY);
+    }
+
+    /// <summary>
+    /// Preview 노트 간격과 같은 배율로 Preview Camera의 타임라인 이동량을 조절합니다.
+    /// </summary>
+    public void SetPreviewHighSpeedScale(float scale)
+    {
+        if (float.IsNaN(scale) ||
+            float.IsInfinity(scale) ||
+            scale <= 0f)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(scale),
+                scale,
+                "Preview high-speed scale must be finite and greater than zero.");
+        }
+
+        if (Mathf.Approximately(previewHighSpeedScale, scale))
+        {
+            return;
+        }
+
+        previewHighSpeedScale = scale;
+
+        if (cameraScrollingReady)
+        {
+            ApplyCameraScrolling(ScrollY);
+        }
     }
 
     /// <summary>현재 스크롤 위치를 가장 가까운 마디선으로 부드럽게 이동합니다.</summary>
@@ -531,6 +561,8 @@ public sealed class ChartScroll : MonoBehaviour
 
     private float GetPreviewCameraZOffset(float viewportOffsetY)
     {
-        return viewportOffsetY * guideGenerate.ScrollToChartRatio;
+        return viewportOffsetY *
+            guideGenerate.ScrollToChartRatio *
+            previewHighSpeedScale;
     }
 }

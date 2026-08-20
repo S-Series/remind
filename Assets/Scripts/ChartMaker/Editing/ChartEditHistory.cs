@@ -116,6 +116,7 @@ internal static class ChartEditHistory
                     : null);
         }
 
+        ChartManager.NotifyChartChanged();
         placementController.RebuildChartViews();
         PushChange(destination, change);
         return true;

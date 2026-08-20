@@ -7,7 +7,8 @@ using REmind.Data;
 
 public static class ChartFileCodec
 {
-    public const int CurrentFormatVersion = 2;
+    public const int CurrentFormatVersion = 3;
+    internal const int LegacyPositionUnitsPerMeasure = 1600;
 
     private const string FormatHeader = "#REmindChart";
     private const string BpmHeader = "#BPM";
@@ -166,19 +167,35 @@ public static class ChartFileCodec
                 fields[0],
                 3,
                 0,
-                999,
+                ChartHolder.MaximumMeasureNumber,
                 lineNumber,
                 "measure number");
-            int chartPosition = ParseFixedDigits(
+            int sourceUnitsPerMeasure = formatVersion >= 3
+                ? ChartHolder.PositionUnitsPerMeasure
+                : LegacyPositionUnitsPerMeasure;
+            int maximumSourcePosition = formatVersion >= 3
+                ? sourceUnitsPerMeasure - 1
+                : sourceUnitsPerMeasure;
+            int sourceChartPosition = ParseFixedDigits(
                 fields[1],
                 4,
                 0,
-                ChartHolder.PositionUnitsPerMeasure,
+                maximumSourcePosition,
                 lineNumber,
                 "measure position");
-            int absolutePosition = checked(
-                chartNumber * ChartHolder.PositionUnitsPerMeasure +
-                chartPosition);
+            int sourceAbsolutePosition = checked(
+                chartNumber * sourceUnitsPerMeasure +
+                sourceChartPosition);
+            int absolutePosition = ChartHolder.ConvertAbsolutePosition(
+                sourceAbsolutePosition,
+                sourceUnitsPerMeasure);
+
+            if (absolutePosition > ChartHolder.MaximumAbsolutePosition)
+            {
+                throw CreateFormatException(
+                    lineNumber,
+                    "Chart position exceeds measure 999 after conversion.");
+            }
 
             if (absolutePosition <= previousPosition)
             {
@@ -187,7 +204,9 @@ public static class ChartFileCodec
                     "Rows must be ordered by position without duplicates.");
             }
 
-            ChartHolder holder = new ChartHolder(chartNumber, chartPosition);
+            ChartHolder holder = new ChartHolder(
+                absolutePosition / ChartHolder.PositionUnitsPerMeasure,
+                absolutePosition % ChartHolder.PositionUnitsPerMeasure);
             ParseMainNotes(fields[2], holder, openLongs, lineNumber);
             ParseScratchNotes(fields[3], holder, openLongs, lineNumber);
             ParseAirNotes(fields[4], holder, lineNumber);
@@ -755,7 +774,8 @@ public static class ChartFileCodec
 
     private static void ValidateHolderPosition(ChartHolder holder)
     {
-        if (holder.ChartNumber < 0 || holder.ChartNumber > 999)
+        if (holder.ChartNumber < 0 ||
+            holder.ChartNumber > ChartHolder.MaximumMeasureNumber)
         {
             throw new InvalidOperationException(
                 $"Measure number must be between 000 and 999: " +
@@ -763,10 +783,11 @@ public static class ChartFileCodec
         }
 
         if (holder.ChartPos < 0 ||
-            holder.ChartPos > ChartHolder.PositionUnitsPerMeasure)
+            holder.ChartPos >= ChartHolder.PositionUnitsPerMeasure)
         {
             throw new InvalidOperationException(
-                $"Measure position must be between 0000 and 1600: " +
+                $"Measure position must be between 0000 and " +
+                $"{ChartHolder.PositionUnitsPerMeasure - 1:D4}: " +
                 $"{holder.ChartPos}");
         }
     }

@@ -9,7 +9,8 @@ using UnityEngine.Serialization;
 public sealed class ChartTestPlay : MonoBehaviour
 {
     private const double MillisecondsPerMinute = 60000d;
-    private const double ChartPositionPerMeasure = 160d;
+    private const double ChartPositionPerMeasure =
+        ChartHolder.WorldUnitsPerMeasure;
 
     [Header("Movement")]
     [FormerlySerializedAs("moveCameraTranform")]

@@ -18,10 +18,13 @@ public sealed class GuideGenerate : MonoBehaviour
     [SerializeField] private Transform guideField;
 
     [Header("Chart")]
-    [SerializeField, Min(1)] private int measureCount = 1000;
+    [SerializeField, Min(1)] private int measureCount =
+        ChartHolder.MeasureCount;
     [SerializeField, Min(1)] private int guidesPerMeasure = 4;
-    [SerializeField, Min(1f)] private float measureHeight = 160f;
-    [SerializeField, Min(1f)] private float sectionHeight = 1600f;
+    [SerializeField, Min(1f)] private float measureHeight =
+        ChartHolder.WorldUnitsPerMeasure;
+    [SerializeField, Min(1f)] private float sectionHeight =
+        ChartHolder.WorldUnitsPerMeasure * 10f;
 
     [Header("Visible Range")]
     [SerializeField, Min(1f)] private float scrollMeasureHeight = 960f;

@@ -7,7 +7,7 @@ using UnityEngine;
 public sealed class ChartNoteSelectionController : MonoBehaviour
 {
     private const int SelectionCategoryCount = 4;
-    private const int MeasureCount = 1000;
+    private const int MeasureCount = ChartHolder.MeasureCount;
 
     [SerializeField] private ChartMakerInputRouter inputRouter;
     [SerializeField] private ChartPlacementController placementController;
@@ -509,8 +509,7 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
         int direction,
         bool moveByPage)
     {
-        int maximumPosition =
-            MeasureCount * ChartHolder.PositionUnitsPerMeasure - 1;
+        int maximumPosition = ChartHolder.MaximumAbsolutePosition;
         int targetPosition;
 
         if (moveByPage)
@@ -563,13 +562,9 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
 
     private static int GetGuidePosition(int guideIndex, int guideCount)
     {
-        float measureWorldHeight =
-            ChartHolder.PositionUnitsPerMeasure /
-            ChartHolder.PositionUnitsPerWorldUnit;
-        int worldPosition = Mathf.RoundToInt(
-            guideIndex * measureWorldHeight / guideCount);
-        return Mathf.RoundToInt(
-            worldPosition * ChartHolder.PositionUnitsPerWorldUnit);
+        return ChartHolder.GridIndexToAbsolutePosition(
+            guideIndex,
+            guideCount);
     }
 
     /// <summary>선택된 중앙·손 필드 노트 묶음을 채보 데이터와 함께 삭제합니다.</summary>

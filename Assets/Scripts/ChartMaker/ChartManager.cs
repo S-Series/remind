@@ -9,22 +9,24 @@ public static class ChartManager
         new List<ChartHolder>();
 
     public static IReadOnlyList<ChartHolder> ChartHolders => ChartHolderList;
+    public static event Action ChartChanged;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
     private static void ResetStaticState()
     {
         ChartHolderList.Clear();
+        ChartChanged = null;
     }
 
     /// <summary>
-    /// 월드 Y 좌표를 마디와 0~1599 위치 단위로 변환해 채보 묶음을 반환합니다.
+    /// 화면용 월드 Y를 240-pulse 타임라인 위치로 변환해 채보 묶음을 반환합니다.
     /// </summary>
-    public static ChartHolder GetOrCreateHolder(int worldPositionY)
+    public static ChartHolder GetOrCreateHolder(float worldPositionY)
     {
-        int absolutePosition = Mathf.Max(
+        int absolutePosition = Mathf.Clamp(
+            ChartHolder.WorldYToAbsolutePosition(worldPositionY),
             0,
-            Mathf.RoundToInt(
-                worldPositionY * ChartHolder.PositionUnitsPerWorldUnit));
+            ChartHolder.MaximumAbsolutePosition);
         int chartNumber = absolutePosition /
             ChartHolder.PositionUnitsPerMeasure;
         int chartPosition = absolutePosition %
@@ -39,6 +41,16 @@ public static class ChartManager
         int chartPosition)
     {
         NormalizePosition(ref chartNumber, ref chartPosition);
+
+        if (chartNumber > ChartHolder.MaximumMeasureNumber)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(chartNumber),
+                chartNumber,
+                $"Chart measure must be between 0 and " +
+                $"{ChartHolder.MaximumMeasureNumber}.");
+        }
+
         int absolutePosition = checked(
             chartNumber * ChartHolder.PositionUnitsPerMeasure +
             chartPosition);
@@ -95,6 +107,7 @@ public static class ChartManager
 
         ClearChart();
         ChartHolderList.AddRange(replacements);
+        NotifyChartChanged();
     }
 
     /// <summary>
@@ -114,6 +127,7 @@ public static class ChartManager
         }
 
         ChartHolderList.Clear();
+        NotifyChartChanged();
     }
 
     /// <summary>노트 표현 오브젝트를 찾아 해당 데이터와 연결 오브젝트를 함께 삭제합니다.</summary>
@@ -133,6 +147,7 @@ public static class ChartManager
                 ChartHolderList.RemoveAt(i);
             }
 
+            NotifyChartChanged();
             return true;
         }
 
@@ -234,6 +249,7 @@ public static class ChartManager
             return false;
         }
 
+        NotifyChartChanged();
         error = null;
         return true;
     }
@@ -262,9 +278,7 @@ public static class ChartManager
         }
 
         if (targetAbsolutePosition < 0 ||
-            targetAbsolutePosition >
-            999 * ChartHolder.PositionUnitsPerMeasure +
-            ChartHolder.PositionUnitsPerMeasure - 1)
+            targetAbsolutePosition > ChartHolder.MaximumAbsolutePosition)
         {
             error = "Note position is outside the supported chart range.";
             return false;
@@ -383,6 +397,7 @@ public static class ChartManager
             }
         }
 
+        NotifyChartChanged();
         error = null;
         return true;
     }
@@ -457,6 +472,11 @@ public static class ChartManager
         ChartHolderList.Insert(index, replacement);
     }
 
+    internal static void NotifyChartChanged()
+    {
+        ChartChanged?.Invoke();
+    }
+
     /// <summary>
     /// 같은 라인의 Long 노트를 아래부터 두 개씩 묶어 표시 길이를 다시 계산합니다.
     /// </summary>
@@ -490,8 +510,8 @@ public static class ChartManager
 
             float length = Mathf.Max(
                 0f,
-                (holder.AbsoluteChartPosition - pendingStartPosition) /
-                ChartHolder.PositionUnitsPerWorldUnit);
+                ChartHolder.PositionDeltaToWorldLength(
+                    holder.AbsoluteChartPosition - pendingStartPosition));
             SetNoteLength(pendingStartObjects, length);
             pendingStartObjects = null;
         }
@@ -558,9 +578,9 @@ public static class ChartManager
     private static void ValidateHolderPosition(ChartHolder holder, int index)
     {
         if (holder.ChartNumber < 0 ||
-            holder.ChartNumber > 999 ||
+            holder.ChartNumber > ChartHolder.MaximumMeasureNumber ||
             holder.ChartPos < 0 ||
-            holder.ChartPos > ChartHolder.PositionUnitsPerMeasure)
+            holder.ChartPos >= ChartHolder.PositionUnitsPerMeasure)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(holder),
