@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -11,6 +12,9 @@ public sealed class FileToChart : MonoBehaviour
     [SerializeField] private ChartPlacementController placementController;
     [SerializeField] private ChartToFile chartToFile;
     [SerializeField] private ChartCore chartCore;
+
+    [Header("Startup")]
+    [SerializeField] private bool restoreRecentFilesOnStart = true;
 
     private void Awake()
     {
@@ -25,6 +29,125 @@ public sealed class FileToChart : MonoBehaviour
         }
 
         ResolveChartCore();
+    }
+
+    private IEnumerator Start()
+    {
+        if (!restoreRecentFilesOnStart)
+        {
+            yield break;
+        }
+
+        // Let every chart view finish Awake/OnEnable before native dialogs open.
+        yield return null;
+        RestoreRecentChartOrPrompt();
+        yield return RestoreRecentMusicOrPrompt();
+    }
+
+    private void RestoreRecentChartOrPrompt()
+    {
+        string recentPath = ChartMakerRecentFiles.LastChartPath;
+
+        if (!string.IsNullOrWhiteSpace(recentPath))
+        {
+            if (TryLoadFromPath(recentPath, out _, out string recentError))
+            {
+                ChartEditHistory.Clear();
+                Debug.Log($"Recent chart restored: {recentPath}", this);
+                return;
+            }
+
+            Debug.LogWarning(
+                $"Could not restore recent chart '{recentPath}': " +
+                $"{recentError}",
+                this);
+        }
+
+        ChartMakerRecentFiles.ForgetChartPath();
+        string selectedPath = ChartFileDialog.OpenChartFile(recentPath);
+
+        if (string.IsNullOrWhiteSpace(selectedPath))
+        {
+            return;
+        }
+
+        if (!TryLoadFromPath(selectedPath, out _, out string selectedError))
+        {
+            Debug.LogError(
+                $"Failed to open selected chart: {selectedError}",
+                this);
+            return;
+        }
+
+        ChartEditHistory.Clear();
+        Debug.Log($"Startup chart selected: {selectedPath}", this);
+    }
+
+    private IEnumerator RestoreRecentMusicOrPrompt()
+    {
+        ResolveChartCore();
+
+        if (!chartCore)
+        {
+            Debug.LogError("ChartCore was not found.", this);
+            yield break;
+        }
+
+        string recentPath = ChartMakerRecentFiles.LastAudioPath;
+
+        if (!string.IsNullOrWhiteSpace(recentPath) &&
+            chartCore.LoadAudioFile(recentPath))
+        {
+            while (chartCore.IsAudioLoading)
+            {
+                yield return null;
+            }
+
+            if (ChartMakerRecentFiles.AreSamePath(
+                    chartCore.CurrentAudioFilePath,
+                    recentPath))
+            {
+                Debug.Log($"Recent music restored: {recentPath}", this);
+                yield break;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(recentPath))
+        {
+            Debug.LogWarning(
+                $"Could not restore recent music '{recentPath}'.",
+                this);
+        }
+
+        ChartMakerRecentFiles.ForgetAudioPath();
+        string selectedPath = ChartFileDialog.OpenAudioFile(recentPath);
+
+        if (string.IsNullOrWhiteSpace(selectedPath))
+        {
+            yield break;
+        }
+
+        if (!chartCore.LoadAudioFile(selectedPath))
+        {
+            Debug.LogError(
+                $"The selected music could not start loading: {selectedPath}",
+                this);
+            yield break;
+        }
+
+        while (chartCore.IsAudioLoading)
+        {
+            yield return null;
+        }
+
+        if (!ChartMakerRecentFiles.AreSamePath(
+                chartCore.CurrentAudioFilePath,
+                selectedPath))
+        {
+            Debug.LogError(
+                $"The selected music could not be loaded: {selectedPath}",
+                this);
+        }
     }
 
     /// <summary>텍스트를 검증하고 현재 ChartManager와 노트 뷰에 적용합니다.</summary>
@@ -150,6 +273,16 @@ public sealed class FileToChart : MonoBehaviour
             else
             {
                 holder.noteTypes[storageIndex] = NoteType.Scratch;
+                int scratchIndex =
+                    storageIndex - ChartHolder.MainLineCount;
+                holder.scratchPointTypes[scratchIndex] =
+                    ScratchPointType.Tap;
+                holder.scratchMotions[scratchIndex] =
+                    new ScratchMotionData(
+                        0,
+                        isPowered
+                            ? ScratchMotionType.Instant
+                            : ScratchMotionType.None);
             }
         }
 
@@ -294,6 +427,8 @@ public sealed class FileToChart : MonoBehaviour
             chartToFile.SetSavePath(isLegacyJson ? null : fullPath);
             chartToFile.MarkCurrentStateAsSaved();
         }
+
+        ChartMakerRecentFiles.RememberChartPath(fullPath);
 
         return chartFile;
     }

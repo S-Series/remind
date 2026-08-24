@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 public sealed class ChartScroll : MonoBehaviour
@@ -18,6 +19,14 @@ public sealed class ChartScroll : MonoBehaviour
     [SerializeField] private Transform previewCameraTransform;
     [SerializeField] private RectTransform[] cameraFollowRects =
         Array.Empty<RectTransform>();
+
+    [Header("Preview Camera Line Following")]
+    [SerializeField] private ChartPreviewFloorRenderer previewFloorRenderer;
+
+    [Header("Vertical Zoom")]
+    [SerializeField, Min(0.1f)] private float minimumVerticalZoom = 0.5f;
+    [SerializeField, Min(0.1f)] private float maximumVerticalZoom = 4f;
+    [SerializeField, Min(1.01f)] private float verticalZoomMultiplier = 1.1f;
 
     private ScrollRect scrollRect;
     private EventTrigger eventTrigger;
@@ -37,6 +46,9 @@ public sealed class ChartScroll : MonoBehaviour
     private GuideGenerate guideGenerate;
     private bool cameraScrollingReady;
     private float previewHighSpeedScale = 1f;
+    private Vector3 previewCameraLineOffset;
+    private Vector3 contentBaseScale;
+    private float verticalZoom = 1f;
 
     public event Action<float> ScrollYChanged;
     public event Action<Vector2> ScrollPositionChanged;
@@ -49,6 +61,7 @@ public sealed class ChartScroll : MonoBehaviour
         ? scrollCameraTransform.position.y
         : 0f;
     public float PreviewHighSpeedScale => previewHighSpeedScale;
+    public float VerticalZoom => verticalZoom;
 
     private void Awake()
     {
@@ -59,6 +72,12 @@ public sealed class ChartScroll : MonoBehaviour
             return;
         }
 
+        minimumVerticalZoom = Mathf.Max(0.1f, minimumVerticalZoom);
+        maximumVerticalZoom = Mathf.Max(
+            minimumVerticalZoom,
+            maximumVerticalZoom);
+        verticalZoomMultiplier = Mathf.Max(1.01f, verticalZoomMultiplier);
+        contentBaseScale = scrollRect.content.localScale;
         ApplySettings();
         ConfigurePointerEvents();
         targetPosition = ScrollPosition;
@@ -113,6 +132,11 @@ public sealed class ChartScroll : MonoBehaviour
             Mathf.Infinity,
             Time.unscaledDeltaTime);
         SetScrollPosition(nextPosition);
+    }
+
+    private void LateUpdate()
+    {
+        UpdatePreviewCameraLineFollowing();
     }
 
     private void OnDestroy()
@@ -270,10 +294,29 @@ public sealed class ChartScroll : MonoBehaviour
         SetScrollY(targetScrollY, smooth: true);
     }
 
-    /// <summary>외부 입력 영역에서 받은 휠 이동량을 현재 스크롤 목표에 더합니다.</summary>
+    /// <summary>
+    /// 외부 입력 영역에서 받은 휠을 스크롤 또는 Ctrl 세로 확대 입력으로 처리합니다.
+    /// </summary>
     public void RequestScroll(Vector2 scrollDelta)
     {
-        ApplyScrollDelta(scrollDelta);
+        RequestScroll(scrollDelta, 0.5f);
+    }
+
+    /// <summary>포인터 위치를 기준으로 휠 입력을 처리합니다.</summary>
+    public void RequestPointerScroll(PointerEventData pointerEvent)
+    {
+        if (pointerEvent == null)
+        {
+            return;
+        }
+
+        Camera eventCamera = pointerEvent.enterEventCamera
+            ? pointerEvent.enterEventCamera
+            : pointerEvent.pressEventCamera;
+        float anchorY = GetViewportNormalizedY(
+            pointerEvent.position,
+            eventCamera);
+        RequestScroll(pointerEvent.scrollDelta, anchorY);
     }
 
     private void HandleScrollChanged(Vector2 _)
@@ -345,8 +388,19 @@ public sealed class ChartScroll : MonoBehaviour
             return;
         }
 
-        ApplyScrollDelta(pointerEvent.scrollDelta);
+        RequestPointerScroll(pointerEvent);
         pointerEvent.Use();
+    }
+
+    private void RequestScroll(Vector2 scrollDelta, float anchorY)
+    {
+        if (Keyboard.current?.ctrlKey.isPressed == true)
+        {
+            ApplyVerticalZoom(scrollDelta, anchorY);
+            return;
+        }
+
+        ApplyScrollDelta(scrollDelta);
     }
 
     private void ApplyScrollDelta(Vector2 scrollDelta)
@@ -369,6 +423,116 @@ public sealed class ChartScroll : MonoBehaviour
         delta.x = 0f;
         targetPosition = ClampContentPosition(
             targetPosition + delta * scrollPower);
+    }
+
+    private void ApplyVerticalZoom(Vector2 scrollDelta, float anchorY)
+    {
+        if (!isActiveAndEnabled ||
+            scrollRect == null ||
+            externalTimelineControl)
+        {
+            return;
+        }
+
+        float wheelDelta = Mathf.Abs(scrollDelta.y) >= Mathf.Abs(scrollDelta.x)
+            ? scrollDelta.y
+            : scrollDelta.x;
+
+        if (Mathf.Approximately(wheelDelta, 0f))
+        {
+            return;
+        }
+
+        float zoomFactor = wheelDelta > 0f
+            ? verticalZoomMultiplier
+            : 1f / verticalZoomMultiplier;
+        float requestedZoom = Mathf.Clamp(
+            verticalZoom * zoomFactor,
+            minimumVerticalZoom,
+            maximumVerticalZoom);
+
+        if (Mathf.Approximately(requestedZoom, verticalZoom))
+        {
+            return;
+        }
+
+        anchorY = Mathf.Clamp01(anchorY);
+        float oldZoom = verticalZoom;
+        float oldReferenceY = guideGenerate
+            ? -ScrollY * guideGenerate.ScrollToChartRatio
+            : 0f;
+        float baseVisibleChartHeight = GetBaseVisibleChartHeight();
+        float anchoredChartY = oldReferenceY +
+            baseVisibleChartHeight * anchorY / oldZoom;
+
+        verticalZoom = requestedZoom;
+        Vector3 contentScale = contentBaseScale;
+        contentScale.y *= verticalZoom;
+        scrollRect.content.localScale = contentScale;
+
+        if (guideGenerate)
+        {
+            guideGenerate.SetVerticalDisplayScale(verticalZoom);
+        }
+
+        float newReferenceY = anchoredChartY -
+            baseVisibleChartHeight * anchorY / verticalZoom;
+        Vector2 requestedPosition = ScrollPosition;
+
+        if (guideGenerate &&
+            guideGenerate.ScrollToChartRatio > Mathf.Epsilon)
+        {
+            requestedPosition.y =
+                -newReferenceY / guideGenerate.ScrollToChartRatio;
+        }
+
+        scrollRect.StopMovement();
+        smoothVelocity = Vector2.zero;
+        targetPosition = ClampContentPosition(requestedPosition);
+
+        if (ScrollPosition == targetPosition)
+        {
+            NotifyScrollPositionChanged();
+        }
+        else
+        {
+            SetScrollPosition(targetPosition);
+        }
+    }
+
+    private float GetViewportNormalizedY(
+        Vector2 screenPosition,
+        Camera eventCamera)
+    {
+        RectTransform viewport = scrollRect.viewport
+            ? scrollRect.viewport
+            : scrollTrans;
+
+        if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                viewport,
+                screenPosition,
+                eventCamera,
+                out Vector2 localPosition))
+        {
+            return 0.5f;
+        }
+
+        return Mathf.InverseLerp(
+            viewport.rect.yMin,
+            viewport.rect.yMax,
+            localPosition.y);
+    }
+
+    private float GetBaseVisibleChartHeight()
+    {
+        RectTransform viewport = scrollRect.viewport
+            ? scrollRect.viewport
+            : scrollTrans;
+        float baseScaleY = Mathf.Abs(contentBaseScale.y);
+
+        return baseScaleY > Mathf.Epsilon
+            ? viewport.rect.height / baseScaleY
+            : ChartHolder.WorldUnitsPerMeasure;
     }
 
     private void HandleBeginDrag(BaseEventData _)
@@ -468,6 +632,12 @@ public sealed class ChartScroll : MonoBehaviour
             guideGenerate = FindFirstObjectByType<GuideGenerate>();
         }
 
+        if (!previewFloorRenderer)
+        {
+            previewFloorRenderer =
+                FindFirstObjectByType<ChartPreviewFloorRenderer>();
+        }
+
         if (!scrollCameraTransform || !scrollTrans.parent)
         {
             Debug.LogWarning(
@@ -489,6 +659,7 @@ public sealed class ChartScroll : MonoBehaviour
                 previewCameraTransform.position -
                 Vector3.forward * GetPreviewCameraZOffset(
                     initialViewportOffsetY);
+            previewCameraLineOffset = Vector3.zero;
         }
         else if (previewCameraTransform)
         {
@@ -547,10 +718,32 @@ public sealed class ChartScroll : MonoBehaviour
 
         if (previewCameraTransform && guideGenerate)
         {
-            previewCameraTransform.position =
-                previewCameraBasePosition +
-                Vector3.forward * GetPreviewCameraZOffset(viewportOffsetY);
+            ApplyPreviewCameraPosition(viewportOffsetY);
         }
+    }
+
+    private void UpdatePreviewCameraLineFollowing()
+    {
+        if (!cameraScrollingReady ||
+            !previewCameraTransform ||
+            !guideGenerate ||
+            !previewFloorRenderer)
+        {
+            return;
+        }
+
+        float chartY = -ScrollY * guideGenerate.ScrollToChartRatio;
+        previewCameraLineOffset =
+            previewFloorRenderer.EvaluateWorldCenterOffset(chartY);
+        ApplyPreviewCameraPosition(-ScrollY);
+    }
+
+    private void ApplyPreviewCameraPosition(float viewportOffsetY)
+    {
+        previewCameraTransform.position =
+            previewCameraBasePosition +
+            Vector3.forward * GetPreviewCameraZOffset(viewportOffsetY) +
+            previewCameraLineOffset;
     }
 
     private Vector3 GetCameraWorldOffset(float viewportOffsetY)

@@ -458,9 +458,8 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
                     targetMeasure,
                     targetPosition,
                     targetHandle,
-                    isPowered,
-                    scratchMotion.StartOffsetUnits,
-                    scratchMotion.EndOffsetUnits,
+                    holder.GetScratchPointType(sourceLine),
+                    scratchMotion.MoveAmount,
                     scratchMotion.MotionType,
                     out error);
                 break;

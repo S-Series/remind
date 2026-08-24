@@ -10,6 +10,7 @@ public sealed class GuideGenerate : MonoBehaviour
     public static GuideGenerate Instance { get; private set; }
     public static float ReferenceY { get; private set; }
     public static event Action<float> ReferenceYChanged;
+    public static event Action<float> VerticalDisplayScaleChanged;
 
     private const float IndexEpsilon = 0.001f;
 
@@ -47,14 +48,17 @@ public sealed class GuideGenerate : MonoBehaviour
     private int currentFirstIndex = -1;
     private int currentLastIndex = -1;
     private bool guidesVisible = true;
+    private float verticalDisplayScale = 1f;
 
     public ObjectPool<GameObject> Pool { get; private set; }
     public int TotalGuideCount => measureCount * guidesPerMeasure;
     public int VisibleGuideCount => visibleGuides.Count;
     public float MeasureHeight => measureHeight;
     public float GuideSpacing => measureHeight / guidesPerMeasure;
-    public float ScrollToChartRatio => measureHeight / scrollMeasureHeight;
+    public float ScrollToChartRatio =>
+        measureHeight / (scrollMeasureHeight * verticalDisplayScale);
     public bool GuidesVisible => guidesVisible;
+    public float VerticalDisplayScale => verticalDisplayScale;
 
     private void Awake()
     {
@@ -112,6 +116,7 @@ public sealed class GuideGenerate : MonoBehaviour
             Instance = null;
             ReferenceY = 0f;
             ReferenceYChanged = null;
+            VerticalDisplayScaleChanged = null;
         }
     }
 
@@ -171,8 +176,10 @@ public sealed class GuideGenerate : MonoBehaviour
         }
 
         float spacing = GuideSpacing;
-        float rangeMin = ReferenceY - visibleBefore;
-        float rangeMax = ReferenceY + visibleAfter;
+        float rangeMin = ReferenceY -
+            visibleBefore / verticalDisplayScale;
+        float rangeMax = ReferenceY +
+            visibleAfter / verticalDisplayScale;
         int firstIndex = GetFirstVisibleIndex(rangeMin, spacing);
         int lastIndex = GetLastVisibleIndex(rangeMax, spacing);
 
@@ -216,6 +223,29 @@ public sealed class GuideGenerate : MonoBehaviour
     public void ToggleGuidesVisible()
     {
         SetGuidesVisible(!guidesVisible);
+    }
+
+    /// <summary>채보 데이터는 유지하고 편집 화면의 세로 표시 배율만 갱신합니다.</summary>
+    public void SetVerticalDisplayScale(float scale)
+    {
+        if (float.IsNaN(scale) || float.IsInfinity(scale) || scale <= 0f)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(scale),
+                scale,
+                "Vertical display scale must be finite and greater than zero.");
+        }
+
+        if (Mathf.Approximately(verticalDisplayScale, scale))
+        {
+            return;
+        }
+
+        verticalDisplayScale = scale;
+        currentFirstIndex = -1;
+        currentLastIndex = -1;
+        RefreshVisibleGuides(true);
+        VerticalDisplayScaleChanged?.Invoke(scale);
     }
 
     private int GetFirstVisibleIndex(float rangeMin, float spacing)

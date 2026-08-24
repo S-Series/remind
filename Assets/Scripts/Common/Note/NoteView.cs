@@ -3,7 +3,7 @@ using UnityEngine;
 [DisallowMultipleComponent]
 public sealed class NoteView : MonoBehaviour
 {
-    [SerializeField] private BoxCollider2D[] clickColliders;
+    [SerializeField] private Collider2D[] clickColliders;
 
     private void Awake()
     {
@@ -42,9 +42,9 @@ public sealed class NoteView : MonoBehaviour
     }
 
     [ContextMenu("Refresh Click Colliders")]
-    private void RefreshClickColliders()
+    public void RefreshClickColliders()
     {
-        clickColliders = GetComponentsInChildren<BoxCollider2D>(true);
+        clickColliders = GetComponentsInChildren<Collider2D>(true);
     }
 
     private void Reset()

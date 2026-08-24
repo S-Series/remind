@@ -66,7 +66,7 @@ public sealed class ChartPlacementController : MonoBehaviour
     [SerializeField] private Transform rightNoteField;
     [SerializeField] private Transform chartPreviewNoteField;
 
-    [Header("Prefabs")]
+    [Header("InGame / Making Prefabs")]
     [FormerlySerializedAs("TapNotePrefab")]
     [SerializeField] private GameObject tapNotePrefab;
     [FormerlySerializedAs("HoldNotePrefab")]
@@ -84,6 +84,12 @@ public sealed class ChartPlacementController : MonoBehaviour
     [FormerlySerializedAs("ActionNotePrefab")]
     [FormerlySerializedAs("actionNotePrefab")]
     [SerializeField] private GameObject cameraNotePrefab;
+
+    [Header("Chart Preview Prefabs")]
+    [SerializeField] private GameObject chartPreviewTapNotePrefab;
+    [SerializeField] private GameObject chartPreviewLongTapNotePrefab;
+    [SerializeField] private GameObject chartPreviewScratchNotePrefab;
+    [SerializeField] private GameObject chartPreviewLongScratchNotePrefab;
 
     [Header("Input Areas")]
     [SerializeField] private ChartMakerInputRouter inputRouter;
@@ -125,6 +131,8 @@ public sealed class ChartPlacementController : MonoBehaviour
         SetInputRouterSubscription(true);
         SetActionSubscriptions(true);
         GuideGenerate.ReferenceYChanged += HandleScrollReferenceYChanged;
+        GuideGenerate.VerticalDisplayScaleChanged +=
+            HandleVerticalDisplayScaleChanged;
     }
 
     private void OnDisable()
@@ -133,6 +141,8 @@ public sealed class ChartPlacementController : MonoBehaviour
         SetInputRouterSubscription(false);
         SetActionSubscriptions(false);
         GuideGenerate.ReferenceYChanged -= HandleScrollReferenceYChanged;
+        GuideGenerate.VerticalDisplayScaleChanged -=
+            HandleVerticalDisplayScaleChanged;
         SetHovering(false);
     }
 
@@ -149,12 +159,16 @@ public sealed class ChartPlacementController : MonoBehaviour
             !leftNoteField ||
             !middleNoteField ||
             !rightNoteField ||
-            !chartPreviewNoteField)
+            !chartPreviewNoteField ||
+            !chartPreviewTapNotePrefab ||
+            !chartPreviewLongTapNotePrefab ||
+            !chartPreviewScratchNotePrefab ||
+            !chartPreviewLongScratchNotePrefab)
         {
             Debug.LogError(
                 "ChartPlacementController requires an Input Router, a Tap Note prefab, " +
                 "Preview Field, all three editing Note Fields, and the chart Preview " +
-                "NoteField.",
+                "NoteField with its four preview prefabs.",
                 this);
             enabled = false;
             return;
@@ -324,6 +338,11 @@ public sealed class ChartPlacementController : MonoBehaviour
     }
 
     private void HandleScrollReferenceYChanged(float _)
+    {
+        RefreshPreviewPosition();
+    }
+
+    private void HandleVerticalDisplayScaleChanged(float _)
     {
         RefreshPreviewPosition();
     }
@@ -606,13 +625,23 @@ public sealed class ChartPlacementController : MonoBehaviour
             notePosition,
             handleType,
             currentNoteType);
+        ScratchPointType? scratchPointType = currentNoteType switch
+        {
+            NoteType.Scratch => ScratchPointType.Tap,
+            NoteType.LongScratch =>
+                ChartManager.GetSuggestedScratchPointType(
+                    line,
+                    holder.AbsoluteChartPosition),
+            _ => null
+        };
 
         if (!holder.AddNote(
                 line,
                 currentNoteType,
                 noteObjects,
                 handleType,
-                airValue: 1))
+                airValue: 1,
+                scratchPointType: scratchPointType))
         {
             DestroyNoteObjects(noteObjects);
             return;
@@ -652,18 +681,18 @@ public sealed class ChartPlacementController : MonoBehaviour
             isPowered,
             0,
             null,
+            null,
             out error);
     }
 
-    /// <summary>Scratch/Long Scratch의 위치, 좌우 방향과 Powered 상태를 수정합니다.</summary>
+    /// <summary>Scratch의 위치, 방향, 지점과 이동 명령을 수정합니다.</summary>
     public bool TryEditScratchNote(
         GameObject noteObject,
         int measure,
         int measurePosition,
         NoteHandleType side,
-        bool isPowered,
-        int startOffsetUnits,
-        int endOffsetUnits,
+        ScratchPointType pointType,
+        int moveAmount,
         ScratchMotionType motionType,
         out string error)
     {
@@ -683,12 +712,31 @@ public sealed class ChartPlacementController : MonoBehaviour
             return false;
         }
 
-        if (noteType == NoteType.Scratch)
+        if (moveAmount < 0 ||
+            moveAmount > ScratchMotionData.MaximumMoveAmount)
         {
-            motionType = ScratchMotionType.Instant;
+            error = $"Scratch move amount must be between 0 and " +
+                $"{ScratchMotionData.MaximumMoveAmount}.";
+            return false;
+        }
+
+        if ((noteType == NoteType.Scratch &&
+             pointType != ScratchPointType.Tap) ||
+            (noteType == NoteType.LongScratch &&
+             pointType == ScratchPointType.Tap))
+        {
+            error = noteType == NoteType.Scratch
+                ? "Single Scratch requires a Tap point."
+                : "Long Scratch requires a Start, Mid, or End point.";
+            return false;
         }
 
         int line = side == NoteHandleType.Right ? -2 : -1;
+        ScratchMotionData effectiveMotion =
+            ScratchMotionRules.NormalizeMotion(
+                noteType,
+                pointType,
+                new ScratchMotionData(moveAmount, motionType));
         return TryApplyNoteEdit(
             noteObject,
             noteType,
@@ -696,12 +744,10 @@ public sealed class ChartPlacementController : MonoBehaviour
             measurePosition,
             line,
             side,
-            isPowered,
+            effectiveMotion.MotionType != ScratchMotionType.None,
             0,
-            new ScratchMotionData(
-                startOffsetUnits,
-                endOffsetUnits,
-                motionType),
+            effectiveMotion,
+            pointType,
             out error);
     }
 
@@ -736,6 +782,7 @@ public sealed class ChartPlacementController : MonoBehaviour
             false,
             airValue,
             null,
+            null,
             out error);
     }
 
@@ -749,6 +796,7 @@ public sealed class ChartPlacementController : MonoBehaviour
         bool isPowered,
         int airValue,
         ScratchMotionData scratchMotion,
+        ScratchPointType? scratchPointType,
         out string error)
     {
         if (!TryGetAbsolutePosition(
@@ -774,14 +822,18 @@ public sealed class ChartPlacementController : MonoBehaviour
         ScratchMotionData sourceScratchMotion = noteType.IsScratch()
             ? sourceHolder.GetScratchMotion(sourceLine)
             : null;
+        ScratchPointType sourceScratchPointType = noteType.IsScratch()
+            ? sourceHolder.GetScratchPointType(sourceLine)
+            : ScratchPointType.Tap;
         bool isUnchanged =
             sourceHolder.AbsoluteChartPosition == targetAbsolutePosition &&
             sourceLine == line &&
             (noteType.IsScratch() || sourceHandle == handleType) &&
-            sourcePowered == isPowered &&
+            (noteType.IsScratch() || sourcePowered == isPowered) &&
             (noteType != NoteType.Air || sourceAirValue == airValue) &&
             (!noteType.IsScratch() ||
-             sourceScratchMotion.Equals(scratchMotion));
+             (sourceScratchMotion.Equals(scratchMotion) &&
+              sourceScratchPointType == scratchPointType));
 
         if (isUnchanged)
         {
@@ -802,6 +854,7 @@ public sealed class ChartPlacementController : MonoBehaviour
                 isPowered,
                 airValue,
                 scratchMotion,
+                scratchPointType,
                 out error))
         {
             return false;
@@ -812,6 +865,7 @@ public sealed class ChartPlacementController : MonoBehaviour
             targetAbsolutePosition,
             line,
             handleType);
+        ChartManager.NotifyChartChanged();
         ChartEditHistory.CommitChange(editTransaction);
         selectionController?.NotifySelectionChanged();
         return true;
@@ -1065,6 +1119,7 @@ public sealed class ChartPlacementController : MonoBehaviour
 
         ChartManager.RefreshLongNoteLengths(-1);
         ChartManager.RefreshLongNoteLengths(-2);
+        ChartManager.NotifyChartChanged();
     }
 
     private GameObject[] CreateNoteObjects(
@@ -1073,7 +1128,7 @@ public sealed class ChartPlacementController : MonoBehaviour
         NoteHandleType handleType,
         NoteType noteType)
     {
-        // 편집 필드 두 곳과 표시 전용 Preview 필드에 같은 노트를 생성합니다.
+        // 편집 필드는 InGame 프리팹, 우측 Preview는 표시 전용 프리팹을 사용합니다.
         GameObject middleNote = Instantiate(prefab, middleNoteField, false);
         middleNote.transform.localPosition = notePosition;
 
@@ -1083,8 +1138,10 @@ public sealed class ChartPlacementController : MonoBehaviour
         GameObject handNote = Instantiate(prefab, handField, false);
         handNote.transform.localPosition = notePosition;
 
+        GameObject chartPreviewPrefab =
+            GetChartPreviewNotePrefab(noteType) ?? prefab;
         GameObject chartPreviewNote = Instantiate(
-            prefab,
+            chartPreviewPrefab,
             chartPreviewNoteField,
             false);
         chartPreviewNote.transform.localPosition = notePosition;
@@ -1118,6 +1175,11 @@ public sealed class ChartPlacementController : MonoBehaviour
 
     private void PrepareDisplayOnlyNote(GameObject noteObject)
     {
+        if (noteObject.TryGetComponent(out NoteLength noteLength))
+        {
+            noteLength.SetRibbonColliderEnabled(false);
+        }
+
         Transform[] childTransforms =
             noteObject.GetComponentsInChildren<Transform>(true);
 
@@ -1210,7 +1272,7 @@ public sealed class ChartPlacementController : MonoBehaviour
                 : NoteHandleType.Right;
     }
 
-    private static float GetStoredLineX(int line)
+    internal static float GetStoredLineX(int line)
     {
         float normalizedX = line switch
         {
@@ -1492,7 +1554,8 @@ public sealed class ChartPlacementController : MonoBehaviour
             normalizedPosition.y,
             0f,
             PreviewMaxNormalizedY) *
-            (PreviewReferenceY / PreviewMaxNormalizedY);
+            (PreviewReferenceY / PreviewMaxNormalizedY) /
+            GetVerticalDisplayScale();
         float chartY = GuideGenerate.ReferenceY + localY;
         float calculatedY = UseYClamp
             ? ClampChartYToGuide(chartY)
@@ -1528,11 +1591,20 @@ public sealed class ChartPlacementController : MonoBehaviour
             normalizedPosition.y,
             0f,
             PreviewMaxNormalizedY) *
-            (PreviewReferenceY / PreviewMaxNormalizedY);
+            (PreviewReferenceY / PreviewMaxNormalizedY) /
+            GetVerticalDisplayScale();
 
         return new Vector2(
             x,
             GuideGenerate.ReferenceY + localY);
+    }
+
+    private static float GetVerticalDisplayScale()
+    {
+        GuideGenerate guideGenerate = GuideGenerate.Instance;
+        return guideGenerate
+            ? guideGenerate.VerticalDisplayScale
+            : 1f;
     }
 
     /// <summary>
@@ -1632,6 +1704,19 @@ public sealed class ChartPlacementController : MonoBehaviour
             NoteType.Speed => speedNotePrefab,
             NoteType.Effect => effectNotePrefab,
             NoteType.Camera => cameraNotePrefab,
+            _ => null
+        };
+    }
+
+    private GameObject GetChartPreviewNotePrefab(NoteType noteType)
+    {
+        return noteType switch
+        {
+            NoteType.Tap => chartPreviewTapNotePrefab,
+            NoteType.LongTap => chartPreviewLongTapNotePrefab,
+            NoteType.Scratch => chartPreviewScratchNotePrefab,
+            NoteType.LongScratch => chartPreviewLongScratchNotePrefab,
+            NoteType.Air => chartPreviewTapNotePrefab,
             _ => null
         };
     }

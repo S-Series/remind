@@ -242,12 +242,18 @@ public static class ChartManager
 
         isPowered = !currentPowered;
 
-        if (!holder.TrySetPowered(noteObject, isPowered, out _))
+        if (!holder.TrySetPowered(
+                noteObject,
+                isPowered,
+                out _,
+                out bool appliedPowered))
         {
             isPowered = currentPowered;
             error = "Powered data could not be updated.";
             return false;
         }
+
+        isPowered = appliedPowered;
 
         NotifyChartChanged();
         error = null;
@@ -263,6 +269,7 @@ public static class ChartManager
         bool targetPowered,
         int targetAirValue,
         ScratchMotionData targetScratchMotion,
+        ScratchPointType? targetScratchPointType,
         out string error)
     {
         if (!TryGetNoteData(
@@ -291,6 +298,20 @@ public static class ChartManager
                 error = "Scratch notes require a left or right scratch line.";
                 return false;
             }
+
+            ScratchPointType pointType = targetScratchPointType ??
+                sourceHolder.GetScratchPointType(sourceLine);
+
+            if ((sourceType == NoteType.Scratch &&
+                 pointType != ScratchPointType.Tap) ||
+                (sourceType == NoteType.LongScratch &&
+                 pointType == ScratchPointType.Tap))
+            {
+                error = sourceType == NoteType.Scratch
+                    ? "Single Scratch requires a Tap point."
+                    : "Long Scratch requires a Start, Mid, or End point.";
+                return false;
+            }
         }
         else if (targetLine < 1 || targetLine > ChartHolder.MainLineCount)
         {
@@ -312,6 +333,9 @@ public static class ChartManager
         }
 
         ChartHolder targetHolder = GetHolder(targetAbsolutePosition);
+        ScratchPointType sourceScratchPointType = sourceType.IsScratch()
+            ? sourceHolder.GetScratchPointType(sourceLine)
+            : ScratchPointType.Tap;
 
         bool usesSourceSlot =
             sourceHolder == targetHolder && sourceLine == targetLine;
@@ -354,6 +378,9 @@ public static class ChartManager
         ScratchMotionData scratchMotion = detachedType.IsScratch()
             ? targetScratchMotion ?? detachedScratchMotion
             : null;
+        ScratchPointType? scratchPointType = detachedType.IsScratch()
+            ? targetScratchPointType ?? sourceScratchPointType
+            : null;
 
         if (!targetHolder.AddNote(
                 targetLine,
@@ -362,7 +389,8 @@ public static class ChartManager
                 storedHandle,
                 powered,
                 airValue,
-                scratchMotion))
+                scratchMotion,
+                scratchPointType))
         {
             sourceHolder.AddNote(
                 detachedLine,
@@ -371,7 +399,8 @@ public static class ChartManager
                 detachedHandle,
                 detachedPowered,
                 detachedAirValue,
-                detachedScratchMotion);
+                detachedScratchMotion,
+                sourceScratchPointType);
 
             if (createdTargetHolder && !targetHolder.HasChartData)
             {
@@ -431,7 +460,46 @@ public static class ChartManager
             isPowered,
             airValue,
             null,
+            null,
             out _);
+    }
+
+    internal static ScratchPointType GetSuggestedScratchPointType(
+        int line,
+        int targetAbsolutePosition)
+    {
+        bool isOpen = false;
+
+        for (int i = 0; i < ChartHolderList.Count; i++)
+        {
+            ChartHolder holder = ChartHolderList[i];
+
+            if (holder.AbsoluteChartPosition >= targetAbsolutePosition)
+            {
+                break;
+            }
+
+            int storageIndex = line == -1
+                ? ChartHolder.MainLineCount
+                : ChartHolder.MainLineCount + 1;
+
+            if (holder.noteTypes[storageIndex] != NoteType.LongScratch)
+            {
+                continue;
+            }
+
+            switch (holder.GetScratchPointType(line))
+            {
+                case ScratchPointType.Start:
+                    isOpen = true;
+                    break;
+                case ScratchPointType.End:
+                    isOpen = false;
+                    break;
+            }
+        }
+
+        return isOpen ? ScratchPointType.End : ScratchPointType.Start;
     }
 
     internal static ChartHolder GetHolder(int absolutePosition)
@@ -482,6 +550,12 @@ public static class ChartManager
     /// </summary>
     public static void RefreshLongNoteLengths(int line)
     {
+        if (line < 0)
+        {
+            RefreshScratchLongNoteLengths(line);
+            return;
+        }
+
         GameObject[] pendingStartObjects = null;
         int pendingStartPosition = 0;
 
@@ -517,6 +591,57 @@ public static class ChartManager
         }
     }
 
+    private static void RefreshScratchLongNoteLengths(int line)
+    {
+        GameObject[] pendingSegmentObjects = null;
+        int pendingSegmentPosition = 0;
+
+        for (int i = 0; i < ChartHolderList.Count; i++)
+        {
+            ChartHolder holder = ChartHolderList[i];
+
+            if (!holder.TryGetNote(
+                    line,
+                    out NoteType noteType,
+                    out GameObject[] noteObjects) ||
+                noteType != NoteType.LongScratch)
+            {
+                continue;
+            }
+
+            SetNoteLength(noteObjects, 0f);
+            ScratchPointType pointType =
+                holder.GetScratchPointType(line);
+
+            if (pointType == ScratchPointType.Start)
+            {
+                pendingSegmentObjects = noteObjects;
+                pendingSegmentPosition = holder.AbsoluteChartPosition;
+                continue;
+            }
+
+            if (pendingSegmentObjects != null)
+            {
+                float length = Mathf.Max(
+                    0f,
+                    ChartHolder.PositionDeltaToWorldLength(
+                        holder.AbsoluteChartPosition -
+                        pendingSegmentPosition));
+                SetNoteLength(pendingSegmentObjects, length);
+            }
+
+            if (pointType == ScratchPointType.Mid)
+            {
+                pendingSegmentObjects = noteObjects;
+                pendingSegmentPosition = holder.AbsoluteChartPosition;
+            }
+            else
+            {
+                pendingSegmentObjects = null;
+            }
+        }
+    }
+
     private static void SetNoteLength(GameObject[] noteObjects, float length)
     {
         if (noteObjects == null)
@@ -531,7 +656,7 @@ public static class ChartManager
             if (noteObject &&
                 noteObject.TryGetComponent(out NoteLength noteLength))
             {
-                noteLength.SetLength(length);
+                noteLength.SetStraightLength(length);
             }
         }
     }

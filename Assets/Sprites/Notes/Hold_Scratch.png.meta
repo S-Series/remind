@@ -1,5 +1,5 @@
 fileFormatVersion: 2
-guid: f6ca27d63d6c8c745b1b21c56c7b3b91
+guid: e36015ce899f041478063a2ae760213a
 TextureImporter:
   internalIDToNameTable: []
   externalObjects: {}
@@ -45,7 +45,7 @@ TextureImporter:
   compressionQuality: 50
   spriteMode: 2
   spriteExtrude: 1
-  spriteMeshType: 0
+  spriteMeshType: 1
   alignment: 0
   spritePivot: {x: 0.5, y: 0.5}
   spritePixelsToUnits: 100
@@ -97,111 +97,89 @@ TextureImporter:
     serializedVersion: 2
     sprites:
     - serializedVersion: 2
-      name: Note_Scratch_0
+      name: Hold_Scratch_0
       rect:
         serializedVersion: 2
-        x: 203
-        y: 838
-        width: 134
-        height: 119
-      alignment: 0
-      pivot: {x: 0.5, y: 0.5}
+        x: 10
+        y: 12
+        width: 1000
+        height: 250
+      alignment: 7
+      pivot: {x: 0.5, y: 0}
       border: {x: 0, y: 0, z: 0, w: 0}
       customData: 
       outline: []
       physicsShape: []
       tessellationDetail: 0
       bones: []
-      spriteID: 5e8e371ea19387f49902cbefd99cc75b
-      internalID: -373633997
+      spriteID: bf8c0890f022f0047bc20335a8154418
+      internalID: 1875259409
       vertices: []
       indices: 
       edges: []
       weights: []
     - serializedVersion: 2
-      name: Note_Scratch_1
+      name: Hold_Scratch_1
       rect:
         serializedVersion: 2
-        x: 695
-        y: 838
-        width: 134
-        height: 119
-      alignment: 0
-      pivot: {x: 0.5, y: 0.5}
+        x: 12
+        y: 262
+        width: 1000
+        height: 250
+      alignment: 7
+      pivot: {x: 0.5, y: 0}
       border: {x: 0, y: 0, z: 0, w: 0}
       customData: 
       outline: []
       physicsShape: []
       tessellationDetail: 0
       bones: []
-      spriteID: a5521863b152fd04d810f3ab66da92d9
-      internalID: 1745339902
+      spriteID: 463f68c99b253bd47a6e215d8db12697
+      internalID: -1186322226
       vertices: []
       indices: 
       edges: []
       weights: []
     - serializedVersion: 2
-      name: Note_Scratch_2
+      name: Hold_Scratch_2
       rect:
         serializedVersion: 2
-        x: 0
-        y: 581
-        width: 1024
-        height: 145
-      alignment: 0
-      pivot: {x: 0.5, y: 0.5}
+        x: 12
+        y: 512
+        width: 1000
+        height: 250
+      alignment: 7
+      pivot: {x: 0.5, y: 0}
       border: {x: 0, y: 0, z: 0, w: 0}
       customData: 
       outline: []
       physicsShape: []
       tessellationDetail: 0
       bones: []
-      spriteID: 60e46d5d9ad1c3f46b72db0a67494c37
-      internalID: 390455775
+      spriteID: 1e83909c5adb232408bb3a5426d7014f
+      internalID: 850914410
       vertices: []
       indices: 
       edges: []
       weights: []
     - serializedVersion: 2
-      name: Note_Scratch_3
+      name: Hold_Scratch_3
       rect:
         serializedVersion: 2
-        x: 0
-        y: 322
-        width: 1024
-        height: 145
-      alignment: 0
-      pivot: {x: 0.5, y: 0.5}
+        x: 12
+        y: 762
+        width: 1000
+        height: 250
+      alignment: 7
+      pivot: {x: 0.5, y: 0}
       border: {x: 0, y: 0, z: 0, w: 0}
       customData: 
       outline: []
       physicsShape: []
       tessellationDetail: 0
       bones: []
-      spriteID: a87e443398d60d648b7428e365f6477e
-      internalID: 246482461
-      vertices: []
-      indices: 
-      edges: []
-      weights: []
-    - serializedVersion: 2
-      name: Note_Scratch_4
-      rect:
-        serializedVersion: 2
-        x: 0
-        y: 66
-        width: 1024
-        height: 145
-      alignment: 0
-      pivot: {x: 0.5, y: 0.5}
-      border: {x: 0, y: 0, z: 0, w: 0}
-      customData: 
-      outline: []
-      physicsShape: []
-      tessellationDetail: 0
-      bones: []
-      spriteID: 1334b88f1f36ade4fb771a4e01f67b58
-      internalID: 389890391
+      spriteID: e84e9189dff2fd44ebdbd21a38c65e2a
+      internalID: 1195209662
       vertices: []
       indices: 
       edges: []
@@ -210,7 +188,7 @@ TextureImporter:
     customData: 
     physicsShape: []
     bones: []
-    spriteID: b0cfcccd025d1c64a866361b018e538e
+    spriteID: 7f2662c2dce6de545a1f9dfce4eff564
     internalID: 0
     vertices: []
     indices: 
@@ -222,11 +200,10 @@ TextureImporter:
       - key: SpriteEditor.SliceSettings
         value: '{"sliceOnImport":false,"gridCellCount":{"x":1.0,"y":1.0},"gridSpriteSize":{"x":64.0,"y":64.0},"gridSpriteOffset":{"x":0.0,"y":0.0},"gridSpritePadding":{"x":0.0,"y":0.0},"pivot":{"x":0.5,"y":0.5},"pivotPixels":{"x":0.0,"y":0.0},"autoSlicingMethod":0,"spriteAlignment":0,"pivotUnitMode":0,"slicingType":0,"keepEmptyRects":false,"isAlternate":false}'
     nameFileIdTable:
-      Note_Scratch_0: -373633997
-      Note_Scratch_1: 1745339902
-      Note_Scratch_2: 390455775
-      Note_Scratch_3: 246482461
-      Note_Scratch_4: 389890391
+      Hold_Scratch_0: 1875259409
+      Hold_Scratch_1: -1186322226
+      Hold_Scratch_2: 850914410
+      Hold_Scratch_3: 1195209662
   mipmapLimitGroupName: 
   pSDRemoveMatte: 0
   userData: 

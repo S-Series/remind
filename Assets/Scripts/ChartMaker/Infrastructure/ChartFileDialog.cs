@@ -212,3 +212,84 @@ internal static class ChartFileDialog
     }
 #endif
 }
+
+internal static class ChartMakerRecentFiles
+{
+    private const string LastChartPathKey =
+        "REmind.ChartMaker.LastChartFilePath";
+    private const string LastAudioPathKey =
+        "REmind.ChartMaker.LastAudioFilePath";
+
+    public static string LastChartPath => GetPath(LastChartPathKey);
+    public static string LastAudioPath => GetPath(LastAudioPathKey);
+
+    public static void RememberChartPath(string filePath)
+    {
+        RememberPath(LastChartPathKey, filePath);
+    }
+
+    public static void RememberAudioPath(string filePath)
+    {
+        RememberPath(LastAudioPathKey, filePath);
+    }
+
+    public static void ForgetChartPath()
+    {
+        ForgetPath(LastChartPathKey);
+    }
+
+    public static void ForgetAudioPath()
+    {
+        ForgetPath(LastAudioPathKey);
+    }
+
+    public static bool AreSamePath(string left, string right)
+    {
+        if (string.IsNullOrWhiteSpace(left) ||
+            string.IsNullOrWhiteSpace(right))
+        {
+            return false;
+        }
+
+        try
+        {
+            return string.Equals(
+                Path.GetFullPath(left),
+                Path.GetFullPath(right),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string GetPath(string key)
+    {
+        string value = PlayerPrefs.GetString(key, string.Empty);
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+
+    private static void RememberPath(string key, string filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            ForgetPath(key);
+            return;
+        }
+
+        PlayerPrefs.SetString(key, Path.GetFullPath(filePath));
+        PlayerPrefs.Save();
+    }
+
+    private static void ForgetPath(string key)
+    {
+        if (!PlayerPrefs.HasKey(key))
+        {
+            return;
+        }
+
+        PlayerPrefs.DeleteKey(key);
+        PlayerPrefs.Save();
+    }
+}

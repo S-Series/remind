@@ -937,14 +937,18 @@ MonoBehaviour:
   middleNoteField: {fileID: 553392137}
   rightNoteField: {fileID: 1745480055}
   chartPreviewNoteField: {fileID: 418015322}
-  tapNotePrefab: {fileID: 7256374167690495269, guid: ef722f8fe35a808468de9c43ee1ca0a2, type: 3}
-  longTapNotePrefab: {fileID: 6189104666034249852, guid: 10334f64de0e7f74f8d924549df2e82c, type: 3}
-  scratchNotePrefab: {fileID: 7673451636091737856, guid: d9b2c5a34460d4f47924da6a7b793cf5, type: 3}
-  longScratchNotePrefab: {fileID: 6189104666034249852, guid: 802b45d94edd66b479e1f67869f88f2c, type: 3}
-  airNotePrefab: {fileID: 7256374167690495269, guid: ef722f8fe35a808468de9c43ee1ca0a2, type: 3}
+  tapNotePrefab: {fileID: 7256374167690495269, guid: e6e09ee44b1b0ac45a4f3c4a90725dc3, type: 3}
+  longTapNotePrefab: {fileID: 6189104666034249852, guid: dcd8361cd23431843a556207df73d8e3, type: 3}
+  scratchNotePrefab: {fileID: 7673451636091737856, guid: cb527a7e42ec7ff4aa3c5a525eff110e, type: 3}
+  longScratchNotePrefab: {fileID: 6189104666034249852, guid: 799d704f4831bb2498ba81ebcf6630f1, type: 3}
+  airNotePrefab: {fileID: 7256374167690495269, guid: e6e09ee44b1b0ac45a4f3c4a90725dc3, type: 3}
   effectNotePrefab: {fileID: 1985646249}
   speedNotePrefab: {fileID: 1985646249}
   cameraNotePrefab: {fileID: 1985646249}
+  chartPreviewTapNotePrefab: {fileID: 7256374167690495269, guid: ef722f8fe35a808468de9c43ee1ca0a2, type: 3}
+  chartPreviewLongTapNotePrefab: {fileID: 6189104666034249852, guid: 10334f64de0e7f74f8d924549df2e82c, type: 3}
+  chartPreviewScratchNotePrefab: {fileID: 7673451636091737856, guid: d9b2c5a34460d4f47924da6a7b793cf5, type: 3}
+  chartPreviewLongScratchNotePrefab: {fileID: 6189104666034249852, guid: 802b45d94edd66b479e1f67869f88f2c, type: 3}
   inputRouter: {fileID: 182934949}
   chartActions:
   - {fileID: 358398872}
@@ -2033,13 +2037,13 @@ RectTransform:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 418015321}
-  m_LocalRotation: {x: 0, y: 1, z: 0, w: 0}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 1431592743}
-  m_LocalEulerAnglesHint: {x: 0, y: 180, z: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0}
   m_AnchorMax: {x: 0.5, y: 0}
   m_AnchoredPosition: {x: 0, y: 114}
@@ -3061,6 +3065,7 @@ MonoBehaviour:
   placementController: {fileID: 182934948}
   chartToFile: {fileID: 631378073}
   chartCore: {fileID: 904119433}
+  restoreRecentFilesOnStart: 1
 --- !u!114 &631378073
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -4063,6 +4068,10 @@ MonoBehaviour:
   previewCameraTransform: {fileID: 414375661}
   cameraFollowRects:
   - {fileID: 182934946}
+  previewFloorRenderer: {fileID: 2100000042}
+  minimumVerticalZoom: 0.5
+  maximumVerticalZoom: 4
+  verticalZoomMultiplier: 1.1
 --- !u!4 &904119430
 Transform:
   m_ObjectHideFlags: 0
@@ -10180,9 +10189,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ChartPreviewFloorRenderer
   previewLineField: {fileID: 1303766100}
+  previewNoteField: {fileID: 418015322}
   sourceGraphic: {fileID: 1869660260}
   halfWidth: 15
-  maximumOffsetUnits: 400
 --- !u!1 &2124470214
 GameObject:
   m_ObjectHideFlags: 0
@@ -10273,13 +10282,13 @@ RectTransform:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2146919344}
-  m_LocalRotation: {x: 0.7071068, y: 0, z: 0, w: 0.7071068}
+  m_LocalRotation: {x: 0, y: 0.7071068, z: -0.7071068, w: 0}
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 59, y: 0.98333335, z: 101.28333}
   m_ConstrainProportionsScale: 1
   m_Children: []
   m_Father: {fileID: 558180788}
-  m_LocalEulerAnglesHint: {x: 90, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 90, y: 180, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
   m_AnchoredPosition: {x: 623, y: -15}

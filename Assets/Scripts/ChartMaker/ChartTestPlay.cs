@@ -256,11 +256,13 @@ public sealed class ChartTestPlay : MonoBehaviour
             {
                 int noteTypeIndex =
                     ChartHolder.MainLineCount + scratchIndex;
+                int scratchLine = scratchIndex == 0 ? -1 : -2;
 
                 if (holder.noteTypes[noteTypeIndex] != NoteType.Unknown)
                 {
-                    AddAutoTestNoteOrLongEndpoint(
+                    AddScratchAutoTestNote(
                         holder.noteTypes[noteTypeIndex],
+                        holder.GetScratchPointType(scratchLine),
                         holder.WorldY,
                         holder.scratchNoteObjectGroups[scratchIndex],
                         noteTypeIndex,
@@ -344,6 +346,80 @@ public sealed class ChartTestPlay : MonoBehaviour
             CombineNoteObjects(pending.NoteObjects, noteObjects),
             hitEffectLaneMask);
         pendingLongNotes[lineIndex] = null;
+    }
+
+    private void AddScratchAutoTestNote(
+        NoteType noteType,
+        ScratchPointType pointType,
+        float positionY,
+        GameObject[] noteObjects,
+        int lineIndex,
+        PendingLongAutoTestNote[] pendingLongNotes)
+    {
+        int hitEffectLaneMask = 1 << lineIndex;
+
+        if (noteType != NoteType.LongScratch ||
+            pointType == ScratchPointType.Tap)
+        {
+            AddAutoTestNote(positionY, noteObjects, hitEffectLaneMask);
+            return;
+        }
+
+        PendingLongAutoTestNote pending = pendingLongNotes[lineIndex];
+
+        switch (pointType)
+        {
+            case ScratchPointType.Start:
+                if (pending != null)
+                {
+                    AddAutoTestNote(
+                        pending.PositionY,
+                        pending.NoteObjects,
+                        pending.HitEffectLaneMask);
+                }
+
+                pendingLongNotes[lineIndex] = new PendingLongAutoTestNote(
+                    positionY,
+                    noteObjects,
+                    hitEffectLaneMask);
+                break;
+            case ScratchPointType.Mid:
+                if (pending == null)
+                {
+                    pendingLongNotes[lineIndex] =
+                        new PendingLongAutoTestNote(
+                            positionY,
+                            noteObjects,
+                            hitEffectLaneMask);
+                }
+                else
+                {
+                    pending.AppendNoteObjects(noteObjects);
+                }
+
+                break;
+            case ScratchPointType.End:
+                if (pending == null)
+                {
+                    AddAutoTestNote(
+                        positionY,
+                        noteObjects,
+                        hitEffectLaneMask);
+                    break;
+                }
+
+                AddAutoTestNote(
+                    pending.PositionY,
+                    pending.NoteObjects,
+                    pending.HitEffectLaneMask,
+                    hideOnProcess: false);
+                AddAutoTestNote(
+                    positionY,
+                    CombineNoteObjects(pending.NoteObjects, noteObjects),
+                    hitEffectLaneMask);
+                pendingLongNotes[lineIndex] = null;
+                break;
+        }
     }
 
     private static GameObject[] CombineNoteObjects(
@@ -541,7 +617,7 @@ public sealed class ChartTestPlay : MonoBehaviour
     private sealed class PendingLongAutoTestNote
     {
         public float PositionY { get; }
-        public GameObject[] NoteObjects { get; }
+        public GameObject[] NoteObjects { get; private set; }
         public int HitEffectLaneMask { get; }
 
         public PendingLongAutoTestNote(
@@ -552,6 +628,11 @@ public sealed class ChartTestPlay : MonoBehaviour
             PositionY = positionY;
             NoteObjects = noteObjects;
             HitEffectLaneMask = hitEffectLaneMask;
+        }
+
+        public void AppendNoteObjects(GameObject[] noteObjects)
+        {
+            NoteObjects = CombineNoteObjects(NoteObjects, noteObjects);
         }
     }
 }

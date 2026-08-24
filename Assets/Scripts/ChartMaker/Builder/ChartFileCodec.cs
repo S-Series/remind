@@ -7,7 +7,7 @@ using REmind.Data;
 
 public static class ChartFileCodec
 {
-    public const int CurrentFormatVersion = 3;
+    public const int CurrentFormatVersion = 4;
     internal const int LegacyPositionUnitsPerMeasure = 1600;
 
     private const string FormatHeader = "#REmindChart";
@@ -15,9 +15,11 @@ public static class ChartFileCodec
     private const string MusicStartCorrectionHeader =
         "#MUSIC_START_CORRECTION_MS";
     private const int LegacyFieldCount = 8;
-    private const int CurrentFieldCount = 9;
+    private const int LegacyMotionFieldCount = 9;
+    private const int CurrentFieldCount = 8;
     private const int MainNoteTextLength = 8;
-    private const int ScratchNoteTextLength = 4;
+    private const int LegacyScratchNoteTextLength = 4;
+    private const int ScratchNoteTextLength = 8;
     private const int AirNoteTextLength = 8;
 
     private static readonly CultureInfo Invariant =
@@ -94,8 +96,6 @@ public static class ChartFileCodec
             output.Append(holder.isEffect ? 'T' : 'F');
             output.Append('|');
             output.Append(holder.isCameraMove ? 'T' : 'F');
-            output.Append('|');
-            AppendScratchMotions(output, holder);
 
             previousPosition = holder.AbsoluteChartPosition;
         }
@@ -151,9 +151,11 @@ public static class ChartFileCodec
 
             string[] fields = line.Split('|');
 
-            int expectedFieldCount = formatVersion >= 2
+            int expectedFieldCount = formatVersion >= 4
                 ? CurrentFieldCount
-                : LegacyFieldCount;
+                : formatVersion >= 2
+                    ? LegacyMotionFieldCount
+                    : LegacyFieldCount;
 
             if (fields.Length != expectedFieldCount)
             {
@@ -208,7 +210,20 @@ public static class ChartFileCodec
                 absolutePosition / ChartHolder.PositionUnitsPerMeasure,
                 absolutePosition % ChartHolder.PositionUnitsPerMeasure);
             ParseMainNotes(fields[2], holder, openLongs, lineNumber);
-            ParseScratchNotes(fields[3], holder, openLongs, lineNumber);
+
+            if (formatVersion >= 4)
+            {
+                ParseScratchNotes(fields[3], holder, openLongs, lineNumber);
+            }
+            else
+            {
+                ParseLegacyScratchNotes(
+                    fields[3],
+                    holder,
+                    openLongs,
+                    lineNumber);
+            }
+
             ParseAirNotes(fields[4], holder, lineNumber);
             holder.targetBpm = ParseBpm(fields[5], lineNumber);
             holder.isEffect = ParseBoolean(fields[6], lineNumber, "effect");
@@ -217,13 +232,14 @@ public static class ChartFileCodec
                 lineNumber,
                 "camera movement");
 
-            if (formatVersion >= 2)
+            if (formatVersion >= 2 && formatVersion < 4)
             {
-                ParseScratchMotions(fields[8], holder, lineNumber);
+                ParseLegacyScratchMotions(fields[8], holder, lineNumber);
             }
-            else
+
+            if (formatVersion < 4)
             {
-                holder.EnsureStorage();
+                NormalizeLegacyScratchData(holder, formatVersion);
             }
 
             holders.Add(holder);
@@ -411,25 +427,64 @@ public static class ChartFileCodec
 
             if (noteType == NoteType.Unknown)
             {
-                output.Append("--");
+                output.Append("----");
                 continue;
             }
 
-            output.Append(holder.isPoweredNotes[index] ? 'T' : 'F');
-
-            switch (noteType)
+            if (!noteType.IsScratch())
             {
-                case NoteType.Scratch:
-                    output.Append('F');
-                    break;
-                case NoteType.LongScratch:
-                    output.Append(ToggleLong(openLongs, index));
-                    break;
-                default:
-                    throw new InvalidOperationException(
-                        $"{noteType} cannot be stored in scratch line " +
-                        $"{scratchIndex + 1}.");
+                throw new InvalidOperationException(
+                    $"{noteType} cannot be stored in scratch line " +
+                    $"{scratchIndex + 1}.");
             }
+
+            ScratchMotionData motion = holder.scratchMotions[scratchIndex] ??
+                ScratchMotionData.CreateDefault(noteType);
+            ScratchPointType pointType =
+                holder.scratchPointTypes[scratchIndex];
+            motion = ScratchMotionRules.NormalizeMotion(
+                noteType,
+                pointType,
+                motion);
+
+            output.Append(motion.MotionType switch
+            {
+                ScratchMotionType.None => 'N',
+                ScratchMotionType.Gradual => 'G',
+                ScratchMotionType.Instant => 'I',
+                _ => throw new InvalidOperationException(
+                    $"Scratch line {scratchIndex + 1} has an unsupported " +
+                    $"motion type: {motion.MotionType}.")
+            });
+
+            if (noteType == NoteType.Scratch &&
+                pointType != ScratchPointType.Tap)
+            {
+                throw new InvalidOperationException(
+                    $"Single Scratch on line {scratchIndex + 1} must use " +
+                    "a Tap point.");
+            }
+
+            if (noteType == NoteType.LongScratch &&
+                pointType == ScratchPointType.Tap)
+            {
+                throw new InvalidOperationException(
+                    $"Long Scratch on line {scratchIndex + 1} must use " +
+                    "a Start, Mid, or End point.");
+            }
+
+            ValidateScratchPointForSave(openLongs, index, pointType);
+            output.Append(pointType switch
+            {
+                ScratchPointType.Tap => 'T',
+                ScratchPointType.Start => 'S',
+                ScratchPointType.Mid => 'M',
+                ScratchPointType.End => 'E',
+                _ => throw new InvalidOperationException(
+                    $"Scratch line {scratchIndex + 1} has an unsupported " +
+                    $"point type: {pointType}.")
+            });
+            output.Append(motion.MoveAmount.ToString("D2", Invariant));
         }
     }
 
@@ -448,55 +503,6 @@ public static class ChartFileCodec
             }
 
             output.Append(value.ToString("D2", Invariant));
-        }
-    }
-
-    private static void AppendScratchMotions(
-        StringBuilder output,
-        ChartHolder holder)
-    {
-        for (int scratchIndex = 0;
-             scratchIndex < ChartHolder.ScratchLineCount;
-             scratchIndex++)
-        {
-            if (scratchIndex > 0)
-            {
-                output.Append(';');
-            }
-
-            int noteIndex = ChartHolder.MainLineCount + scratchIndex;
-            NoteType noteType = holder.noteTypes[noteIndex];
-
-            if (!noteType.IsScratch())
-            {
-                output.Append('-');
-                continue;
-            }
-
-            ScratchMotionData motion = holder.scratchMotions[scratchIndex] ??
-                ScratchMotionData.CreateDefault(noteType);
-
-            if (!Enum.IsDefined(typeof(ScratchMotionType), motion.MotionType))
-            {
-                throw new InvalidOperationException(
-                    $"Scratch line {scratchIndex + 1} has an unsupported " +
-                    $"motion type: {motion.MotionType}.");
-            }
-
-            if (noteType == NoteType.Scratch &&
-                motion.MotionType != ScratchMotionType.Instant)
-            {
-                throw new InvalidOperationException(
-                    $"Single Scratch on line {scratchIndex + 1} must use " +
-                    "Instant motion.");
-            }
-
-            output.Append(motion.StartOffsetUnits.ToString(Invariant));
-            output.Append(',');
-            output.Append(motion.EndOffsetUnits.ToString(Invariant));
-            output.Append(',');
-            output.Append(
-                motion.MotionType == ScratchMotionType.Instant ? 'I' : 'G');
         }
     }
 
@@ -573,6 +579,96 @@ public static class ChartFileCodec
              scratchIndex++)
         {
             int index = ChartHolder.MainLineCount + scratchIndex;
+            string token = value.Substring(scratchIndex * 4, 4);
+
+            if (token == "----")
+            {
+                continue;
+            }
+
+            ScratchMotionType motionType = token[0] switch
+            {
+                'N' => ScratchMotionType.None,
+                'G' => ScratchMotionType.Gradual,
+                'I' => ScratchMotionType.Instant,
+                _ => throw CreateFormatException(
+                    lineNumber,
+                    $"Invalid motion type '{token[0]}' in scratch line " +
+                    $"{scratchIndex + 1}.")
+            };
+            ScratchPointType pointType = token[1] switch
+            {
+                'T' => ScratchPointType.Tap,
+                'S' => ScratchPointType.Start,
+                'M' => ScratchPointType.Mid,
+                'E' => ScratchPointType.End,
+                _ => throw CreateFormatException(
+                    lineNumber,
+                    $"Invalid point type '{token[1]}' in scratch line " +
+                    $"{scratchIndex + 1}.")
+            };
+            int moveAmount = ParseFixedDigits(
+                token.Substring(2, 2),
+                2,
+                0,
+                ScratchMotionData.MaximumMoveAmount,
+                lineNumber,
+                $"scratch line {scratchIndex + 1} move amount");
+
+            if (pointType == ScratchPointType.Tap)
+            {
+                if (openLongs[index])
+                {
+                    throw CreateFormatException(
+                        lineNumber,
+                        $"Scratch Tap cannot appear inside an open Long " +
+                        $"Scratch on scratch line {scratchIndex + 1}.");
+                }
+
+                holder.noteTypes[index] = NoteType.Scratch;
+            }
+            else
+            {
+                ValidateScratchPointForParse(
+                    openLongs,
+                    index,
+                    pointType,
+                    lineNumber);
+                holder.noteTypes[index] = NoteType.LongScratch;
+            }
+
+            holder.scratchPointTypes[scratchIndex] = pointType;
+            ScratchMotionData parsedMotion = new ScratchMotionData(
+                moveAmount,
+                motionType);
+            holder.scratchMotions[scratchIndex] =
+                ScratchMotionRules.NormalizeMotion(
+                    holder.noteTypes[index],
+                    pointType,
+                    parsedMotion);
+            holder.isPoweredNotes[index] =
+                holder.scratchMotions[scratchIndex].MotionType !=
+                ScratchMotionType.None;
+        }
+    }
+
+    private static void ParseLegacyScratchNotes(
+        string value,
+        ChartHolder holder,
+        bool[] openLongs,
+        int lineNumber)
+    {
+        EnsureLength(
+            value,
+            LegacyScratchNoteTextLength,
+            lineNumber,
+            "legacy scratch note field");
+
+        for (int scratchIndex = 0;
+             scratchIndex < ChartHolder.ScratchLineCount;
+             scratchIndex++)
+        {
+            int index = ChartHolder.MainLineCount + scratchIndex;
             string token = value.Substring(scratchIndex * 2, 2);
 
             if (token == "--")
@@ -594,14 +690,20 @@ public static class ChartFileCodec
             {
                 case 'F':
                     holder.noteTypes[index] = NoteType.Scratch;
+                    holder.scratchPointTypes[scratchIndex] =
+                        ScratchPointType.Tap;
                     break;
                 case 'S':
                     OpenLong(openLongs, index, lineNumber);
                     holder.noteTypes[index] = NoteType.LongScratch;
+                    holder.scratchPointTypes[scratchIndex] =
+                        ScratchPointType.Start;
                     break;
                 case 'E':
                     CloseLong(openLongs, index, lineNumber);
                     holder.noteTypes[index] = NoteType.LongScratch;
+                    holder.scratchPointTypes[scratchIndex] =
+                        ScratchPointType.End;
                     break;
                 default:
                     throw CreateFormatException(
@@ -635,7 +737,7 @@ public static class ChartFileCodec
         }
     }
 
-    private static void ParseScratchMotions(
+    private static void ParseLegacyScratchMotions(
         string value,
         ChartHolder holder,
         int lineNumber)
@@ -700,19 +802,147 @@ public static class ChartFileCodec
                     $"Scratch motion type must be I or G: '{values[2]}'.")
             };
 
-            if (noteType == NoteType.Scratch &&
-                motionType != ScratchMotionType.Instant)
-            {
-                throw CreateFormatException(
-                    lineNumber,
-                    $"Single Scratch on line {scratchIndex + 1} must use " +
-                    "Instant motion.");
-            }
-
-            holder.scratchMotions[scratchIndex] = new ScratchMotionData(
+            ScratchMotionData legacyMotion = new ScratchMotionData(
                 startOffsetUnits,
                 endOffsetUnits,
                 motionType);
+            holder.scratchMotions[scratchIndex] =
+                ScratchMotionRules.NormalizeMotion(
+                    noteType,
+                    holder.scratchPointTypes[scratchIndex],
+                    legacyMotion);
+        }
+    }
+
+    private static void NormalizeLegacyScratchData(
+        ChartHolder holder,
+        int formatVersion)
+    {
+        holder.EnsureStorage();
+
+        for (int scratchIndex = 0;
+             scratchIndex < ChartHolder.ScratchLineCount;
+             scratchIndex++)
+        {
+            int noteIndex = ChartHolder.MainLineCount + scratchIndex;
+            NoteType noteType = holder.noteTypes[noteIndex];
+
+            if (!noteType.IsScratch())
+            {
+                continue;
+            }
+
+            ScratchMotionData legacyMotion =
+                holder.scratchMotions[scratchIndex] ??
+                ScratchMotionData.CreateDefault(noteType);
+            ScratchMotionType motionType;
+
+            if (!holder.isPoweredNotes[noteIndex])
+            {
+                motionType = ScratchMotionType.None;
+            }
+            else if (formatVersion < 2)
+            {
+                motionType = noteType == NoteType.LongScratch
+                    ? ScratchMotionType.Gradual
+                    : ScratchMotionType.Instant;
+            }
+            else
+            {
+                motionType = legacyMotion.MotionType;
+            }
+
+            ScratchMotionData requestedMotion =
+                legacyMotion.WithMotionType(motionType);
+            holder.scratchMotions[scratchIndex] =
+                ScratchMotionRules.NormalizeMotion(
+                    noteType,
+                    holder.scratchPointTypes[scratchIndex],
+                    requestedMotion);
+            holder.isPoweredNotes[noteIndex] =
+                holder.scratchMotions[scratchIndex].MotionType !=
+                ScratchMotionType.None;
+        }
+    }
+
+    private static void ValidateScratchPointForSave(
+        bool[] openLongs,
+        int index,
+        ScratchPointType pointType)
+    {
+        switch (pointType)
+        {
+            case ScratchPointType.Tap:
+                if (openLongs[index])
+                {
+                    throw new InvalidOperationException(
+                        $"Scratch Tap cannot appear inside an open Long " +
+                        $"Scratch on {GetLineName(index)}.");
+                }
+
+                break;
+            case ScratchPointType.Start:
+                if (openLongs[index])
+                {
+                    throw new InvalidOperationException(
+                        $"Long Scratch starts twice on {GetLineName(index)}.");
+                }
+
+                openLongs[index] = true;
+                break;
+            case ScratchPointType.Mid:
+                if (!openLongs[index])
+                {
+                    throw new InvalidOperationException(
+                        $"Long Scratch Mid appears outside an open Long " +
+                        $"Scratch on {GetLineName(index)}.");
+                }
+
+                break;
+            case ScratchPointType.End:
+                if (!openLongs[index])
+                {
+                    throw new InvalidOperationException(
+                        $"Long Scratch ends before it starts on " +
+                        $"{GetLineName(index)}.");
+                }
+
+                openLongs[index] = false;
+                break;
+            default:
+                throw new InvalidOperationException(
+                    $"Unsupported Scratch point type: {pointType}.");
+        }
+    }
+
+    private static void ValidateScratchPointForParse(
+        bool[] openLongs,
+        int index,
+        ScratchPointType pointType,
+        int lineNumber)
+    {
+        switch (pointType)
+        {
+            case ScratchPointType.Start:
+                OpenLong(openLongs, index, lineNumber);
+                break;
+            case ScratchPointType.Mid:
+                if (!openLongs[index])
+                {
+                    throw CreateFormatException(
+                        lineNumber,
+                        $"Long Scratch Mid appears outside an open Long " +
+                        $"Scratch on {GetLineName(index)}.");
+                }
+
+                break;
+            case ScratchPointType.End:
+                CloseLong(openLongs, index, lineNumber);
+                break;
+            default:
+                throw CreateFormatException(
+                    lineNumber,
+                    $"Invalid Long Scratch point type '{pointType}'.");
         }
     }
 

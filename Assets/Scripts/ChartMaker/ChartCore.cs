@@ -350,6 +350,7 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
         audioSource.clip = loadedAudioClip;
         CurrentAudioFilePath = fullPath;
         IsAudioLoading = false;
+        ChartMakerRecentFiles.RememberAudioPath(fullPath);
         AudioClipChanged?.Invoke(loadedAudioClip);
 
         if (previousLoadedClip)

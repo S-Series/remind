@@ -137,7 +137,7 @@ public sealed class ChartAction : MonoBehaviour,
 
     public void OnScroll(PointerEventData eventData)
     {
-        chartScroll?.RequestScroll(eventData.scrollDelta);
+        chartScroll?.RequestPointerScroll(eventData);
         eventData.Use();
     }
 

@@ -1,7 +1,7 @@
 # Chart Format
 
 > 문서 상태: Draft 0.1  
-> 최종 갱신: 2026-07-21  
+> 최종 갱신: 2026-08-24
 > 목적: 에디터와 게임 런타임이 공유하는 채보 JSON 형식과 유효성 검사 규칙을 고정한다.
 
 ## 1. 기본 원칙
@@ -397,10 +397,58 @@ JSON Text
 - BPM 이벤트의 에디터 내부 tick 표현
 - JSON Schema 파일의 위치와 자동 생성 방식
 
-## 18. ChartMaker Native 좌표 호환성
+## 18. ChartMaker Native v4
 
 현재 ChartMaker의 native 텍스트 포맷(`#REmindChart`)은 위 JSON 초안과 별개다.
-native 포맷 v3의 위치 좌표는 다음 규칙을 사용한다.
+저장 시에는 항상 v4를 출력하며, 메타데이터와 채보 행은 다음 순서로 기록한다.
+
+```text
+#REmindChart|4
+#BPM|120
+#MUSIC_START_CORRECTION_MS|0
+measure|position|main notes|scratch notes|air notes|target BPM|effect|camera
+```
+
+Scratch 필드는 왼쪽과 오른쪽 토큰을 이어 붙인 8글자다. 각 토큰은
+`[Motion][Point][Amount]`의 4글자이며 노트가 없는 쪽은 `----`로 기록한다.
+
+| 위치 | 값 | 의미 |
+|---|---|---|
+| 1 | `N` / `G` / `I` | None / Gradual / Instant |
+| 2 | `T` / `S` / `M` / `E` | Tap / Start / Mid / End |
+| 3~4 | `00`~`99` | 이동량 |
+
+예시:
+
+```text
+GS16----  # 왼쪽 Long Scratch Start, Gradual 16
+NM42----  # 왼쪽 Long Scratch Mid, 이동 없이 42 보존
+----NE08  # 오른쪽 Long Scratch End, 이동 명령 무시
+----IT10  # 오른쪽 단 Scratch Tap, Instant 10 (= 7.5 horizontal units)
+```
+
+- `T`는 단 Scratch에만 사용한다.
+- Long Scratch는 `S`, 0개 이상의 `M`, `E` 순서로 닫혀야 한다.
+- `M`은 열린 Long Scratch 안에서만 사용할 수 있다.
+- `G`는 현재 점부터 다음 `M` 또는 `E`까지 점진적으로 이동한다.
+- `I`는 해당 점에서 즉시 이동한다.
+- 다음 구간이 없는 `T`의 이동은 즉시 적용된다.
+- Long Scratch의 `E`에 기록된 Powered/Motion은 무시하며 유효 Motion을 `N`으로
+  정규화한다. `E`까지 이어지는 이동은 앞선 `S` 또는 `M`의 Motion을 사용한다.
+- `N`은 새 이동을 적용하지 않으므로 이전 위치를 유지한다. 뒤의 숫자는 의미를
+  제한하지 않고 그대로 저장하고 다시 불러온다.
+- 이동 거리는 Amount `10`당 `7.5 horizontal units`, 즉 Amount `1`당 `0.75`다.
+- 새 Scratch 노트의 초기 Amount는 `10`이다.
+- 왼쪽 Scratch의 이동은 왼쪽, 오른쪽 Scratch의 이동은 오른쪽으로 누적된다.
+- 노트의 X 위치에는 해당 시점까지 누적된 Scratch 이동을 동일하게 적용한다.
+- 이동량 변환과 구간 보간은 Unity 오브젝트와 분리된 공용 계산기를 사용하며,
+  ChartMaker Preview와 실제 게임은 같은 규칙을 사용한다.
+- 기존 Scratch 단노트 상태 문자 `F`는 v4에서 `T`로 바뀐다. 이 규칙은 Scratch
+  토큰에만 적용되며 main note 필드의 기존 인코딩은 유지한다.
+
+### 18.1 좌표 호환성
+
+native 포맷 v3와 v4의 위치 좌표는 다음 규칙을 사용한다.
 
 - 한 마디의 리듬 기준은 `240 pulses`다.
 - 한 pulse는 저장 정밀도 `20 position units`를 가진다.
@@ -410,7 +458,9 @@ native 포맷 v3의 위치 좌표는 다음 규칙을 사용한다.
 - 3분할은 `1600`, 5분할은 `960`, 16분할은 `300` position units 간격이므로 모두 정수 좌표다.
 
 native v1, v2와 버전 헤더가 없는 파일은 기존 `1600 units/measure`로 해석한 뒤
-로드 시 정확히 3배하여 v3 좌표로 변환한다. 저장 시에는 항상 v3를 출력한다.
+로드 시 정확히 3배하여 현재 좌표로 변환한다. v3 파일은 위치 좌표를 그대로 읽고,
+별도 Scratch motion 필드를 v4 토큰으로 합친다. 레거시 이동 거리는 `00`~`99`로
+정규화하며, powered가 아니었던 Scratch는 이동량을 보존한 `N` motion으로 변환한다.
 이전 정수 좌표는 전부 손실 없이 변환되며 화면 위치와 BPM 기반 재생 시각은 변하지 않는다.
 
 레거시 `TempChartData` JSON의 `NotePos`도 기존 1600 단위로 해석한다. 이 경로는

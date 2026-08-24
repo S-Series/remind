@@ -360,15 +360,7 @@ namespace REmind.Gameplay.Chart.Loading
                 throw new ChartLoadException(
                     $"{sourceName}: notes[{noteIndex}].scratchMotion." +
                     $"motionType '{note.scratchMotion.motionType}' must be " +
-                    "Instant or Gradual.");
-            }
-
-            if (noteType == NoteType.Scratch &&
-                motionType != ScratchMotionType.Instant)
-            {
-                throw new ChartLoadException(
-                    $"{sourceName}: Single Scratch note '{note.id}' must " +
-                    "use Instant motion.");
+                    "None, Gradual, or Instant.");
             }
 
             return new ScratchMotionData(
