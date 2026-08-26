@@ -3,11 +3,12 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using REmind.Charting;
 using REmind.Data;
 
 public static class ChartFileCodec
 {
-    public const int CurrentFormatVersion = 4;
+    public const int CurrentFormatVersion = 6;
     internal const int LegacyPositionUnitsPerMeasure = 1600;
 
     private const string FormatHeader = "#REmindChart";
@@ -16,7 +17,8 @@ public static class ChartFileCodec
         "#MUSIC_START_CORRECTION_MS";
     private const int LegacyFieldCount = 8;
     private const int LegacyMotionFieldCount = 9;
-    private const int CurrentFieldCount = 8;
+    private const int Version4FieldCount = 8;
+    private const int CurrentFieldCount = 9;
     private const int MainNoteTextLength = 8;
     private const int LegacyScratchNoteTextLength = 4;
     private const int ScratchNoteTextLength = 8;
@@ -48,13 +50,14 @@ public static class ChartFileCodec
             if (holders[i] != null)
             {
                 holders[i].EnsureStorage();
-                ordered.Add(holders[i]);
+                ordered.Add(holders[i].CloneData());
             }
         }
 
         ordered.Sort(
             (left, right) => left.AbsoluteChartPosition.CompareTo(
                 right.AbsoluteChartPosition));
+        ChartLongNoteSaveNormalizer.CreatePlan(ordered).Apply();
 
         StringBuilder output = new StringBuilder();
         AppendMetadata(
@@ -93,9 +96,11 @@ public static class ChartFileCodec
             output.Append('|');
             output.Append(FormatBpm(holder.targetBpm));
             output.Append('|');
+            output.Append(FormatLineSpeed(holder));
+            output.Append('|');
             output.Append(holder.isEffect ? 'T' : 'F');
             output.Append('|');
-            output.Append(holder.isCameraMove ? 'T' : 'F');
+            output.Append(FormatCamera(holder));
 
             previousPosition = holder.AbsoluteChartPosition;
         }
@@ -151,8 +156,10 @@ public static class ChartFileCodec
 
             string[] fields = line.Split('|');
 
-            int expectedFieldCount = formatVersion >= 4
+            int expectedFieldCount = formatVersion >= 5
                 ? CurrentFieldCount
+                : formatVersion >= 4
+                    ? Version4FieldCount
                 : formatVersion >= 2
                     ? LegacyMotionFieldCount
                     : LegacyFieldCount;
@@ -226,11 +233,45 @@ public static class ChartFileCodec
 
             ParseAirNotes(fields[4], holder, lineNumber);
             holder.targetBpm = ParseBpm(fields[5], lineNumber);
-            holder.isEffect = ParseBoolean(fields[6], lineNumber, "effect");
-            holder.isCameraMove = ParseBoolean(
-                fields[7],
+            int effectFieldIndex;
+
+            if (formatVersion >= 5)
+            {
+                ParseLineSpeed(
+                    fields[6],
+                    lineNumber,
+                    out holder.hasLineSpeedChange,
+                    out holder.targetLineSpeed);
+                effectFieldIndex = 7;
+            }
+            else
+            {
+                holder.hasLineSpeedChange = false;
+                holder.targetLineSpeed = 1f;
+                effectFieldIndex = 6;
+            }
+
+            holder.isEffect = ParseBoolean(
+                fields[effectFieldIndex],
                 lineNumber,
-                "camera movement");
+                "effect");
+            if (formatVersion >= 6)
+            {
+                ParseCamera(
+                    fields[effectFieldIndex + 1],
+                    lineNumber,
+                    holder);
+            }
+            else
+            {
+                holder.isCameraMove = ParseBoolean(
+                    fields[effectFieldIndex + 1],
+                    lineNumber,
+                    "camera movement");
+                holder.cameraOffsetX = 0f;
+                holder.cameraSpinDirection =
+                    ChartCameraSpinDirection.None;
+            }
 
             if (formatVersion >= 2 && formatVersion < 4)
             {
@@ -395,15 +436,9 @@ public static class ChartFileCodec
             switch (noteType)
             {
                 case NoteType.Tap:
-                    output.Append(holder.isPoweredNotes[index] ? 'T' : 'F');
+                    output.Append('F');
                     break;
                 case NoteType.LongTap:
-                    if (holder.isPoweredNotes[index])
-                    {
-                        throw new InvalidOperationException(
-                            "Powered LongTap cannot be represented by this format.");
-                    }
-
                     output.Append(ToggleLong(openLongs, index));
                     break;
                 default:
@@ -542,8 +577,8 @@ public static class ChartFileCodec
                     holder.noteTypes[index] = NoteType.Tap;
                     break;
                 case 'T':
+                    // v1-v6의 Powered Tap은 일반 Tap으로 호환 로드합니다.
                     holder.noteTypes[index] = NoteType.Tap;
-                    holder.isPoweredNotes[index] = true;
                     break;
                 case 'S':
                     OpenLong(openLongs, index, lineNumber);
@@ -1054,6 +1089,123 @@ public static class ChartFileCodec
         }
 
         return bpm;
+    }
+
+    private static string FormatLineSpeed(ChartHolder holder)
+    {
+        if (!holder.hasLineSpeedChange)
+        {
+            return "-";
+        }
+
+        if (!IsFinite(holder.targetLineSpeed) ||
+            holder.targetLineSpeed <= 0f)
+        {
+            throw new InvalidOperationException(
+                $"Line Speed must be positive and finite: " +
+                $"{holder.targetLineSpeed}");
+        }
+
+        return holder.targetLineSpeed.ToString("R", Invariant);
+    }
+
+    private static void ParseLineSpeed(
+        string value,
+        int lineNumber,
+        out bool hasLineSpeedChange,
+        out float lineSpeed)
+    {
+        if (value == "-")
+        {
+            hasLineSpeedChange = false;
+            lineSpeed = 1f;
+            return;
+        }
+
+        if (!float.TryParse(
+                value,
+                NumberStyles.Float,
+                Invariant,
+                out lineSpeed) ||
+            !IsFinite(lineSpeed) ||
+            lineSpeed <= 0f)
+        {
+            throw CreateFormatException(
+                lineNumber,
+                $"Line Speed must be '-' or a positive finite number: " +
+                $"'{value}'.");
+        }
+
+        hasLineSpeedChange = true;
+    }
+
+    private static string FormatCamera(ChartHolder holder)
+    {
+        if (!holder.isCameraMove)
+        {
+            return "-";
+        }
+
+        if (!IsFinite(holder.cameraOffsetX))
+        {
+            throw new InvalidOperationException(
+                $"Camera offset X must be finite: {holder.cameraOffsetX}");
+        }
+
+        char direction = holder.cameraSpinDirection switch
+        {
+            ChartCameraSpinDirection.Left => 'L',
+            ChartCameraSpinDirection.None => 'N',
+            ChartCameraSpinDirection.Right => 'R',
+            _ => throw new InvalidOperationException(
+                $"Unsupported Camera spin direction: " +
+                $"{holder.cameraSpinDirection}")
+        };
+        return direction + ":" +
+            holder.cameraOffsetX.ToString("R", Invariant);
+    }
+
+    private static void ParseCamera(
+        string value,
+        int lineNumber,
+        ChartHolder holder)
+    {
+        if (value == "-")
+        {
+            holder.isCameraMove = false;
+            holder.cameraOffsetX = 0f;
+            holder.cameraSpinDirection =
+                ChartCameraSpinDirection.None;
+            return;
+        }
+
+        string[] tokens = value.Split(':');
+
+        if (tokens.Length != 2 || tokens[0].Length != 1 ||
+            !float.TryParse(
+                tokens[1],
+                NumberStyles.Float,
+                Invariant,
+                out float offsetX) ||
+            !IsFinite(offsetX))
+        {
+            throw CreateFormatException(
+                lineNumber,
+                $"Camera must be '-' or '[L|N|R]:offsetX': '{value}'.");
+        }
+
+        ChartCameraSpinDirection spinDirection = tokens[0][0] switch
+        {
+            'L' => ChartCameraSpinDirection.Left,
+            'N' => ChartCameraSpinDirection.None,
+            'R' => ChartCameraSpinDirection.Right,
+            _ => throw CreateFormatException(
+                lineNumber,
+                $"Camera direction must be L, N, or R: '{value}'.")
+        };
+        holder.isCameraMove = true;
+        holder.cameraOffsetX = offsetX;
+        holder.cameraSpinDirection = spinDirection;
     }
 
     private static bool ParseBoolean(

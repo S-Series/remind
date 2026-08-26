@@ -9,6 +9,13 @@ public sealed class ChartScroll : MonoBehaviour
 {
     private const float BoundsEpsilon = 0.001f;
 
+    /// <summary>
+    /// Preview Camera 회전의 기준 X입니다. Camera Note 컴파일/표시 계층이 이 값을
+    /// 갱신하며, 양수 X는 음수 Z 회전으로 변환됩니다.
+    /// </summary>
+    public static float PreviewCameraRotationReferenceX;
+    public static float PreviewCameraSpinDegrees;
+
     [SerializeField] private RectTransform scrollTrans;
     [SerializeField, Min(1f)] private float scrollPower = 40f;
     [SerializeField, Min(0.01f)] private float smoothTime = 0.08f;
@@ -22,6 +29,7 @@ public sealed class ChartScroll : MonoBehaviour
 
     [Header("Preview Camera Line Following")]
     [SerializeField] private ChartPreviewFloorRenderer previewFloorRenderer;
+    [SerializeField] private float previewCameraTiltDegreesPerXUnit = 0.6f;
 
     [Header("Vertical Zoom")]
     [SerializeField, Min(0.1f)] private float minimumVerticalZoom = 0.5f;
@@ -40,13 +48,14 @@ public sealed class ChartScroll : MonoBehaviour
     private bool ownsEventTrigger;
     private bool externalTimelineControl;
     private Vector3 cameraBasePosition;
-    private Vector3 previewCameraBasePosition;
+    private Vector3 previewCameraBaseLocalPosition;
+    private Quaternion previewCameraBaseLocalRotation;
     private Vector2 scrollViewportBasePosition;
     private Vector2[] cameraFollowBasePositions = Array.Empty<Vector2>();
     private GuideGenerate guideGenerate;
     private bool cameraScrollingReady;
     private float previewHighSpeedScale = 1f;
-    private Vector3 previewCameraLineOffset;
+    private Vector3 previewCameraLineLocalOffset;
     private Vector3 contentBaseScale;
     private float verticalZoom = 1f;
 
@@ -62,6 +71,14 @@ public sealed class ChartScroll : MonoBehaviour
         : 0f;
     public float PreviewHighSpeedScale => previewHighSpeedScale;
     public float VerticalZoom => verticalZoom;
+
+    [RuntimeInitializeOnLoadMethod(
+        RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetStaticState()
+    {
+        PreviewCameraRotationReferenceX = 0f;
+        PreviewCameraSpinDegrees = 0f;
+    }
 
     private void Awake()
     {
@@ -655,11 +672,16 @@ public sealed class ChartScroll : MonoBehaviour
 
         if (previewCameraTransform && guideGenerate)
         {
-            previewCameraBasePosition =
-                previewCameraTransform.position -
+            // Preview 루트가 화면 배치를 소유하고 Camera는 로컬 원점에서
+            // 움직입니다. 월드 위치를 기준값으로 저장하면 부모의 화면 배치값이
+            // 카메라 이동 계산에 섞이므로 로컬 좌표만 사용합니다.
+            previewCameraBaseLocalPosition =
+                previewCameraTransform.localPosition -
                 Vector3.forward * GetPreviewCameraZOffset(
                     initialViewportOffsetY);
-            previewCameraLineOffset = Vector3.zero;
+            previewCameraBaseLocalRotation =
+                previewCameraTransform.localRotation;
+            previewCameraLineLocalOffset = Vector3.zero;
         }
         else if (previewCameraTransform)
         {
@@ -733,17 +755,28 @@ public sealed class ChartScroll : MonoBehaviour
         }
 
         float chartY = -ScrollY * guideGenerate.ScrollToChartRatio;
-        previewCameraLineOffset =
+        Vector3 worldLineOffset =
             previewFloorRenderer.EvaluateWorldCenterOffset(chartY);
+        previewCameraLineLocalOffset = previewCameraTransform.parent
+            ? previewCameraTransform.parent.InverseTransformVector(
+                worldLineOffset)
+            : worldLineOffset;
         ApplyPreviewCameraPosition(-ScrollY);
     }
 
     private void ApplyPreviewCameraPosition(float viewportOffsetY)
     {
-        previewCameraTransform.position =
-            previewCameraBasePosition +
+        previewCameraTransform.localPosition =
+            previewCameraBaseLocalPosition +
             Vector3.forward * GetPreviewCameraZOffset(viewportOffsetY) +
-            previewCameraLineOffset;
+            previewCameraLineLocalOffset;
+        float tiltDegrees =
+            -PreviewCameraRotationReferenceX *
+            previewCameraTiltDegreesPerXUnit +
+            PreviewCameraSpinDegrees;
+        previewCameraTransform.localRotation =
+            previewCameraBaseLocalRotation *
+            Quaternion.Euler(0f, 0f, tiltDegrees);
     }
 
     private Vector3 GetCameraWorldOffset(float viewportOffsetY)

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using REmind.Charting;
 using REmind.Data;
 using UnityEngine;
 using UnityEngine.Serialization;
@@ -229,6 +230,15 @@ public sealed class ChartPlacementController : MonoBehaviour
         PositionCorrection = positionCorrection;
         RefreshPreviewPosition();
 
+        // 배치 도구가 활성화된 동안 기존 노트가 클릭되어도 선택 모드로
+        // 전환하지 않습니다. 이미 점유된 슬롯이면 배치만 실패하고 도구는
+        // 그대로 유지됩니다.
+        if (canPlaceCurrentPreview)
+        {
+            TryPlaceCurrentNote();
+            return;
+        }
+
         if (selectionController &&
             selectionController.TrySelectAt(
                 normalizedPosition,
@@ -249,7 +259,8 @@ public sealed class ChartPlacementController : MonoBehaviour
         Vector2 normalizedPosition,
         bool? positionCorrection)
     {
-        if (CurrentTool == ChartToolType.Eraser)
+        if (canPlaceCurrentPreview ||
+            CurrentTool == ChartToolType.Eraser)
         {
             return;
         }
@@ -284,7 +295,11 @@ public sealed class ChartPlacementController : MonoBehaviour
         dragSourceAbsolutePosition = sourceHolder.AbsoluteChartPosition;
         GameObject[] linkedNoteObjects;
 
-        if (draggedNoteType == NoteType.Air)
+        if (draggedNoteType == NoteType.Camera)
+        {
+            sourceHolder.TryGetCameraNote(out linkedNoteObjects);
+        }
+        else if (draggedNoteType == NoteType.Air)
         {
             sourceHolder.TryGetAirNote(
                 dragSourceLine,
@@ -487,9 +502,10 @@ public sealed class ChartPlacementController : MonoBehaviour
             ChartHolder.WorldYToAbsolutePosition(dragTargetPosition.y));
         bool positionChanged =
             targetAbsolutePosition != dragSourceAbsolutePosition ||
-            dragTargetLine != dragSourceLine ||
-            (!draggedNoteType.IsScratch() &&
-             dragTargetHandle != dragSourceHandle);
+            (draggedNoteType != NoteType.Camera &&
+             (dragTargetLine != dragSourceLine ||
+              (!draggedNoteType.IsScratch() &&
+               dragTargetHandle != dragSourceHandle)));
 
         if (!positionChanged)
         {
@@ -603,6 +619,32 @@ public sealed class ChartPlacementController : MonoBehaviour
         ChartHolder holder = ChartManager.GetOrCreateHolder(notePosition.y);
         notePosition.y = holder.WorldY;
 
+        if (currentNoteType == NoteType.Camera)
+        {
+            if (holder.isCameraMove)
+            {
+                return;
+            }
+
+            ChartEditHistory.ChartEditTransaction cameraTransaction =
+                ChartEditHistory.BeginChange(holder.AbsoluteChartPosition);
+            GameObject[] cameraObjects = CreateNoteObjects(
+                prefab,
+                notePosition,
+                NoteHandleType.Left,
+                NoteType.Camera);
+
+            if (!holder.AddCameraNote(cameraObjects))
+            {
+                DestroyNoteObjects(cameraObjects);
+                return;
+            }
+
+            ChartManager.NotifyChartChanged();
+            ChartEditHistory.CommitChange(cameraTransaction);
+            return;
+        }
+
         if (holder.HasNote(line, currentNoteType))
         {
             return;
@@ -651,14 +693,13 @@ public sealed class ChartPlacementController : MonoBehaviour
         ChartEditHistory.CommitChange(editTransaction);
     }
 
-    /// <summary>Tap/Long Tap의 위치, 라인, 손 방향과 Powered 상태를 수정합니다.</summary>
+    /// <summary>Tap/Long Tap의 위치, 라인과 손 방향을 수정합니다.</summary>
     public bool TryEditTapNote(
         GameObject noteObject,
         int measure,
         int measurePosition,
         int line,
         NoteHandleType handleType,
-        bool isPowered,
         out string error)
     {
         if (!TryRequireNoteType(
@@ -678,11 +719,93 @@ public sealed class ChartPlacementController : MonoBehaviour
             measurePosition,
             line,
             handleType,
-            isPowered,
+            false,
             0,
             null,
             null,
             out error);
+    }
+
+    /// <summary>선택된 Tap과 Long Tap을 서로 전환하고 해당 뷰만 교체합니다.</summary>
+    public bool TryToggleTapLongNote(
+        GameObject noteObject,
+        out string error)
+    {
+        if (!TryRequireNoteType(
+                noteObject,
+                out NoteType sourceType,
+                out error,
+                NoteType.Tap,
+                NoteType.LongTap) ||
+            !ChartManager.TryGetNoteData(
+                noteObject,
+                out ChartHolder sourceHolder,
+                out int sourceLine,
+                out _,
+                out NoteHandleType sourceHandle,
+                out _))
+        {
+            error ??= "Selected Tap note data could not be found.";
+            return false;
+        }
+
+        NoteType targetType = sourceType == NoteType.Tap
+            ? NoteType.LongTap
+            : NoteType.Tap;
+        GameObject targetPrefab = GetNotePrefab(targetType);
+
+        if (!targetPrefab)
+        {
+            error = $"No prefab is configured for {targetType}.";
+            return false;
+        }
+
+        Vector3 notePosition = new Vector3(
+            GetStoredLineX(sourceLine),
+            sourceHolder.WorldY,
+            0f);
+        GameObject[] replacementObjects = CreateNoteObjects(
+            targetPrefab,
+            notePosition,
+            sourceHandle,
+            targetType);
+        ChartEditHistory.ChartEditTransaction editTransaction =
+            ChartEditHistory.BeginChange(
+                sourceHolder.AbsoluteChartPosition);
+
+        if (!ChartManager.ChangeTapNoteType(
+                noteObject,
+                targetType,
+                out ChartHolder changedHolder,
+                out int changedLine,
+                out _,
+                out GameObject[] previousObjects,
+                out error))
+        {
+            DestroyNoteObjects(replacementObjects);
+            return false;
+        }
+
+        if (!changedHolder.AttachNoteObjects(
+                changedLine,
+                replacementObjects))
+        {
+            changedHolder.noteTypes[changedLine - 1] = sourceType;
+            changedHolder.isPoweredNotes[changedLine - 1] = false;
+            changedHolder.AttachNoteObjects(changedLine, previousObjects);
+            DestroyNoteObjects(replacementObjects);
+            error = "The replacement Tap note view could not be attached.";
+            return false;
+        }
+
+        selectionController?.ClearSelection();
+        DestroyNoteObjects(previousObjects);
+        ChartManager.RefreshLongNoteLengths(changedLine);
+        ChartManager.NotifyChartChanged();
+        ChartEditHistory.CommitChange(editTransaction);
+        selectionController?.SelectNoteObject(replacementObjects[0]);
+        error = null;
+        return true;
     }
 
     /// <summary>Scratch의 위치, 방향, 지점과 이동 명령을 수정합니다.</summary>
@@ -784,6 +907,87 @@ public sealed class ChartPlacementController : MonoBehaviour
             null,
             null,
             out error);
+    }
+
+    /// <summary>Camera Note의 위치, X 오프셋과 L/N/R 회전을 수정합니다.</summary>
+    public bool TryEditCameraNote(
+        GameObject noteObject,
+        int measure,
+        int measurePosition,
+        float offsetX,
+        ChartCameraSpinDirection spinDirection,
+        out string error)
+    {
+        if (!TryRequireNoteType(
+                noteObject,
+                out _,
+                out error,
+                NoteType.Camera) ||
+            !TryGetAbsolutePosition(
+                measure,
+                measurePosition,
+                out int targetAbsolutePosition,
+                out error) ||
+            !ChartManager.TryGetNoteData(
+                noteObject,
+                out ChartHolder sourceHolder,
+                out _,
+                out _,
+                out _,
+                out _))
+        {
+            error ??= "Selected Camera Note data could not be found.";
+            return false;
+        }
+
+        if (!float.IsFinite(offsetX))
+        {
+            error = "Camera Offset X must be finite.";
+            return false;
+        }
+
+        if (!System.Enum.IsDefined(
+                typeof(ChartCameraSpinDirection),
+                spinDirection))
+        {
+            error = $"Unsupported Camera spin direction: {spinDirection}.";
+            return false;
+        }
+
+        bool isUnchanged =
+            sourceHolder.AbsoluteChartPosition == targetAbsolutePosition &&
+            sourceHolder.cameraOffsetX == offsetX &&
+            sourceHolder.cameraSpinDirection == spinDirection;
+
+        if (isUnchanged)
+        {
+            error = null;
+            return true;
+        }
+
+        ChartEditHistory.ChartEditTransaction editTransaction =
+            ChartEditHistory.BeginChange(
+                sourceHolder.AbsoluteChartPosition,
+                targetAbsolutePosition);
+
+        if (!ChartManager.EditCameraNote(
+                noteObject,
+                targetAbsolutePosition,
+                offsetX,
+                spinDirection,
+                out error))
+        {
+            return false;
+        }
+
+        UpdateEditedNoteObjects(
+            noteObject,
+            targetAbsolutePosition,
+            0,
+            NoteHandleType.Left);
+        ChartEditHistory.CommitChange(editTransaction);
+        selectionController?.NotifySelectionChanged();
+        return true;
     }
 
     private bool TryApplyNoteEdit(
@@ -890,7 +1094,11 @@ public sealed class ChartPlacementController : MonoBehaviour
 
         GameObject[] noteObjects;
 
-        if (noteType == NoteType.Air)
+        if (noteType == NoteType.Camera)
+        {
+            holder.TryGetCameraNote(out noteObjects);
+        }
+        else if (noteType == NoteType.Air)
         {
             holder.TryGetAirNote(line, out _, out noteObjects);
         }
@@ -905,7 +1113,7 @@ public sealed class ChartPlacementController : MonoBehaviour
         }
 
         Vector3 localPosition = new Vector3(
-            GetStoredLineX(line),
+            noteType == NoteType.Camera ? 0f : GetStoredLineX(line),
             ChartHolder.AbsolutePositionToWorldY(absolutePosition),
             0f);
         Transform handField = handleType == NoteHandleType.Right
@@ -1003,7 +1211,7 @@ public sealed class ChartPlacementController : MonoBehaviour
     }
 
     /// <summary>파일에서 복원한 채보 데이터에 중앙·손 필드 노트 뷰를 생성합니다.</summary>
-    public void RebuildChartViews()
+    public void RebuildChartViews(bool recreateExisting = false)
     {
         if (selectionController)
         {
@@ -1011,6 +1219,16 @@ public sealed class ChartPlacementController : MonoBehaviour
         }
 
         IReadOnlyList<ChartHolder> holders = ChartManager.ChartHolders;
+
+        if (recreateExisting)
+        {
+            for (int holderIndex = 0;
+                 holderIndex < holders.Count;
+                 holderIndex++)
+            {
+                holders[holderIndex].DestroyAllNoteObjects();
+            }
+        }
 
         for (int holderIndex = 0; holderIndex < holders.Count; holderIndex++)
         {
@@ -1108,6 +1326,37 @@ public sealed class ChartPlacementController : MonoBehaviour
                 if (!holder.AttachAirNoteObjects(line, noteObjects))
                 {
                     DestroyNoteObjects(noteObjects);
+                }
+            }
+
+            if (holder.isCameraMove &&
+                (!holder.TryGetCameraNote(
+                    out GameObject[] existingCameraObjects) ||
+                 existingCameraObjects == null))
+            {
+                GameObject cameraPrefab = GetCameraNotePrefab();
+
+                if (!cameraPrefab)
+                {
+                    Debug.LogWarning(
+                        "Cannot rebuild Camera Note: prefab is missing.",
+                        this);
+                    continue;
+                }
+
+                Vector3 cameraPosition = new Vector3(
+                    0f,
+                    holder.WorldY,
+                    0f);
+                GameObject[] cameraObjects = CreateNoteObjects(
+                    cameraPrefab,
+                    cameraPosition,
+                    NoteHandleType.Left,
+                    NoteType.Camera);
+
+                if (!holder.AttachCameraNoteObjects(cameraObjects))
+                {
+                    DestroyNoteObjects(cameraObjects);
                 }
             }
         }
@@ -1434,6 +1683,11 @@ public sealed class ChartPlacementController : MonoBehaviour
         currentNoteType = noteType;
         canPlaceCurrentPreview = canPlace;
 
+        if (canPlace && selectionController)
+        {
+            selectionController.ClearSelection();
+        }
+
         if (!prefab || !previewField)
         {
             Debug.LogWarning($"No preview prefab for chart tool {CurrentTool}.", this);
@@ -1481,7 +1735,8 @@ public sealed class ChartPlacementController : MonoBehaviour
     {
         return noteType == NoteType.Tap ||
             noteType == NoteType.LongTap ||
-            noteType.IsScratch();
+            noteType.IsScratch() ||
+            noteType == NoteType.Camera;
     }
 
     /// <summary>노트 종류별 X축 스냅 좌표를 -1~1 범위로 설정합니다.</summary>
@@ -1703,9 +1958,21 @@ public sealed class ChartPlacementController : MonoBehaviour
             NoteType.Air => airNotePrefab,
             NoteType.Speed => speedNotePrefab,
             NoteType.Effect => effectNotePrefab,
-            NoteType.Camera => cameraNotePrefab,
+            NoteType.Camera => GetCameraNotePrefab(),
             _ => null
         };
+    }
+
+    /// <summary>
+    /// 현재 씬의 Camera 슬롯이 툴바 UI 오브젝트를 가리키는 구버전 설정이면
+    /// 선택 가능한 일반 노트 프리팹을 임시 표시 마커로 사용합니다.
+    /// </summary>
+    private GameObject GetCameraNotePrefab()
+    {
+        return cameraNotePrefab &&
+            !cameraNotePrefab.TryGetComponent(out RectTransform _)
+                ? cameraNotePrefab
+                : tapNotePrefab;
     }
 
     private GameObject GetChartPreviewNotePrefab(NoteType noteType)
@@ -1716,7 +1983,7 @@ public sealed class ChartPlacementController : MonoBehaviour
             NoteType.LongTap => chartPreviewLongTapNotePrefab,
             NoteType.Scratch => chartPreviewScratchNotePrefab,
             NoteType.LongScratch => chartPreviewLongScratchNotePrefab,
-            NoteType.Air => chartPreviewTapNotePrefab,
+            NoteType.Air => airNotePrefab,
             _ => null
         };
     }

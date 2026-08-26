@@ -1,17 +1,20 @@
 # Chart Format
 
 > 문서 상태: Draft 0.1  
-> 최종 갱신: 2026-08-24
+> 최종 갱신: 2026-08-26
 > 목적: 에디터와 게임 런타임이 공유하는 채보 JSON 형식과 유효성 검사 규칙을 고정한다.
 
 ## 1. 기본 원칙
 
 - 파일 형식은 UTF-8 JSON이다.
 - 최상위 `formatVersion`을 반드시 포함한다.
-- 레인은 화면 왼쪽부터 `0`~`9`이다.
+- 레인은 `0`~`9`다. `0~3`은 Ground Main 1~4, `4~7`은 AirMain 1~4,
+  `8~9`는 Ground Left/Right다.
+- AirMain에는 단일 판정 노트만 저장하며 공중 Long Note는 지원하지 않는다.
 - 노트의 기준 시간은 정수 밀리초 `timeMs`다.
 - `timeMs = 0`은 오디오 파일의 샘플 0이다.
-- BPM, beat, tick 정보는 에디터 표시와 재편집을 돕는 메타데이터다.
+- BPM, beat, tick은 에디터 표시와 재편집 및 화면 스크롤 계산에 사용한다.
+- Line Speed는 화면 스크롤에만 사용하며 판정 시각을 변경하지 않는다.
 - 런타임 판정은 최종 `timeMs`를 사용한다.
 - 실제 키 바인딩은 채보에 저장하지 않는다.
 
@@ -43,6 +46,12 @@
       {
         "timeMs": 0,
         "bpm": 120.0
+      }
+    ],
+    "lineSpeedChanges": [
+      {
+        "timeMs": 0,
+        "multiplier": 1.0
       }
     ],
     "timeSignatures": [
@@ -223,7 +232,20 @@ judgementTargetMs = note.timeMs + chartOffsetMs
 - 첫 이벤트는 `timeMs = 0`이어야 한다.
 - BPM 정보가 잘못되어도 이미 저장된 노트 `timeMs`가 자동으로 달라지면 안 된다.
 
-### 8.3 `timeSignatures`
+### 8.3 `lineSpeedChanges`
+
+| 필드 | 타입 | 규칙 |
+|---|---|---|
+| `timeMs` | integer | `0` 이상 |
+| `multiplier` | number | `0`보다 큰 유한값 |
+
+- `multiplier = 1`이 기본 표시 속도다.
+- Line Speed는 `FloorPosition`만 변경하고 노트 `timeMs`와 판정 윈도우에는
+  관여하지 않는다.
+- 같은 `timeMs`에 Line Speed 이벤트를 두 개 둘 수 없다.
+- 정지(`0`)와 역주행(음수)은 현재 형식에서 허용하지 않는다.
+
+### 8.4 `timeSignatures`
 
 | 필드 | 타입 | 규칙 |
 |---|---|---|
@@ -397,17 +419,61 @@ JSON Text
 - BPM 이벤트의 에디터 내부 tick 표현
 - JSON Schema 파일의 위치와 자동 생성 방식
 
-## 18. ChartMaker Native v4
+## 18. ChartMaker Native v6
 
 현재 ChartMaker의 native 텍스트 포맷(`#REmindChart`)은 위 JSON 초안과 별개다.
-저장 시에는 항상 v4를 출력하며, 메타데이터와 채보 행은 다음 순서로 기록한다.
+Native 편집 데이터는 `measure|position`을 원본으로 사용한다. 테스트 플레이와
+Gameplay에 전달하기 전 공용 `ChartCompiler`가 BPM 구간마다 `StartPosition`,
+`StartTimeMs`, `Bpm`을 가진 TimingPoint를 만들고 각 노트의 최종 판정 시각을
+계산한다. 따라서 JSON의 `timeMs` 원칙은 컴파일 이후의 런타임/교환 포맷에
+적용되며 Native 편집 좌표와 충돌하지 않는다.
+
+저장 시에는 항상 v6를 출력하며, 메타데이터와 채보 행은 다음 순서로 기록한다.
 
 ```text
-#REmindChart|4
+#REmindChart|6
 #BPM|120
 #MUSIC_START_CORRECTION_MS|0
-measure|position|main notes|scratch notes|air notes|target BPM|effect|camera
+measure|position|main notes|scratch notes|air notes|target BPM|line speed|effect|camera
 ```
+
+Line Speed 필드는 해당 Position에서 새 표시 배율을 시작한다. 이벤트가 없으면 `-`,
+있으면 `0`보다 큰 유한한 숫자를 기록한다. 예를 들어 `0.5`는 그 지점부터 같은
+BPM의 기본 표시 이동량을 절반으로 만든다. v1~v4 파일을 불러오면 Line Speed
+이벤트가 없는 것으로 변환하여 기본값 `1`을 사용한다.
+
+Camera 필드는 이벤트가 없으면 `-`, 있으면 `[L|N|R]:offsetX`로 기록한다.
+
+```text
+N:-5   # 라인 중심 X에 -5를 더하고 추가 회전 없음
+L:0    # 라인 중심 X를 기준으로 갱신하고 왼쪽으로 360도 회전
+R:3.5  # 라인 중심 X에 3.5를 더하고 오른쪽으로 360도 회전
+```
+
+Camera Note가 처리되는 순간의 기준값은 다음과 같다.
+
+```text
+CameraReferenceX = LineCenterXAtEvent + OffsetX
+SpinDurationMs = 175 * 120 / EventBpm
+```
+
+`L`은 반시계 `+360도`, `R`은 시계 `-360도`, `N`은 회전 없음이다. 회전 진행은
+EaseInOut으로 평가하며 BPM 120에서는 175ms, BPM 240에서는 87.5ms가 걸린다.
+v1~v5의 Camera `T`는 `N:0`, `F`는 이벤트 없음으로 변환한다.
+
+Main 필드는 4개 라인의 2글자 토큰을 이어 붙인 8글자다. 각 토큰은
+`[Handle][State]`이며 노트가 없는 라인은 `--`로 기록한다.
+
+| 위치 | 값 | 의미 |
+|---|---|---|
+| 1 | `L` / `R` | Left / Right Hand |
+| 2 | `F` / `S` / `E` | Tap / Long Tap Start / Long Tap End |
+
+- 일반 Tap과 Long Tap에는 Powered 속성이 없다.
+- 구버전의 Powered Tap 상태 `T`는 읽을 때 일반 Tap `F`로 정규화하며, 새로
+  저장할 때는 `T`를 출력하지 않는다.
+- 에디터에서 Tap 계열 노트를 선택하고 `Tab`을 누르면 Left/Right Hand가
+  전환되고, `Shift+Tab`을 누르면 Tap/Long Tap이 전환된다.
 
 Scratch 필드는 왼쪽과 오른쪽 토큰을 이어 붙인 8글자다. 각 토큰은
 `[Motion][Point][Amount]`의 4글자이며 노트가 없는 쪽은 `----`로 기록한다.
@@ -433,7 +499,7 @@ NM42----  # 왼쪽 Long Scratch Mid, 이동 없이 42 보존
 - `G`는 현재 점부터 다음 `M` 또는 `E`까지 점진적으로 이동한다.
 - `I`는 해당 점에서 즉시 이동한다.
 - 다음 구간이 없는 `T`의 이동은 즉시 적용된다.
-- Long Scratch의 `E`에 기록된 Powered/Motion은 무시하며 유효 Motion을 `N`으로
+- Long Scratch의 `E`에 기록된 Motion은 무시하며 유효 Motion을 `N`으로
   정규화한다. `E`까지 이어지는 이동은 앞선 `S` 또는 `M`의 Motion을 사용한다.
 - `N`은 새 이동을 적용하지 않으므로 이전 위치를 유지한다. 뒤의 숫자는 의미를
   제한하지 않고 그대로 저장하고 다시 불러온다.
@@ -444,11 +510,21 @@ NM42----  # 왼쪽 Long Scratch Mid, 이동 없이 42 보존
 - 이동량 변환과 구간 보간은 Unity 오브젝트와 분리된 공용 계산기를 사용하며,
   ChartMaker Preview와 실제 게임은 같은 규칙을 사용한다.
 - 기존 Scratch 단노트 상태 문자 `F`는 v4에서 `T`로 바뀐다. 이 규칙은 Scratch
-  토큰에만 적용되며 main note 필드의 기존 인코딩은 유지한다.
+  토큰에만 적용된다.
+
+저장 시 닫히지 않은 Long Note는 저장을 실패시키지 않고 자동 정규화한다.
+
+- 짝이 없는 Long Tap은 일반 Tap으로 변환한다.
+- End가 없는 Long Scratch의 Start/Mid는 각각 일반 Scratch Tap으로 변환한다.
+- Start가 없는 Long Scratch Mid/End도 일반 Scratch Tap으로 변환한다.
+- 정상적으로 닫힌 Long Tap과 Long Scratch는 변경하지 않는다.
+
+저장 성공 후 에디터의 데이터와 표시 오브젝트에도 같은 변환을 적용하므로 바로
+Test Play를 시작해도 저장 파일과 동일한 결과를 사용한다.
 
 ### 18.1 좌표 호환성
 
-native 포맷 v3와 v4의 위치 좌표는 다음 규칙을 사용한다.
+native 포맷 v3~v6의 위치 좌표는 다음 규칙을 사용한다.
 
 - 한 마디의 리듬 기준은 `240 pulses`다.
 - 한 pulse는 저장 정밀도 `20 position units`를 가진다.

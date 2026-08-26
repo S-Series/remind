@@ -260,11 +260,11 @@ public sealed class FileToChart : MonoBehaviour
 
             bool isPowered = legacy.NotePowered != null &&
                 legacy.NotePowered[noteIndex];
-            holder.isPoweredNotes[storageIndex] = isPowered;
 
             if (storageIndex < ChartHolder.MainLineCount)
             {
                 holder.noteTypes[storageIndex] = NoteType.Tap;
+                holder.isPoweredNotes[storageIndex] = false;
                 holder.noteHandles[storageIndex] =
                     storageIndex < ChartHolder.MainLineCount / 2
                         ? NoteHandleType.Left
@@ -273,6 +273,7 @@ public sealed class FileToChart : MonoBehaviour
             else
             {
                 holder.noteTypes[storageIndex] = NoteType.Scratch;
+                holder.isPoweredNotes[storageIndex] = isPowered;
                 int scratchIndex =
                     storageIndex - ChartHolder.MainLineCount;
                 holder.scratchPointTypes[scratchIndex] =

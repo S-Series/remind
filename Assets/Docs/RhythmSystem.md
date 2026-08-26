@@ -19,7 +19,9 @@
 ### 2.1 레인 규칙
 
 - 레인 수는 **10개로 고정**한다.
-- 레인 번호는 화면 왼쪽부터 `0`~`9`이다.
+- 레인 번호는 `0`~`9`이며 `0~3`은 Ground Main 1~4, `4~7`은
+  AirMain 1~4, `8~9`는 Ground Left/Right다.
+- AirMain은 단일 판정 노트만 지원하며 공중 Long Note는 지원하지 않는다.
 - 채보에는 실제 키가 아니라 레인 번호만 저장한다.
 - 키 설정을 변경해도 같은 채보를 그대로 사용할 수 있어야 한다.
 
@@ -107,6 +109,24 @@ noteTimeSec = timeMs * 0.001
 - 변속 BPM이 있어도 런타임 판정식이 단순하다.
 - JSON diff가 안정적이다.
 - 정수 저장으로 부동소수점 직렬화 차이를 피할 수 있다.
+
+### 4.4 Line Speed와 판정의 관계
+
+Line Speed는 `SongTimeMs`에서 표시용 `FloorPosition`을 구할 때만 사용한다.
+
+```text
+judgeOffsetMs = inputSongTimeMs - userOffsetMs - noteTimeMs
+floorUnitsPerMs = bpmFloorUnitsPerMs * lineSpeed
+```
+
+따라서 동일한 `noteTimeMs`, 입력 시각, 오프셋을 주면 Line Speed와 무관하게 같은
+판정 결과가 나온다. 달라지는 것은 같은 판정 시간 창 동안 노트가 이동하는 화면
+거리뿐이다. 빠른 Line Speed에서는 시간 기준 `±30ms`가 더 넓은 화면 거리로,
+느린 Line Speed에서는 더 좁은 화면 거리로 보인다.
+
+`BPM 240 × LineSpeed 0.5`와 `BPM 120 × LineSpeed 1`은 화면 이동 기울기는 같지만,
+같은 편집 Position이 컴파일되는 `noteTimeMs`는 서로 다르다. BPM은 판정 시각을
+만들고 Line Speed는 그 결과의 표시 위치만 바꾼다.
 
 ## 5. 오프셋
 

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using REmind.Charting;
 using REmind.Data;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -27,7 +28,6 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
     private VisualElement tapPanel;
     private DropdownField tapLineField;
     private DropdownField tapHandField;
-    private Toggle tapPoweredField;
     private Label tapLongPairLabel;
     private VisualElement scratchPanel;
     private DropdownField scratchSideField;
@@ -38,6 +38,9 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
     private VisualElement airPanel;
     private DropdownField airLineField;
     private IntegerField airValueField;
+    private VisualElement cameraPanel;
+    private FloatField cameraOffsetXField;
+    private DropdownField cameraSpinDirectionField;
     private Label errorLabel;
     private Button closeButton;
     private Button deleteButton;
@@ -74,7 +77,6 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
         tapPanel = root.Q<VisualElement>("tap-note-edit-panel");
         tapLineField = root.Q<DropdownField>("tap-line-field");
         tapHandField = root.Q<DropdownField>("tap-hand-field");
-        tapPoweredField = root.Q<Toggle>("tap-powered-field");
         tapLongPairLabel = root.Q<Label>("tap-long-pair-label");
         scratchPanel = root.Q<VisualElement>("scratch-note-edit-panel");
         scratchSideField = root.Q<DropdownField>("scratch-side-field");
@@ -86,6 +88,10 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
         airPanel = root.Q<VisualElement>("air-note-edit-panel");
         airLineField = root.Q<DropdownField>("air-line-field");
         airValueField = root.Q<IntegerField>("air-value-field");
+        cameraPanel = root.Q<VisualElement>("camera-note-edit-panel");
+        cameraOffsetXField = root.Q<FloatField>("camera-offset-x-field");
+        cameraSpinDirectionField =
+            root.Q<DropdownField>("camera-spin-direction-field");
         errorLabel = root.Q<Label>("note-edit-error");
         closeButton = root.Q<Button>("note-edit-close-button");
         deleteButton = root.Q<Button>("note-edit-delete-button");
@@ -108,6 +114,8 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
             new List<string> { "None", "Gradual", "Instant" };
         scratchPointField.choices =
             new List<string> { "Tap", "Start", "Mid", "End" };
+        cameraSpinDirectionField.choices =
+            new List<string> { "L", "N", "R" };
         applyButton.SetEnabled(false);
 
         closeButton.clicked += HandleCloseRequested;
@@ -173,7 +181,7 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
                 out int line,
                 out NoteType noteType,
                 out NoteHandleType handleType,
-                out bool isPowered))
+                out _))
         {
             Hide();
             return;
@@ -191,8 +199,6 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
             tapLineField.SetValueWithoutNotify(line.ToString());
             tapHandField.SetValueWithoutNotify(
                 handleType == NoteHandleType.Right ? "Right" : "Left");
-            tapPoweredField.SetValueWithoutNotify(isPowered);
-            tapPoweredField.SetEnabled(noteType != NoteType.LongTap);
             tapLongPairLabel.style.display = noteType == NoteType.LongTap
                 ? DisplayStyle.Flex
                 : DisplayStyle.None;
@@ -224,8 +230,15 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
             airValueField.SetValueWithoutNotify(
                 holder.airNoteValues[line - 1]);
         }
+        else if (noteType == NoteType.Camera)
+        {
+            cameraOffsetXField.SetValueWithoutNotify(holder.cameraOffsetX);
+            cameraSpinDirectionField.SetValueWithoutNotify(
+                ToCameraSpinText(holder.cameraSpinDirection));
+        }
 
-        applyButton.SetEnabled(noteType.IsGameplayNote());
+        applyButton.SetEnabled(
+            noteType.IsGameplayNote() || noteType == NoteType.Camera);
         editWindow.style.display = DisplayStyle.Flex;
         editWindow.schedule.Execute(ApplyRememberedWindowPosition);
     }
@@ -498,6 +511,9 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
         airPanel.style.display = noteType == NoteType.Air
             ? DisplayStyle.Flex
             : DisplayStyle.None;
+        cameraPanel.style.display = noteType == NoteType.Camera
+            ? DisplayStyle.Flex
+            : DisplayStyle.None;
 
     }
 
@@ -537,6 +553,9 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
             case NoteType.Air:
                 succeeded = TryApplyAirEdit(out error);
                 break;
+            case NoteType.Camera:
+                succeeded = TryApplyCameraEdit(out error);
+                break;
             default:
                 succeeded = false;
                 error = $"{selectedNoteType} editing is not supported.";
@@ -557,15 +576,12 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
         NoteHandleType handleType = tapHandField.value == "Right"
             ? NoteHandleType.Right
             : NoteHandleType.Left;
-        bool isPowered = selectedNoteType != NoteType.LongTap &&
-            tapPoweredField.value;
         return placementController.TryEditTapNote(
             selectedNoteObject,
             measureField.value,
             positionField.value,
             line,
             handleType,
-            isPowered,
             out error);
     }
 
@@ -637,6 +653,24 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
             out error);
     }
 
+    private bool TryApplyCameraEdit(out string error)
+    {
+        ChartCameraSpinDirection spinDirection =
+            cameraSpinDirectionField.value switch
+            {
+                "L" => ChartCameraSpinDirection.Left,
+                "R" => ChartCameraSpinDirection.Right,
+                _ => ChartCameraSpinDirection.None
+            };
+        return placementController.TryEditCameraNote(
+            selectedNoteObject,
+            measureField.value,
+            positionField.value,
+            cameraOffsetXField.value,
+            spinDirection,
+            out error);
+    }
+
     private void SetError(string message)
     {
         if (errorLabel == null)
@@ -675,7 +709,6 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
                tapPanel != null &&
                tapLineField != null &&
                tapHandField != null &&
-               tapPoweredField != null &&
                tapLongPairLabel != null &&
                scratchPanel != null &&
                scratchSideField != null &&
@@ -686,6 +719,9 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
                airPanel != null &&
                airLineField != null &&
                airValueField != null &&
+               cameraPanel != null &&
+               cameraOffsetXField != null &&
+               cameraSpinDirectionField != null &&
                errorLabel != null &&
                closeButton != null &&
                deleteButton != null &&
@@ -732,7 +768,19 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
             NoteType.Scratch => "Scratch Note",
             NoteType.LongScratch => "Long Scratch Note",
             NoteType.Air => "Air Note",
+            NoteType.Camera => "Camera Note",
             _ => "Note"
+        };
+    }
+
+    private static string ToCameraSpinText(
+        ChartCameraSpinDirection spinDirection)
+    {
+        return spinDirection switch
+        {
+            ChartCameraSpinDirection.Left => "L",
+            ChartCameraSpinDirection.Right => "R",
+            _ => "N"
         };
     }
 }

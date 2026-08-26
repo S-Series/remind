@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using REmind.Charting;
 using REmind.Data;
 using UnityEngine;
 
@@ -207,55 +208,52 @@ public static class ChartManager
         return false;
     }
 
-    /// <summary>선택된 노트의 Powered 데이터를 반전합니다.</summary>
-    internal static bool ToggleNotePowered(
+    /// <summary>선택된 Tap과 Long Tap의 타입을 서로 전환합니다.</summary>
+    internal static bool ChangeTapNoteType(
         GameObject noteObject,
-        out bool isPowered,
+        NoteType targetType,
+        out ChartHolder holder,
+        out int line,
+        out NoteHandleType handleType,
+        out GameObject[] previousNoteObjects,
         out string error)
     {
         if (!TryGetNoteData(
                 noteObject,
-                out ChartHolder holder,
-                out _,
+                out holder,
+                out line,
                 out NoteType noteType,
-                out _,
-                out bool currentPowered))
+                out handleType,
+                out _) ||
+            (noteType != NoteType.Tap &&
+             noteType != NoteType.LongTap))
         {
-            isPowered = false;
-            error = "Selected note data could not be found.";
+            previousNoteObjects = null;
+            error = "Selected Tap note data could not be found.";
             return false;
         }
 
-        if (noteType == NoteType.Air)
+        if ((targetType != NoteType.Tap &&
+             targetType != NoteType.LongTap) ||
+            targetType == noteType)
         {
-            isPowered = false;
-            error = "Air notes do not use Powered data.";
+            previousNoteObjects = null;
+            error = "Tap target type must be the opposite Tap variant.";
             return false;
         }
 
-        if (noteType == NoteType.LongTap)
-        {
-            isPowered = currentPowered;
-            error = "Powered Long Tap is not supported by the chart format.";
-            return false;
-        }
-
-        isPowered = !currentPowered;
-
-        if (!holder.TrySetPowered(
+        if (!holder.TryChangeTapNoteType(
                 noteObject,
-                isPowered,
-                out _,
-                out bool appliedPowered))
+                targetType,
+                out line,
+                out handleType,
+                out previousNoteObjects))
         {
-            isPowered = currentPowered;
-            error = "Powered data could not be updated.";
+            previousNoteObjects = null;
+            error = "Tap note type could not be updated.";
             return false;
         }
 
-        isPowered = appliedPowered;
-
-        NotifyChartChanged();
         error = null;
         return true;
     }
@@ -319,12 +317,6 @@ public static class ChartManager
             return false;
         }
 
-        if (sourceType == NoteType.LongTap && targetPowered)
-        {
-            error = "Powered Long Tap is not supported by the chart format.";
-            return false;
-        }
-
         if (sourceType == NoteType.Air &&
             (targetAirValue < 1 || targetAirValue > 99))
         {
@@ -369,9 +361,7 @@ public static class ChartManager
         NoteHandleType? storedHandle = detachedType.IsScratch()
             ? null
             : targetHandle;
-        bool powered = detachedType == NoteType.Air
-            ? false
-            : targetPowered;
+        bool powered = detachedType.IsScratch() && targetPowered;
         int airValue = detachedType == NoteType.Air
             ? targetAirValue
             : detachedAirValue;
@@ -449,6 +439,16 @@ public static class ChartManager
             return false;
         }
 
+        if (noteType == NoteType.Camera)
+        {
+            return EditCameraNote(
+                noteObject,
+                targetAbsolutePosition,
+                holder.cameraOffsetX,
+                holder.cameraSpinDirection,
+                out _);
+        }
+
         int airValue = noteType == NoteType.Air
             ? holder.airNoteValues[sourceLine - 1]
             : 0;
@@ -462,6 +462,109 @@ public static class ChartManager
             null,
             null,
             out _);
+    }
+
+    /// <summary>Camera 이벤트의 위치, 기준 X 오프셋과 회전 방향을 원자적으로 수정합니다.</summary>
+    internal static bool EditCameraNote(
+        GameObject noteObject,
+        int targetAbsolutePosition,
+        float offsetX,
+        ChartCameraSpinDirection spinDirection,
+        out string error)
+    {
+        if (!TryGetNoteData(
+                noteObject,
+                out ChartHolder sourceHolder,
+                out _,
+                out NoteType noteType,
+                out _,
+                out _) ||
+            noteType != NoteType.Camera)
+        {
+            error = "Selected Camera Note data could not be found.";
+            return false;
+        }
+
+        if (targetAbsolutePosition < 0 ||
+            targetAbsolutePosition > ChartHolder.MaximumAbsolutePosition)
+        {
+            error = "Camera Note position is outside the supported chart range.";
+            return false;
+        }
+
+        if (!float.IsFinite(offsetX))
+        {
+            error = "Camera Offset X must be finite.";
+            return false;
+        }
+
+        if (!Enum.IsDefined(
+                typeof(ChartCameraSpinDirection),
+                spinDirection))
+        {
+            error = $"Unsupported Camera spin direction: {spinDirection}.";
+            return false;
+        }
+
+        if (sourceHolder.AbsoluteChartPosition == targetAbsolutePosition)
+        {
+            sourceHolder.cameraOffsetX = offsetX;
+            sourceHolder.cameraSpinDirection = spinDirection;
+            NotifyChartChanged();
+            error = null;
+            return true;
+        }
+
+        ChartHolder targetHolder = GetHolder(targetAbsolutePosition);
+
+        if (targetHolder != null && targetHolder.isCameraMove)
+        {
+            error = "Another Camera Note already exists at the target position.";
+            return false;
+        }
+
+        if (!sourceHolder.TryDetachCameraNote(
+                noteObject,
+                out GameObject[] noteObjects,
+                out float sourceOffsetX,
+                out ChartCameraSpinDirection sourceSpinDirection))
+        {
+            error = "Selected Camera Note could not be detached from its source.";
+            return false;
+        }
+
+        bool createdTargetHolder = targetHolder == null;
+        targetHolder ??= GetOrCreateHolder(
+            targetAbsolutePosition / ChartHolder.PositionUnitsPerMeasure,
+            targetAbsolutePosition % ChartHolder.PositionUnitsPerMeasure);
+
+        if (!targetHolder.AddCameraNote(
+                noteObjects,
+                offsetX,
+                spinDirection))
+        {
+            sourceHolder.AddCameraNote(
+                noteObjects,
+                sourceOffsetX,
+                sourceSpinDirection);
+
+            if (createdTargetHolder && !targetHolder.HasChartData)
+            {
+                ChartHolderList.Remove(targetHolder);
+            }
+
+            error = "The target Camera Note could not be updated.";
+            return false;
+        }
+
+        if (!sourceHolder.HasChartData)
+        {
+            ChartHolderList.Remove(sourceHolder);
+        }
+
+        NotifyChartChanged();
+        error = null;
+        return true;
     }
 
     internal static ScratchPointType GetSuggestedScratchPointType(

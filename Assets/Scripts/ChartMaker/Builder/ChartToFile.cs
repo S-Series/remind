@@ -12,6 +12,7 @@ public sealed class ChartToFile : MonoBehaviour
     [SerializeField] private string defaultFileName = FallbackFileName;
     [SerializeField] private string currentFilePath;
     [SerializeField] private ChartCore chartCore;
+    [SerializeField] private ChartPlacementController placementController;
 
     private string savedChartText = string.Empty;
 
@@ -40,6 +41,7 @@ public sealed class ChartToFile : MonoBehaviour
     private void Awake()
     {
         ResolveChartCore();
+        ResolvePlacementController();
         MarkCurrentStateAsSaved();
     }
 
@@ -86,9 +88,20 @@ public sealed class ChartToFile : MonoBehaviour
             Directory.CreateDirectory(directory);
         }
 
+        ChartLongNoteSaveNormalizationPlan normalizationPlan =
+            ChartLongNoteSaveNormalizer.CreatePlan(
+                ChartManager.ChartHolders);
+        ChartEditHistory.ChartEditTransaction editTransaction =
+            normalizationPlan.HasChanges
+                ? ChartEditHistory.BeginChange(
+                    normalizationPlan.AffectedPositions)
+                : default;
         string chartText = BuildText();
 
         WriteAtomically(fullPath, chartText);
+        ApplySaveNormalization(
+            normalizationPlan,
+            editTransaction);
 
         currentFilePath = fullPath;
         savedChartText = chartText;
@@ -161,6 +174,46 @@ public sealed class ChartToFile : MonoBehaviour
                 ? ChartCore.Instance
                 : FindFirstObjectByType<ChartCore>();
         }
+    }
+
+    private void ResolvePlacementController()
+    {
+        if (!placementController)
+        {
+            placementController =
+                FindFirstObjectByType<ChartPlacementController>();
+        }
+    }
+
+    private void ApplySaveNormalization(
+        ChartLongNoteSaveNormalizationPlan plan,
+        ChartEditHistory.ChartEditTransaction editTransaction)
+    {
+        if (plan == null || !plan.HasChanges)
+        {
+            return;
+        }
+
+        plan.Apply();
+        ChartEditHistory.CommitChange(editTransaction);
+        ResolvePlacementController();
+
+        if (placementController)
+        {
+            placementController.RebuildChartViews(
+                recreateExisting: true);
+        }
+        else
+        {
+            ChartManager.NotifyChartChanged();
+        }
+
+        Debug.LogWarning(
+            $"Save normalized unfinished Long Notes: " +
+            $"Long Tap {plan.ConvertedLongTapCount}, " +
+            $"Long Scratch points " +
+            $"{plan.ConvertedLongScratchPointCount}.",
+            this);
     }
 
     private static void WriteAtomically(string fullPath, string chartText)

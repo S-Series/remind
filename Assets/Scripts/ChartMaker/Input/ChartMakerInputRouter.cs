@@ -45,7 +45,7 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
     private InputAction saveAction;
     private InputAction undoAction;
     private InputAction redoAction;
-    private InputAction togglePoweredAction;
+    private InputAction editSelectedTapAction;
     private InputAction moveSelectionLeftAction;
     private InputAction moveSelectionRightAction;
     private InputAction moveSelectionUpAction;
@@ -60,7 +60,11 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
     public event Action SaveRequested;
     public event Action UndoRequested;
     public event Action RedoRequested;
-    public event Action TogglePoweredRequested;
+    /// <summary>
+    /// 선택된 Tap 계열 편집을 요청합니다. true이면 Tap/Long Tap 종류를,
+    /// false이면 왼손/오른손을 전환합니다.
+    /// </summary>
+    public event Action<bool> EditSelectedTapRequested;
     public event Action<Vector2Int, bool> MoveSelectionRequested;
     public event Action OpenChartRequested;
     public event Action OpenMusicRequested;
@@ -197,7 +201,7 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
         saveAction = FindAction("Save");
         undoAction = FindAction("Undo");
         redoAction = FindAction("Redo");
-        togglePoweredAction = FindAction("TogglePowered");
+        editSelectedTapAction = FindAction("EditSelectedTap");
         moveSelectionLeftAction = FindAction("MoveSelectionLeft");
         moveSelectionRightAction = FindAction("MoveSelectionRight");
         moveSelectionUpAction = FindAction("MoveSelectionUp");
@@ -210,7 +214,7 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
             saveAction == null ||
             undoAction == null ||
             redoAction == null ||
-            togglePoweredAction == null ||
+            editSelectedTapAction == null ||
             moveSelectionLeftAction == null ||
             moveSelectionRightAction == null ||
             moveSelectionUpAction == null ||
@@ -227,7 +231,7 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
         saveAction.performed += HandleSavePerformed;
         undoAction.performed += HandleUndoPerformed;
         redoAction.performed += HandleRedoPerformed;
-        togglePoweredAction.performed += HandleTogglePoweredPerformed;
+        editSelectedTapAction.performed += HandleEditSelectedTapPerformed;
         moveSelectionLeftAction.performed += HandleMoveSelectionLeftPerformed;
         moveSelectionRightAction.performed += HandleMoveSelectionRightPerformed;
         moveSelectionUpAction.performed += HandleMoveSelectionUpPerformed;
@@ -274,7 +278,7 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
         Unsubscribe(saveAction, HandleSavePerformed);
         Unsubscribe(undoAction, HandleUndoPerformed);
         Unsubscribe(redoAction, HandleRedoPerformed);
-        Unsubscribe(togglePoweredAction, HandleTogglePoweredPerformed);
+        Unsubscribe(editSelectedTapAction, HandleEditSelectedTapPerformed);
         Unsubscribe(
             moveSelectionLeftAction,
             HandleMoveSelectionLeftPerformed);
@@ -291,7 +295,7 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
         saveAction = null;
         undoAction = null;
         redoAction = null;
-        togglePoweredAction = null;
+        editSelectedTapAction = null;
         moveSelectionLeftAction = null;
         moveSelectionRightAction = null;
         moveSelectionUpAction = null;
@@ -354,11 +358,13 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
         }
     }
 
-    private void HandleTogglePoweredPerformed(InputAction.CallbackContext _)
+    private void HandleEditSelectedTapPerformed(InputAction.CallbackContext _)
     {
-        if (!PopupContext.HasOpenPopup)
+        if (!IsEditingText())
         {
-            TogglePoweredRequested?.Invoke();
+            bool toggleLongType =
+                Keyboard.current?.shiftKey.isPressed == true;
+            EditSelectedTapRequested?.Invoke(toggleLongType);
         }
     }
 

@@ -1,4 +1,6 @@
 ﻿<Solution>
+  <Project Path="REmind.ChartCore.csproj" />
   <Project Path="Assembly-CSharp.csproj" />
   <Project Path="Assembly-CSharp-Editor.csproj" />
+  <Project Path="REmind.ChartCore.Tests.csproj" />
 </Solution>

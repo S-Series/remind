@@ -29,7 +29,6 @@
                     <ui:Label text="Tap" class="note-edit-section-title" />
                     <ui:DropdownField name="tap-line-field" label="Line" class="note-edit-field" />
                     <ui:DropdownField name="tap-hand-field" label="Hand" class="note-edit-field" />
-                    <ui:Toggle name="tap-powered-field" label="Powered" class="note-edit-field" />
                     <ui:Label name="tap-long-pair-label" text="Pairing: Automatic" class="note-edit-meta" />
                 </ui:VisualElement>
 
@@ -46,6 +45,13 @@
                     <ui:Label text="Air" class="note-edit-section-title" />
                     <ui:DropdownField name="air-line-field" label="Line" class="note-edit-field" />
                     <ui:IntegerField name="air-value-field" label="Value" class="note-edit-field" />
+                </ui:VisualElement>
+
+                <ui:VisualElement name="camera-note-edit-panel" class="note-type-edit-panel">
+                    <ui:Label text="Camera" class="note-edit-section-title" />
+                    <ui:FloatField name="camera-offset-x-field" label="Offset X" class="note-edit-field" />
+                    <ui:DropdownField name="camera-spin-direction-field" label="Spin" class="note-edit-field" />
+                    <ui:Label text="Reference X = Line X + Offset X" class="note-edit-meta" />
                 </ui:VisualElement>
             </ui:VisualElement>
 

@@ -1,6 +1,6 @@
 using System;
 using System.Collections.Generic;
-using REmind.Data;
+using REmind.Charting;
 using REmind.Gameplay.Effects;
 using UnityEngine;
 using UnityEngine.Serialization;
@@ -8,9 +8,7 @@ using UnityEngine.Serialization;
 [DisallowMultipleComponent]
 public sealed class ChartTestPlay : MonoBehaviour
 {
-    private const double MillisecondsPerMinute = 60000d;
-    private const double ChartPositionPerMeasure =
-        ChartHolder.WorldUnitsPerMeasure;
+    private const double TargetTimeEpsilonMs = 0.0001d;
 
     [Header("Movement")]
     [FormerlySerializedAs("moveCameraTranform")]
@@ -23,17 +21,23 @@ public sealed class ChartTestPlay : MonoBehaviour
     [SerializeField] private AudioSource hitSource;
     [SerializeField] private LaneHitEffectPlayer laneHitEffectPlayer;
     [SerializeField] private bool hideProcessedNotes = true;
+    [SerializeField] private ChartPreviewFloorRenderer previewFloorRenderer;
 
     private ChartCore chartCore;
+    private PlayableChartSnapshot snapshot;
+    private IReadOnlyDictionary<string, ChartNoteViewBinding> viewBindings;
     private readonly List<AutoTestNote> autoTestNotes =
         new List<AutoTestNote>();
+    private readonly Dictionary<Transform, Vector3> originalViewPositions =
+        new Dictionary<Transform, Vector3>();
     private float scrollYBeforeTest;
-    private float previousAutoTestPositionY = float.NegativeInfinity;
+    private double previousAutoTestTimeMs = double.NegativeInfinity;
     private int nextAutoTestNoteIndex;
     private bool hasStoredScrollPosition;
 
     public float ChartPositionY { get; private set; }
     public float CameraPositionY { get; private set; }
+    public PlayableChartSnapshot CurrentSnapshot => snapshot;
 
     private void Start()
     {
@@ -41,14 +45,18 @@ public sealed class ChartTestPlay : MonoBehaviour
 
         if (chartCore == null)
         {
-            Debug.LogError("ChartTestPlay requires ChartCore in the scene.", this);
+            Debug.LogError(
+                "ChartTestPlay requires ChartCore in the scene.",
+                this);
             enabled = false;
             return;
         }
 
         if (moveCameraTransform == null)
         {
-            Debug.LogError("ChartTestPlay requires a Move Transform.", this);
+            Debug.LogError(
+                "ChartTestPlay requires a Move Transform.",
+                this);
             enabled = false;
             return;
         }
@@ -71,16 +79,24 @@ public sealed class ChartTestPlay : MonoBehaviour
 
         if (!chartScroll)
         {
-            Debug.LogError("ChartTestPlay requires ChartScroll in the scene.", this);
+            Debug.LogError(
+                "ChartTestPlay requires ChartScroll in the scene.",
+                this);
             enabled = false;
             return;
         }
 
+        if (!previewFloorRenderer)
+        {
+            previewFloorRenderer =
+                FindFirstObjectByType<ChartPreviewFloorRenderer>();
+        }
+
+        chartCore.TestPlaybackStarting += HandleTestPlaybackStarting;
         chartCore.TestMsChanged += HandleTestMsChanged;
-        chartCore.BpmChanged += HandleBpmChanged;
         chartCore.TestPlaybackChanged += HandleTestPlaybackChanged;
 
-        if (chartCore.IsTestPlaying)
+        if (chartCore.IsTestPlaying && TryCompileSnapshot())
         {
             BeginTestView();
         }
@@ -96,25 +112,22 @@ public sealed class ChartTestPlay : MonoBehaviour
 
         if (chartCore != null)
         {
+            chartCore.TestPlaybackStarting -= HandleTestPlaybackStarting;
             chartCore.TestMsChanged -= HandleTestMsChanged;
-            chartCore.BpmChanged -= HandleBpmChanged;
             chartCore.TestPlaybackChanged -= HandleTestPlaybackChanged;
         }
     }
 
-    private void HandleTestMsChanged(double timelineMs)
+    private bool HandleTestPlaybackStarting(double _)
     {
-        if (chartCore.IsTestPlaying)
-        {
-            ApplyTimelinePosition(timelineMs);
-        }
+        return TryCompileSnapshot();
     }
 
-    private void HandleBpmChanged(double _)
+    private void HandleTestMsChanged(double songTimeMs)
     {
         if (chartCore.IsTestPlaying)
         {
-            ApplyTimelinePosition(chartCore.TestMs);
+            ApplyTimelinePosition(songTimeMs);
         }
     }
 
@@ -130,7 +143,10 @@ public sealed class ChartTestPlay : MonoBehaviour
         }
     }
 
-    /// <summary>현재 편집 페이지보다 설정된 lead-in만큼 앞에서 테스트를 전환합니다.</summary>
+    /// <summary>
+    /// 현재 편집 페이지의 절대 Position을 TimingMap으로 시간 변환한 뒤 lead-in 앞에서
+    /// 테스트를 시작합니다.
+    /// </summary>
     public void ToggleTestPlayFromCurrentPage()
     {
         if (!chartCore)
@@ -152,19 +168,83 @@ public sealed class ChartTestPlay : MonoBehaviour
             return;
         }
 
-        double chartMs =
-            GuideGenerate.ReferenceY /
-            ChartPositionPerMeasure *
-            beatsPerMeasure *
-            MillisecondsPerMinute /
-            chartCore.Bpm;
-        double audioMs = chartMs - chartCore.StartCorrectionMs;
-        chartCore.StartTestPlay(Math.Max(0d, audioMs - currentPageLeadInMs));
+        if (!TryCompileSnapshot())
+        {
+            return;
+        }
+
+        int chartPosition = ChartHolder.WorldYToAbsolutePosition(
+            GuideGenerate.ReferenceY);
+        double chartTimeMs = snapshot.TimingMap.TimeAtPosition(
+            chartPosition);
+        double songTimeMs =
+            chartTimeMs - chartCore.StartCorrectionMs;
+        chartCore.StartTestPlay(
+            Math.Max(0d, songTimeMs - currentPageLeadInMs));
     }
 
-    /// <summary>편집 스크롤을 보존하고 테스트 재생의 원점에서 카메라 이동을 시작합니다.</summary>
+    private bool TryCompileSnapshot()
+    {
+        ChartHolderDocumentBuildResult buildResult =
+            ChartHolderDocumentAdapter.Build(
+                ChartManager.ChartHolders,
+                chartCore.Bpm,
+                beatsPerMeasure);
+
+        LogCompileIssues(buildResult.Issues);
+
+        if (!buildResult.Succeeded)
+        {
+            snapshot = null;
+            viewBindings = null;
+            return false;
+        }
+
+        double worldUnitsPerPosition =
+            1d / ChartHolder.PositionUnitsPerWorldUnit;
+        ChartCompileResult compileResult = ChartCompiler.Compile(
+            buildResult.Document,
+            worldUnitsPerPosition);
+        LogCompileIssues(compileResult.Issues);
+
+        if (!compileResult.Succeeded)
+        {
+            snapshot = null;
+            viewBindings = null;
+            return false;
+        }
+
+        snapshot = compileResult.Snapshot;
+        viewBindings = buildResult.ViewBindings;
+        return true;
+    }
+
+    private void LogCompileIssues(IReadOnlyList<CompileIssue> issues)
+    {
+        for (int i = 0; i < issues.Count; i++)
+        {
+            CompileIssue issue = issues[i];
+            string message =
+                $"Chart compile {issue.Code}: {issue.Message}";
+
+            if (issue.Severity == CompileIssueSeverity.Error)
+            {
+                Debug.LogError(message, this);
+            }
+            else
+            {
+                Debug.LogWarning(message, this);
+            }
+        }
+    }
+
     private void BeginTestView()
     {
+        if (snapshot == null && !TryCompileSnapshot())
+        {
+            return;
+        }
+
         if (!hasStoredScrollPosition)
         {
             scrollYBeforeTest = chartScroll.ScrollY;
@@ -173,28 +253,62 @@ public sealed class ChartTestPlay : MonoBehaviour
 
         chartScroll.SetExternalTimelineControl(true);
         laneHitEffectPlayer?.ResetAll();
+        ApplySnapshotViewGeometry();
         BuildAutoTestQueue();
-        PrepareAutoTestQueue(chartCore.TestMs);
+        double chartTimeMs =
+            chartCore.TestMs + chartCore.StartCorrectionMs;
+        PrepareAutoTestQueue(chartTimeMs);
         ApplyTimelinePosition(chartCore.TestMs);
     }
 
-    /// <summary>테스트 재생 중의 타임라인 시간을 카메라와 가이드 위치에 반영합니다.</summary>
-    private void ApplyTimelinePosition(double timelineMs)
+    /// <summary>
+    /// SongTimeMs를 현재 TimingPoint의 절대식으로 FloorPosition에 변환합니다.
+    /// 카메라에는 프레임 이동량이나 BPM 보정값을 누적하지 않습니다.
+    /// </summary>
+    private void ApplyTimelinePosition(double songTimeMs)
     {
-        double measureProgress = CalculateMeasureProgress(
-            timelineMs + chartCore.StartCorrectionMs,
-            chartCore.Bpm);
-        ChartPositionY = (float)(measureProgress * ChartPositionPerMeasure);
+        if (snapshot == null)
+        {
+            return;
+        }
+
+        double chartTimeMs =
+            songTimeMs + chartCore.StartCorrectionMs;
+        ApplyCameraMotion(chartTimeMs);
+        ChartPositionY = (float)snapshot.ScrollMap.FloorPositionAtTime(
+            chartTimeMs);
         chartScroll.SetExternalChartY(ChartPositionY);
         CameraPositionY = chartScroll.CameraY;
-        ProcessAutoTestNotes(ChartPositionY);
+        ProcessAutoTestNotes(chartTimeMs);
     }
 
-    /// <summary>비테스트 카메라는 0으로 복귀시키고 선택 기준은 현재 스크롤에 맞춥니다.</summary>
+    private void ApplyCameraMotion(double chartTimeMs)
+    {
+        CameraMotionState cameraState =
+            snapshot.CameraMotionMap.EvaluateAtTime(chartTimeMs);
+        float referenceX = 0f;
+
+        if (cameraState.HasReference)
+        {
+            float lineX = previewFloorRenderer
+                ? previewFloorRenderer.EvaluateCenterOffsetX(
+                    (float)cameraState.ReferenceFloorPosition)
+                : 0f;
+            referenceX = lineX +
+                (float)cameraState.ReferenceOffsetX;
+        }
+
+        ChartScroll.PreviewCameraRotationReferenceX = referenceX;
+        ChartScroll.PreviewCameraSpinDegrees =
+            (float)cameraState.SpinDegrees;
+    }
+
     private void ResetTestView()
     {
         ChartPositionY = 0f;
         CameraPositionY = 0f;
+        ChartScroll.PreviewCameraRotationReferenceX = 0f;
+        ChartScroll.PreviewCameraSpinDegrees = 0f;
 
         if (hasStoredScrollPosition)
         {
@@ -205,6 +319,11 @@ public sealed class ChartTestPlay : MonoBehaviour
         chartScroll.SetExternalTimelineControl(false);
         GuideGenerate.SetReferenceFromScrollY(chartScroll.ScrollY);
         RestoreAutoTestNotes(clearQueue: true);
+        RestoreSnapshotViewGeometry();
+        FindFirstObjectByType<ChartPreviewFloorRenderer>()
+            ?.SetSessionSnapshot(null);
+        snapshot = null;
+        viewBindings = null;
 
         if (hitSource)
         {
@@ -214,245 +333,131 @@ public sealed class ChartTestPlay : MonoBehaviour
         laneHitEffectPlayer?.ResetAll();
     }
 
-    /// <summary>현재 ChartManager 데이터를 위치순 자동 처리 큐로 구성합니다.</summary>
+    private void ApplySnapshotViewGeometry()
+    {
+        RestoreSnapshotViewGeometry();
+
+        if (snapshot == null || viewBindings == null)
+        {
+            return;
+        }
+
+        foreach (ChartNoteViewBinding binding in viewBindings.Values)
+        {
+            for (int pointIndex = 0;
+                 pointIndex < binding.Points.Count;
+                 pointIndex++)
+            {
+                ChartNoteViewPointBinding point = binding.Points[pointIndex];
+                float floorY = (float)snapshot.ScrollMap
+                    .FloorPositionAtChartPosition(point.Position);
+                float nextFloorY = pointIndex + 1 < binding.Points.Count
+                    ? (float)snapshot.ScrollMap.FloorPositionAtChartPosition(
+                        binding.Points[pointIndex + 1].Position)
+                    : floorY;
+
+                for (int objectIndex = 0;
+                     objectIndex < point.NoteObjects.Length;
+                     objectIndex++)
+                {
+                    GameObject noteObject = point.NoteObjects[objectIndex];
+
+                    if (!noteObject)
+                    {
+                        continue;
+                    }
+
+                    Transform noteTransform = noteObject.transform;
+
+                    if (!originalViewPositions.ContainsKey(noteTransform))
+                    {
+                        originalViewPositions.Add(
+                            noteTransform,
+                            noteTransform.localPosition);
+                    }
+
+                    Vector3 localPosition = noteTransform.localPosition;
+                    localPosition.y = floorY;
+                    noteTransform.localPosition = localPosition;
+
+                    if (noteObject.TryGetComponent(
+                            out NoteLength noteLength))
+                    {
+                        noteLength.SetStraightLength(
+                            Mathf.Max(0f, nextFloorY - floorY));
+                    }
+                }
+            }
+        }
+
+        FindFirstObjectByType<ChartPreviewFloorRenderer>()
+            ?.SetSessionSnapshot(snapshot);
+    }
+
+    private void RestoreSnapshotViewGeometry()
+    {
+        foreach (KeyValuePair<Transform, Vector3> pair in
+                 originalViewPositions)
+        {
+            if (pair.Key)
+            {
+                pair.Key.localPosition = pair.Value;
+            }
+        }
+
+        originalViewPositions.Clear();
+
+        for (int line = 1; line <= ChartHolder.MainLineCount; line++)
+        {
+            ChartManager.RefreshLongNoteLengths(line);
+        }
+
+        ChartManager.RefreshLongNoteLengths(-1);
+        ChartManager.RefreshLongNoteLengths(-2);
+    }
+
+    /// <summary>
+    /// Snapshot의 불변 판정 타깃으로 자동 테스트 큐를 구성합니다. ChartHolder 저장
+    /// 배열은 어댑터 밖에서 해석하지 않습니다.
+    /// </summary>
     private void BuildAutoTestQueue()
     {
         RestoreAutoTestNotes(clearQueue: true);
-        IReadOnlyList<ChartHolder> holders = ChartManager.ChartHolders;
-        PendingLongAutoTestNote[] pendingLongNotes =
-            new PendingLongAutoTestNote[ChartHolder.TotalLineCount];
 
-        for (int holderIndex = 0; holderIndex < holders.Count; holderIndex++)
+        for (int i = 0; i < snapshot.JudgementTargets.Count; i++)
         {
-            ChartHolder holder = holders[holderIndex];
-            holder.EnsureStorage();
+            JudgementTarget target = snapshot.JudgementTargets[i];
+            GameObject[] noteObjects = Array.Empty<GameObject>();
 
-            for (int lineIndex = 0;
-                 lineIndex < ChartHolder.MainLineCount;
-                 lineIndex++)
+            if (viewBindings != null &&
+                viewBindings.TryGetValue(
+                    target.NoteId,
+                    out ChartNoteViewBinding binding))
             {
-                if (holder.noteTypes[lineIndex] != NoteType.Unknown)
-                {
-                    AddAutoTestNoteOrLongEndpoint(
-                        holder.noteTypes[lineIndex],
-                        holder.WorldY,
-                        holder.tapNoteObjectGroups[lineIndex],
-                        lineIndex,
-                        pendingLongNotes);
-                }
-
-                if (holder.airNoteValues[lineIndex] > 0)
-                {
-                    AddAutoTestNote(
-                        holder.WorldY,
-                        holder.airNoteObjectGroups[lineIndex],
-                        1 << lineIndex);
-                }
+                noteObjects = target.Kind == JudgementTargetKind.HoldEnd
+                    ? binding.AllObjects
+                    : binding.StartObjects;
             }
 
-            for (int scratchIndex = 0;
-                 scratchIndex < ChartHolder.ScratchLineCount;
-                 scratchIndex++)
-            {
-                int noteTypeIndex =
-                    ChartHolder.MainLineCount + scratchIndex;
-                int scratchLine = scratchIndex == 0 ? -1 : -2;
-
-                if (holder.noteTypes[noteTypeIndex] != NoteType.Unknown)
-                {
-                    AddScratchAutoTestNote(
-                        holder.noteTypes[noteTypeIndex],
-                        holder.GetScratchPointType(scratchLine),
-                        holder.WorldY,
-                        holder.scratchNoteObjectGroups[scratchIndex],
-                        noteTypeIndex,
-                        pendingLongNotes);
-                }
-            }
-        }
-
-        for (int lineIndex = 0;
-             lineIndex < pendingLongNotes.Length;
-             lineIndex++)
-        {
-            PendingLongAutoTestNote pending = pendingLongNotes[lineIndex];
-
-            if (pending != null)
-            {
-                AddAutoTestNote(
-                    pending.PositionY,
-                    pending.NoteObjects,
-                    pending.HitEffectLaneMask);
-            }
+            autoTestNotes.Add(new AutoTestNote(
+                target.TargetTimeMs,
+                noteObjects,
+                target.Lane,
+                target.Kind != JudgementTargetKind.HoldStart));
         }
 
         autoTestNotes.Sort(
-            (left, right) => left.PositionY.CompareTo(right.PositionY));
+            (left, right) =>
+                left.TargetTimeMs.CompareTo(right.TargetTimeMs));
         nextAutoTestNoteIndex = 0;
-        previousAutoTestPositionY = float.NegativeInfinity;
+        previousAutoTestTimeMs = double.NegativeInfinity;
     }
 
-    private void AddAutoTestNote(
-        float positionY,
-        GameObject[] noteObjects,
-        int hitEffectLaneMask,
-        bool hideOnProcess = true)
+    private void PrepareAutoTestQueue(double chartTimeMs)
     {
-        if (noteObjects == null || noteObjects.Length == 0)
-        {
-            return;
-        }
-
-        autoTestNotes.Add(new AutoTestNote(
-            positionY,
-            noteObjects,
-            hitEffectLaneMask,
-            hideOnProcess));
-    }
-
-    private void AddAutoTestNoteOrLongEndpoint(
-        NoteType noteType,
-        float positionY,
-        GameObject[] noteObjects,
-        int lineIndex,
-        PendingLongAutoTestNote[] pendingLongNotes)
-    {
-        int hitEffectLaneMask = 1 << lineIndex;
-
-        if (!noteType.IsLong())
-        {
-            AddAutoTestNote(positionY, noteObjects, hitEffectLaneMask);
-            return;
-        }
-
-        PendingLongAutoTestNote pending = pendingLongNotes[lineIndex];
-
-        if (pending == null)
-        {
-            pendingLongNotes[lineIndex] = new PendingLongAutoTestNote(
-                positionY,
-                noteObjects,
-                hitEffectLaneMask);
-            return;
-        }
-
-        AddAutoTestNote(
-            pending.PositionY,
-            pending.NoteObjects,
-            pending.HitEffectLaneMask,
-            hideOnProcess: false);
-        AddAutoTestNote(
-            positionY,
-            CombineNoteObjects(pending.NoteObjects, noteObjects),
-            hitEffectLaneMask);
-        pendingLongNotes[lineIndex] = null;
-    }
-
-    private void AddScratchAutoTestNote(
-        NoteType noteType,
-        ScratchPointType pointType,
-        float positionY,
-        GameObject[] noteObjects,
-        int lineIndex,
-        PendingLongAutoTestNote[] pendingLongNotes)
-    {
-        int hitEffectLaneMask = 1 << lineIndex;
-
-        if (noteType != NoteType.LongScratch ||
-            pointType == ScratchPointType.Tap)
-        {
-            AddAutoTestNote(positionY, noteObjects, hitEffectLaneMask);
-            return;
-        }
-
-        PendingLongAutoTestNote pending = pendingLongNotes[lineIndex];
-
-        switch (pointType)
-        {
-            case ScratchPointType.Start:
-                if (pending != null)
-                {
-                    AddAutoTestNote(
-                        pending.PositionY,
-                        pending.NoteObjects,
-                        pending.HitEffectLaneMask);
-                }
-
-                pendingLongNotes[lineIndex] = new PendingLongAutoTestNote(
-                    positionY,
-                    noteObjects,
-                    hitEffectLaneMask);
-                break;
-            case ScratchPointType.Mid:
-                if (pending == null)
-                {
-                    pendingLongNotes[lineIndex] =
-                        new PendingLongAutoTestNote(
-                            positionY,
-                            noteObjects,
-                            hitEffectLaneMask);
-                }
-                else
-                {
-                    pending.AppendNoteObjects(noteObjects);
-                }
-
-                break;
-            case ScratchPointType.End:
-                if (pending == null)
-                {
-                    AddAutoTestNote(
-                        positionY,
-                        noteObjects,
-                        hitEffectLaneMask);
-                    break;
-                }
-
-                AddAutoTestNote(
-                    pending.PositionY,
-                    pending.NoteObjects,
-                    pending.HitEffectLaneMask,
-                    hideOnProcess: false);
-                AddAutoTestNote(
-                    positionY,
-                    CombineNoteObjects(pending.NoteObjects, noteObjects),
-                    hitEffectLaneMask);
-                pendingLongNotes[lineIndex] = null;
-                break;
-        }
-    }
-
-    private static GameObject[] CombineNoteObjects(
-        GameObject[] startObjects,
-        GameObject[] endObjects)
-    {
-        int startCount = startObjects?.Length ?? 0;
-        int endCount = endObjects?.Length ?? 0;
-        GameObject[] combined = new GameObject[startCount + endCount];
-
-        if (startCount > 0)
-        {
-            Array.Copy(startObjects, 0, combined, 0, startCount);
-        }
-
-        if (endCount > 0)
-        {
-            Array.Copy(endObjects, 0, combined, startCount, endCount);
-        }
-
-        return combined;
-    }
-
-    private void PrepareAutoTestQueue(double timelineMs)
-    {
-        float chartPositionY = (float)(CalculateMeasureProgress(
-            timelineMs + chartCore.StartCorrectionMs,
-            chartCore.Bpm) * ChartPositionPerMeasure);
-        const float positionEpsilon = 0.001f;
-
         while (nextAutoTestNoteIndex < autoTestNotes.Count &&
-               autoTestNotes[nextAutoTestNoteIndex].PositionY <
-               chartPositionY - positionEpsilon)
+               autoTestNotes[nextAutoTestNoteIndex].TargetTimeMs <
+               chartTimeMs - TargetTimeEpsilonMs)
         {
             if (hideProcessedNotes)
             {
@@ -462,35 +467,32 @@ public sealed class ChartTestPlay : MonoBehaviour
             nextAutoTestNoteIndex++;
         }
 
-        previousAutoTestPositionY = chartPositionY;
+        previousAutoTestTimeMs = chartTimeMs;
     }
 
-    /// <summary>현재 재생 위치까지 도달한 채보 노트를 자동으로 처리합니다.</summary>
-    private void ProcessAutoTestNotes(float chartPositionY)
+    private void ProcessAutoTestNotes(double chartTimeMs)
     {
-        const float positionEpsilon = 0.001f;
-
-        if (chartPositionY + positionEpsilon < previousAutoTestPositionY)
+        if (chartTimeMs + TargetTimeEpsilonMs < previousAutoTestTimeMs)
         {
             RestoreAutoTestNotes(clearQueue: false);
             nextAutoTestNoteIndex = 0;
         }
 
-        previousAutoTestPositionY = chartPositionY;
+        previousAutoTestTimeMs = chartTimeMs;
 
         while (nextAutoTestNoteIndex < autoTestNotes.Count &&
-               autoTestNotes[nextAutoTestNoteIndex].PositionY <=
-               chartPositionY + positionEpsilon)
+               autoTestNotes[nextAutoTestNoteIndex].TargetTimeMs <=
+               chartTimeMs + TargetTimeEpsilonMs)
         {
-            float hitPositionY =
-                autoTestNotes[nextAutoTestNoteIndex].PositionY;
+            double hitTimeMs =
+                autoTestNotes[nextAutoTestNoteIndex].TargetTimeMs;
             int hitEffectLaneMask = 0;
 
             do
             {
                 AutoTestNote note =
                     autoTestNotes[nextAutoTestNoteIndex];
-                hitEffectLaneMask |= note.HitEffectLaneMask;
+                hitEffectLaneMask |= 1 << note.Lane;
 
                 if (hideProcessedNotes)
                 {
@@ -500,9 +502,9 @@ public sealed class ChartTestPlay : MonoBehaviour
                 nextAutoTestNoteIndex++;
             }
             while (nextAutoTestNoteIndex < autoTestNotes.Count &&
-                   Mathf.Approximately(
-                       autoTestNotes[nextAutoTestNoteIndex].PositionY,
-                       hitPositionY));
+                   Math.Abs(
+                       autoTestNotes[nextAutoTestNoteIndex].TargetTimeMs -
+                       hitTimeMs) <= TargetTimeEpsilonMs);
 
             PlayHitSound();
             PlayHitEffects(hitEffectLaneMask);
@@ -524,13 +526,30 @@ public sealed class ChartTestPlay : MonoBehaviour
             return;
         }
 
-        for (int lane = 0; lane < ChartHolder.TotalLineCount; lane++)
+        for (int lane = 0; lane < ChartLaneLayout.LaneCount; lane++)
         {
             if ((laneMask & (1 << lane)) != 0)
             {
-                laneHitEffectPlayer.Play(lane);
+                laneHitEffectPlayer.Play(GetPresentationEffectLane(lane));
             }
         }
+    }
+
+    private static int GetPresentationEffectLane(int inputLane)
+    {
+        if (inputLane >= (int)ChartLane.AirMain1 &&
+            inputLane <= (int)ChartLane.AirMain4)
+        {
+            return inputLane - (int)ChartLane.AirMain1;
+        }
+
+        if (inputLane >= (int)ChartLane.GroundLeft)
+        {
+            return ChartHolder.MainLineCount +
+                inputLane - (int)ChartLane.GroundLeft;
+        }
+
+        return inputLane;
     }
 
     private void RestoreAutoTestNotes(bool clearQueue)
@@ -541,21 +560,12 @@ public sealed class ChartTestPlay : MonoBehaviour
         }
 
         nextAutoTestNoteIndex = 0;
-        previousAutoTestPositionY = float.NegativeInfinity;
+        previousAutoTestTimeMs = double.NegativeInfinity;
 
         if (clearQueue)
         {
             autoTestNotes.Clear();
         }
-    }
-
-    /// <summary>
-    /// 음악 시간을 현재까지 경과한 마디 수로 변환합니다.
-    /// </summary>
-    private double CalculateMeasureProgress(double audioMs, double bpm)
-    {
-        double beatCount = audioMs * bpm / MillisecondsPerMinute;
-        return beatCount / beatsPerMeasure;
     }
 
     private sealed class AutoTestNote
@@ -565,15 +575,17 @@ public sealed class ChartTestPlay : MonoBehaviour
         private readonly bool hideOnProcess;
 
         public AutoTestNote(
-            float positionY,
+            double targetTimeMs,
             GameObject[] sourceObjects,
-            int hitEffectLaneMask,
+            int lane,
             bool hideOnProcess)
         {
-            PositionY = positionY;
-            HitEffectLaneMask = hitEffectLaneMask;
+            TargetTimeMs = targetTimeMs;
+            Lane = lane;
             this.hideOnProcess = hideOnProcess;
-            noteObjects = (GameObject[])sourceObjects.Clone();
+            noteObjects = sourceObjects != null
+                ? (GameObject[])sourceObjects.Clone()
+                : Array.Empty<GameObject>();
             initialActiveStates = new bool[noteObjects.Length];
 
             for (int i = 0; i < noteObjects.Length; i++)
@@ -583,8 +595,8 @@ public sealed class ChartTestPlay : MonoBehaviour
             }
         }
 
-        public float PositionY { get; }
-        public int HitEffectLaneMask { get; }
+        public double TargetTimeMs { get; }
+        public int Lane { get; }
 
         public void SetProcessed()
         {
@@ -611,28 +623,6 @@ public sealed class ChartTestPlay : MonoBehaviour
                     noteObjects[i].SetActive(initialActiveStates[i]);
                 }
             }
-        }
-    }
-
-    private sealed class PendingLongAutoTestNote
-    {
-        public float PositionY { get; }
-        public GameObject[] NoteObjects { get; private set; }
-        public int HitEffectLaneMask { get; }
-
-        public PendingLongAutoTestNote(
-            float positionY,
-            GameObject[] noteObjects,
-            int hitEffectLaneMask)
-        {
-            PositionY = positionY;
-            NoteObjects = noteObjects;
-            HitEffectLaneMask = hitEffectLaneMask;
-        }
-
-        public void AppendNoteObjects(GameObject[] noteObjects)
-        {
-            NoteObjects = CombineNoteObjects(NoteObjects, noteObjects);
         }
     }
 }

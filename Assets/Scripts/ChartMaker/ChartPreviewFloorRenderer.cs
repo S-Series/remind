@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using REmind.Charting;
 using REmind.Common.UI;
 using REmind.Data;
 using UnityEngine;
@@ -22,6 +23,8 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
     private readonly List<NoteLength.RibbonPoint> ribbonPoints =
         new List<NoteLength.RibbonPoint>();
     private ScratchMotionPath motionPath = ScratchMotionPath.Empty;
+    private PlayableChartSnapshot sessionSnapshot;
+    private PlayableChartSnapshot displaySnapshot;
 
     private void OnEnable()
     {
@@ -60,6 +63,7 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
             return;
         }
 
+        displaySnapshot = sessionSnapshot ?? CompilePreviewSnapshot();
         ClearGeneratedGraphics();
         CollectMotionEffects();
         motionPath = new ScratchMotionPath(motionEffects);
@@ -87,6 +91,40 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
         ApplyPreviewNoteOffsets();
         ApplyPreviewLongTapRibbons();
         ApplyPreviewLongScratchRibbons();
+    }
+
+    public void SetSessionSnapshot(PlayableChartSnapshot snapshot)
+    {
+        sessionSnapshot = snapshot;
+        Rebuild();
+    }
+
+    private PlayableChartSnapshot CompilePreviewSnapshot()
+    {
+        ChartCore chartCore = ChartCore.Instance;
+
+        if (!chartCore)
+        {
+            return null;
+        }
+
+        ChartHolderDocumentBuildResult buildResult =
+            ChartHolderDocumentAdapter.Build(
+                ChartManager.ChartHolders,
+                chartCore.Bpm,
+                4);
+
+        if (!buildResult.Succeeded)
+        {
+            return null;
+        }
+
+        ChartCompileResult compileResult = ChartCompiler.Compile(
+            buildResult.Document,
+            1d / ChartHolder.PositionUnitsPerWorldUnit);
+        return compileResult.Succeeded
+            ? compileResult.Snapshot
+            : null;
     }
 
     private void ResolvePreviewNoteField()
@@ -181,8 +219,8 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
 
         float direction = GetDisplayedScratchDirection(line);
         motionEffects.Add(new ScratchMotionEffect(
-            startHolder.WorldY,
-            endHolder.WorldY,
+            GetDisplayY(startHolder),
+            GetDisplayY(endHolder),
             direction *
                 ScratchMotionRules.MoveAmountToHorizontalUnits(
                     motion.MoveAmount),
@@ -263,6 +301,17 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
             new Vector3(centerX, 0f, 0f));
     }
 
+    /// <summary>
+    /// 지정한 FloorPosition에서 Preview 라인 중심의 로컬 X를 반환합니다.
+    /// Camera Note는 처리 시점의 이 값에 자신의 OffsetX를 더합니다.
+    /// </summary>
+    public float EvaluateCenterOffsetX(float positionY)
+    {
+        return EvaluateCenterX(
+            positionY,
+            includeInstantAtPosition: true);
+    }
+
     private void ApplyPreviewNoteOffsets()
     {
         IReadOnlyList<ChartHolder> holders = ChartManager.ChartHolders;
@@ -273,8 +322,9 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
         {
             ChartHolder holder = holders[holderIndex];
             holder.EnsureStorage();
+            float displayY = GetDisplayY(holder);
             float offsetX = motionPath.EvaluateOffset(
-                holder.WorldY,
+                displayY,
                 includeInstantAtPosition: true);
 
             for (int line = 1;
@@ -284,11 +334,13 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
                 SetPreviewNoteGroupOffset(
                     holder.tapNoteObjectGroups[line - 1],
                     line,
-                    offsetX);
+                    offsetX,
+                    displayY);
                 SetPreviewNoteGroupOffset(
                     holder.airNoteObjectGroups[line - 1],
                     line,
-                    offsetX);
+                    offsetX,
+                    displayY);
             }
 
             for (int scratchIndex = 0;
@@ -299,7 +351,8 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
                 SetPreviewNoteGroupOffset(
                     holder.scratchNoteObjectGroups[scratchIndex],
                     line,
-                    offsetX);
+                    offsetX,
+                    displayY);
             }
         }
     }
@@ -340,14 +393,14 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
             if (pendingStartObjects == null)
             {
                 pendingStartObjects = noteObjects;
-                pendingStartY = holder.WorldY;
+                pendingStartY = GetDisplayY(holder);
                 continue;
             }
 
             SetPreviewLongRibbon(
                 pendingStartObjects,
                 pendingStartY,
-                holder.WorldY);
+                GetDisplayY(holder));
             pendingStartObjects = null;
         }
     }
@@ -377,7 +430,7 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
             if (pointType == ScratchPointType.Start)
             {
                 pendingSegmentObjects = noteObjects;
-                pendingSegmentY = holder.WorldY;
+                pendingSegmentY = GetDisplayY(holder);
                 continue;
             }
 
@@ -386,13 +439,13 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
                 SetPreviewLongRibbon(
                     pendingSegmentObjects,
                     pendingSegmentY,
-                    holder.WorldY);
+                    GetDisplayY(holder));
             }
 
             if (pointType == ScratchPointType.Mid)
             {
                 pendingSegmentObjects = noteObjects;
-                pendingSegmentY = holder.WorldY;
+                pendingSegmentY = GetDisplayY(holder);
             }
             else
             {
@@ -574,7 +627,8 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
     private void SetPreviewNoteGroupOffset(
         GameObject[] noteObjects,
         int line,
-        float lineFieldOffsetX)
+        float lineFieldOffsetX,
+        float displayY)
     {
         if (noteObjects == null)
         {
@@ -598,8 +652,18 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
 
             Vector3 localPosition = noteObject.transform.localPosition;
             localPosition.x = noteLocalX;
+            localPosition.y = displayY;
             noteObject.transform.localPosition = localPosition;
         }
+    }
+
+    private float GetDisplayY(ChartHolder holder)
+    {
+        return displaySnapshot != null
+            ? (float)displaySnapshot.ScrollMap
+                .FloorPositionAtChartPosition(
+                    holder.AbsoluteChartPosition)
+            : holder.WorldY;
     }
 
     private void AddSegment(

@@ -1,5 +1,6 @@
 using System;
 using UnityEngine;
+using REmind.Charting;
 using REmind.Data;
 
 [Serializable]
@@ -32,6 +33,8 @@ public class ChartHolder
     public NoteHandleType[] noteHandles;
     // 0-3: main lines 1-4, 4-5: left/right scratch lines.
     public NoteType[] noteTypes;
+    // Main 0-3은 항상 false입니다. Scratch 4-5의 Motion 활성 상태를
+    // 구버전 직렬화 데이터와 호환하기 위해 유지합니다.
     public bool[] isPoweredNotes;
     // Scratch motion data corresponds to left/right scratch lines.
     public ScratchMotionData[] scratchMotions;
@@ -40,13 +43,19 @@ public class ChartHolder
     // Air note values correspond to main lines 1-4 and range from 00 to 99.
     public int[] airNoteValues;
     public float targetBpm = -1f; // -1 means that the BPM does not change.
+    public bool hasLineSpeedChange;
+    public float targetLineSpeed = 1f;
     public bool isEffect; // Reserved for chart effects.
-    public bool isCameraMove; // Reserved for camera events.
+    public bool isCameraMove;
+    public float cameraOffsetX;
+    public ChartCameraSpinDirection cameraSpinDirection =
+        ChartCameraSpinDirection.None;
 
     [NonSerialized] public GameObject[][] tapNoteObjectGroups;
     [NonSerialized] public GameObject[][] scratchNoteObjectGroups;
     [NonSerialized] public GameObject[][] airNoteObjectGroups;
     [NonSerialized] public GameObject[] actionNoteObjects;
+    [NonSerialized] public GameObject[] cameraNoteObjects;
 
     public int AbsoluteChartPosition =>
         checked(ChartNumber * PositionUnitsPerMeasure + ChartPos);
@@ -74,7 +83,10 @@ public class ChartHolder
                 }
             }
 
-            return targetBpm != -1f || isEffect || isCameraMove;
+            return targetBpm != -1f ||
+                hasLineSpeedChange ||
+                isEffect ||
+                isCameraMove;
         }
     }
 
@@ -346,9 +358,8 @@ public class ChartHolder
         }
 
         noteTypes[index] = noteType;
-        isPoweredNotes[index] = isScratchLine
-            ? storedScratchMotion.MotionType != ScratchMotionType.None
-            : isPowered;
+        isPoweredNotes[index] = isScratchLine &&
+            storedScratchMotion.MotionType != ScratchMotionType.None;
 
         if (index < MainLineCount)
         {
@@ -407,6 +418,37 @@ public class ChartHolder
         return true;
     }
 
+    /// <summary>Camera 이벤트 데이터와 편집용 표현 오브젝트를 등록합니다.</summary>
+    public bool AddCameraNote(
+        GameObject[] noteObjects,
+        float offsetX = 0f,
+        ChartCameraSpinDirection spinDirection =
+            ChartCameraSpinDirection.None)
+    {
+        EnsureStorage();
+
+        if (isCameraMove ||
+            !IsValidNoteObjects(noteObjects) ||
+            !float.IsFinite(offsetX) ||
+            !Enum.IsDefined(typeof(ChartCameraSpinDirection), spinDirection))
+        {
+            return false;
+        }
+
+        isCameraMove = true;
+        cameraOffsetX = offsetX;
+        cameraSpinDirection = spinDirection;
+        cameraNoteObjects = noteObjects;
+        return true;
+    }
+
+    public bool TryGetCameraNote(out GameObject[] noteObjects)
+    {
+        EnsureStorage();
+        noteObjects = cameraNoteObjects;
+        return isCameraMove;
+    }
+
     /// <summary>
     /// 클릭한 표현 오브젝트와 같은 노트에 속한 복제 오브젝트를 모두 삭제합니다.
     /// </summary>
@@ -418,6 +460,12 @@ public class ChartHolder
         }
 
         EnsureStorage();
+
+        if (FindNoteObject(cameraNoteObjects, noteObject))
+        {
+            DeleteCameraNote();
+            return true;
+        }
 
         int tapIndex = FindNoteGroup(tapNoteObjectGroups, noteObject);
 
@@ -469,7 +517,8 @@ public class ChartHolder
         }
 
         EnsureStorage();
-        return FindNoteGroup(tapNoteObjectGroups, noteObject) >= 0 ||
+        return FindNoteObject(cameraNoteObjects, noteObject) ||
+            FindNoteGroup(tapNoteObjectGroups, noteObject) >= 0 ||
             FindNoteGroup(airNoteObjectGroups, noteObject) >= 0 ||
             FindNoteGroup(scratchNoteObjectGroups, noteObject) >= 0;
     }
@@ -483,6 +532,16 @@ public class ChartHolder
         out bool isPowered)
     {
         EnsureStorage();
+
+        if (FindNoteObject(cameraNoteObjects, noteObject))
+        {
+            line = 0;
+            noteType = NoteType.Camera;
+            handleType = NoteHandleType.Unknown;
+            isPowered = false;
+            return isCameraMove;
+        }
+
         int tapIndex = FindNoteGroup(tapNoteObjectGroups, noteObject);
 
         if (tapIndex >= 0)
@@ -490,7 +549,7 @@ public class ChartHolder
             line = tapIndex + 1;
             noteType = noteTypes[tapIndex];
             handleType = noteHandles[tapIndex];
-            isPowered = isPoweredNotes[tapIndex];
+            isPowered = false;
             return noteType != NoteType.Unknown;
         }
 
@@ -528,57 +587,65 @@ public class ChartHolder
         return false;
     }
 
-    /// <summary>Tap의 Powered 또는 Scratch의 이동 활성 상태를 변경합니다.</summary>
-    internal bool TrySetPowered(
+    /// <summary>Camera 이벤트를 파괴하지 않고 Holder에서 분리합니다.</summary>
+    internal bool TryDetachCameraNote(
         GameObject noteObject,
-        bool requestedPowered,
-        out NoteType noteType,
-        out bool appliedPowered)
+        out GameObject[] noteObjects,
+        out float offsetX,
+        out ChartCameraSpinDirection spinDirection)
+    {
+        EnsureStorage();
+
+        if (!isCameraMove ||
+            !FindNoteObject(cameraNoteObjects, noteObject))
+        {
+            noteObjects = null;
+            offsetX = 0f;
+            spinDirection = ChartCameraSpinDirection.None;
+            return false;
+        }
+
+        noteObjects = cameraNoteObjects;
+        offsetX = cameraOffsetX;
+        spinDirection = cameraSpinDirection;
+        cameraNoteObjects = null;
+        isCameraMove = false;
+        cameraOffsetX = 0f;
+        cameraSpinDirection = ChartCameraSpinDirection.None;
+        return true;
+    }
+
+    /// <summary>
+    /// 선택된 Tap 계열의 타입을 바꾸고 기존 표시 오브젝트를 분리합니다.
+    /// </summary>
+    internal bool TryChangeTapNoteType(
+        GameObject noteObject,
+        NoteType targetType,
+        out int line,
+        out NoteHandleType handleType,
+        out GameObject[] previousNoteObjects)
     {
         EnsureStorage();
         int tapIndex = FindNoteGroup(tapNoteObjectGroups, noteObject);
 
-        if (tapIndex >= 0)
+        if (tapIndex >= 0 &&
+            (noteTypes[tapIndex] == NoteType.Tap ||
+             noteTypes[tapIndex] == NoteType.LongTap) &&
+            (targetType == NoteType.Tap ||
+             targetType == NoteType.LongTap))
         {
-            noteType = noteTypes[tapIndex];
-            appliedPowered = requestedPowered;
-            isPoweredNotes[tapIndex] = appliedPowered;
-            return noteType != NoteType.Unknown;
+            line = tapIndex + 1;
+            handleType = noteHandles[tapIndex];
+            previousNoteObjects = tapNoteObjectGroups[tapIndex];
+            tapNoteObjectGroups[tapIndex] = null;
+            noteTypes[tapIndex] = targetType;
+            isPoweredNotes[tapIndex] = false;
+            return true;
         }
 
-        int scratchIndex = FindNoteGroup(
-            scratchNoteObjectGroups,
-            noteObject);
-
-        if (scratchIndex >= 0)
-        {
-            int storageIndex = MainLineCount + scratchIndex;
-            noteType = noteTypes[storageIndex];
-            ScratchMotionData currentMotion =
-                scratchMotions[scratchIndex] ??
-                ScratchMotionData.CreateDefault(noteType);
-            ScratchMotionType targetMotionType = requestedPowered
-                ? (noteType == NoteType.LongScratch
-                    ? ScratchMotionType.Gradual
-                    : ScratchMotionType.Instant)
-                : ScratchMotionType.None;
-            ScratchMotionData requestedMotion =
-                currentMotion.WithMotionType(targetMotionType);
-            ScratchMotionData effectiveMotion =
-                ScratchMotionRules.NormalizeMotion(
-                    noteType,
-                    scratchPointTypes[scratchIndex],
-                    requestedMotion);
-            scratchMotions[scratchIndex] = effectiveMotion;
-            appliedPowered =
-                effectiveMotion.MotionType != ScratchMotionType.None;
-            isPoweredNotes[storageIndex] = appliedPowered;
-            RefreshScratchArrowPattern(scratchIndex);
-            return noteType != NoteType.Unknown;
-        }
-
-        noteType = NoteType.Unknown;
-        appliedPowered = false;
+        line = 0;
+        handleType = NoteHandleType.Unknown;
+        previousNoteObjects = null;
         return false;
     }
 
@@ -604,7 +671,7 @@ public class ChartHolder
             noteType = noteTypes[tapIndex];
             noteObjects = tapNoteObjectGroups[tapIndex];
             handleType = noteHandles[tapIndex];
-            isPowered = isPoweredNotes[tapIndex];
+            isPowered = false;
             airValue = 0;
             scratchMotion = null;
             tapNoteObjectGroups[tapIndex] = null;
@@ -687,6 +754,9 @@ public class ChartHolder
             DestroyNoteObjects(airNoteObjectGroups[i]);
             airNoteObjectGroups[i] = null;
         }
+
+        DestroyNoteObjects(cameraNoteObjects);
+        cameraNoteObjects = null;
     }
 
     /// <summary>파일에서 먼저 복원한 노트 데이터에 표시 오브젝트를 연결합니다.</summary>
@@ -757,6 +827,20 @@ public class ChartHolder
         return true;
     }
 
+    public bool AttachCameraNoteObjects(GameObject[] noteObjects)
+    {
+        EnsureStorage();
+
+        if (!isCameraMove || cameraNoteObjects != null ||
+            !IsValidNoteObjects(noteObjects))
+        {
+            return false;
+        }
+
+        cameraNoteObjects = noteObjects;
+        return true;
+    }
+
     private void DeleteTapNote(int index)
     {
         DestroyNoteObjects(tapNoteObjectGroups[index]);
@@ -781,6 +865,41 @@ public class ChartHolder
         DestroyNoteObjects(airNoteObjectGroups[index]);
         airNoteObjectGroups[index] = null;
         airNoteValues[index] = 0;
+    }
+
+    private void DeleteCameraNote()
+    {
+        DestroyNoteObjects(cameraNoteObjects);
+        cameraNoteObjects = null;
+        isCameraMove = false;
+        cameraOffsetX = 0f;
+        cameraSpinDirection = ChartCameraSpinDirection.None;
+    }
+
+    private static bool FindNoteObject(
+        GameObject[] noteObjects,
+        GameObject noteObject)
+    {
+        return noteObjects != null &&
+            Array.IndexOf(noteObjects, noteObject) >= 0;
+    }
+
+    private static bool IsValidNoteObjects(GameObject[] noteObjects)
+    {
+        if (noteObjects == null || noteObjects.Length == 0)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < noteObjects.Length; i++)
+        {
+            if (!noteObjects[i])
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static int FindNoteGroup(
@@ -895,6 +1014,11 @@ public class ChartHolder
         Resize(ref airNoteObjectGroups, AirNoteCount);
         Resize(ref actionNoteObjects, MainLineCount);
 
+        for (int mainIndex = 0; mainIndex < MainLineCount; mainIndex++)
+        {
+            isPoweredNotes[mainIndex] = false;
+        }
+
         for (int scratchIndex = 0;
              scratchIndex < ScratchLineCount;
              scratchIndex++)
@@ -930,8 +1054,12 @@ public class ChartHolder
         ChartHolder clone = new ChartHolder(ChartNumber, ChartPos)
         {
             targetBpm = targetBpm,
+            hasLineSpeedChange = hasLineSpeedChange,
+            targetLineSpeed = targetLineSpeed,
             isEffect = isEffect,
-            isCameraMove = isCameraMove
+            isCameraMove = isCameraMove,
+            cameraOffsetX = cameraOffsetX,
+            cameraSpinDirection = cameraSpinDirection
         };
 
         Array.Copy(noteHandles, clone.noteHandles, MainLineCount);

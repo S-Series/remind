@@ -53,7 +53,7 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
         {
             inputRouter.CancelRequested += ClearSelection;
             inputRouter.DeleteRequested += DeleteSelection;
-            inputRouter.TogglePoweredRequested += ToggleSelectionPowered;
+            inputRouter.EditSelectedTapRequested += EditSelectedTap;
             inputRouter.MoveSelectionRequested += MoveSelection;
         }
     }
@@ -64,7 +64,7 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
         {
             inputRouter.CancelRequested -= ClearSelection;
             inputRouter.DeleteRequested -= DeleteSelection;
-            inputRouter.TogglePoweredRequested -= ToggleSelectionPowered;
+            inputRouter.EditSelectedTapRequested -= EditSelectedTap;
             inputRouter.MoveSelectionRequested -= MoveSelection;
         }
 
@@ -334,37 +334,61 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
         SelectionChanged?.Invoke(selectedNoteObjects);
     }
 
-    /// <summary>Tab 단축키로 선택된 노트의 Powered 데이터를 즉시 반전합니다.</summary>
-    public void ToggleSelectionPowered()
+    /// <summary>
+    /// Tab은 선택된 Tap 계열의 손 방향을, Shift+Tab은 Tap/Long Tap 종류를
+    /// 전환합니다.
+    /// </summary>
+    public void EditSelectedTap(bool toggleLongType)
     {
-        if (selectedNoteObjects.Count == 0 || !selectedNoteObjects[0])
+        if (!placementController ||
+            selectedNoteObjects.Count == 0 ||
+            !selectedNoteObjects[0])
         {
             return;
         }
 
         GameObject selectedObject = selectedNoteObjects[0];
 
-        if (!ChartManager.TryGetNotePosition(
+        if (!ChartManager.TryGetNoteData(
                 selectedObject,
-                out int absolutePosition))
+                out ChartHolder holder,
+                out int line,
+                out NoteType noteType,
+                out NoteHandleType handleType,
+                out _) ||
+            (noteType != NoteType.Tap && noteType != NoteType.LongTap))
         {
             return;
         }
 
-        ChartEditHistory.ChartEditTransaction editTransaction =
-            ChartEditHistory.BeginChange(absolutePosition);
+        bool succeeded;
+        string error;
 
-        if (!ChartManager.ToggleNotePowered(
+        if (toggleLongType)
+        {
+            succeeded = placementController.TryToggleTapLongNote(
                 selectedObject,
-                out _,
-                out string error))
+                out error);
+        }
+        else
+        {
+            NoteHandleType targetHandle =
+                handleType == NoteHandleType.Right
+                    ? NoteHandleType.Left
+                    : NoteHandleType.Right;
+            succeeded = placementController.TryEditTapNote(
+                selectedObject,
+                holder.ChartNumber,
+                holder.ChartPos,
+                line,
+                targetHandle,
+                out error);
+        }
+
+        if (!succeeded)
         {
             Debug.LogWarning(error, this);
-            return;
         }
-
-        ChartEditHistory.CommitChange(editTransaction);
-        NotifySelectionChanged();
     }
 
     /// <summary>
@@ -388,7 +412,7 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
                 out int sourceLine,
                 out NoteType noteType,
                 out NoteHandleType sourceHandle,
-                out bool isPowered))
+                out _))
         {
             return;
         }
@@ -446,7 +470,6 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
                     targetPosition,
                     targetLine,
                     targetHandle,
-                    isPowered,
                     out error);
                 break;
             case NoteType.Scratch:
@@ -640,6 +663,17 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
         }
 
         SelectionChanged?.Invoke(selectedNoteObjects);
+    }
+
+    /// <summary>새로 생성된 노트 뷰를 현재 선택으로 교체합니다.</summary>
+    internal void SelectNoteObject(GameObject noteObject)
+    {
+        if (noteObject &&
+            noteObject.TryGetComponent(
+                out ChartNoteSelectable selectable))
+        {
+            Select(selectable);
+        }
     }
 
     private void AddSelectedObject(GameObject noteObject)

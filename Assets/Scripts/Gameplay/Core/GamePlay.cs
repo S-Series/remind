@@ -1,4 +1,5 @@
 using System;
+using REmind.Charting;
 using UnityEngine;
 
 [DisallowMultipleComponent]
@@ -16,6 +17,7 @@ public sealed class GamePlay : MonoBehaviour
 
     private double heldSongTimeMs;
     private double scheduledSongTimeMs;
+    private DspSongClock songClock;
 
     public event Action<PlaybackState> PlaybackStateChanged;
     public event Action PlaybackCompleted;
@@ -44,8 +46,12 @@ public sealed class GamePlay : MonoBehaviour
             switch (State)
             {
                 case PlaybackState.Playing:
-                    double elapsedMs = (AudioSettings.dspTime - SongStartDspTime) * 1000d;
-                    return Clamp(elapsedMs, scheduledSongTimeMs, SongDurationMs);
+                    double currentSongTimeMs = songClock.SongTimeMsAt(
+                        AudioSettings.dspTime);
+                    return Clamp(
+                        currentSongTimeMs,
+                        scheduledSongTimeMs,
+                        SongDurationMs);
                 case PlaybackState.Paused:
                     return heldSongTimeMs;
                 case PlaybackState.Finished:
@@ -184,7 +190,7 @@ public sealed class GamePlay : MonoBehaviour
         }
 
         double inputDspTime = inputEventTime + InputTimeToDspOffset;
-        inputSongTimeMs = (inputDspTime - SongStartDspTime) * 1000d;
+        inputSongTimeMs = songClock.SongTimeMsAt(inputDspTime);
         return true;
     }
 
@@ -248,7 +254,10 @@ public sealed class GamePlay : MonoBehaviour
         InputTimeToDspOffset = dspNow - Time.realtimeSinceStartupAsDouble;
 
         double scheduledDspTime = dspNow + schedulingLeadTimeSeconds;
-        SongStartDspTime = scheduledDspTime - sampleAlignedStartTimeMs / 1000d;
+        songClock = new DspSongClock(
+            scheduledDspTime,
+            sampleAlignedStartTimeMs);
+        SongStartDspTime = songClock.DspTimeAt(0d);
         heldSongTimeMs = sampleAlignedStartTimeMs;
         scheduledSongTimeMs = sampleAlignedStartTimeMs;
 

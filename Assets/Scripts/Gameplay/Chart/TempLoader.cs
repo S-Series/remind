@@ -63,8 +63,7 @@ namespace REmind.Gameplay.Chart
         {
             if ((Chart.NoteLegnth?.Length ?? 0) == noteCount &&
                 (Chart.NotePos?.Length ?? 0) == noteCount &&
-                (Chart.NoteLine?.Length ?? 0) == noteCount &&
-                (Chart.NotePowered?.Length ?? 0) == noteCount)
+                (Chart.NoteLine?.Length ?? 0) == noteCount)
             {
                 return;
             }
@@ -150,6 +149,7 @@ namespace REmind.Gameplay.Chart
             public double[] NoteMs;
             public double[] NotePos;
             public int[] NoteLine;
+            // 구버전 JSON 호환용으로만 읽으며 Tap 표시에는 사용하지 않습니다.
             public bool[] NotePowered;
             public double[] EffectMs;
             public double[] EffectPos;

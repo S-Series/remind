@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Globalization;
 using System.IO;
+using REmind.Charting;
 using UnityEngine;
 using UnityEngine.Networking;
 
@@ -17,7 +18,7 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
     [SerializeField] private double startCorrectionMs = -1050d;
     [SerializeField, Min(0.01f)] private float schedulingLeadTimeSeconds = 0.2f;
 
-    private double songStartDspTime;
+    private DspSongClock songClock;
     private double playbackStartMs;
     private bool isTestPlaying;
     private AudioClip loadedAudioClip;
@@ -25,6 +26,7 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
     public event Action<double> TestMsChanged;
     public event Action<double> BpmChanged;
     public event Action<double> StartCorrectionMsChanged;
+    public event Func<double, bool> TestPlaybackStarting;
     public event Action<bool> TestPlaybackChanged;
     public event Action<AudioClip> AudioClipChanged;
 
@@ -56,12 +58,11 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
                 return TestMs;
             }
 
-            double elapsedMs = Math.Max(
-                0d,
-                (AudioSettings.dspTime - songStartDspTime) * 1000d);
+            double clockSongTimeMs = songClock.SongTimeMsAt(
+                AudioSettings.dspTime);
             return Math.Max(
-                0d,
-                Math.Min(playbackStartMs + elapsedMs, AudioDurationMs));
+                playbackStartMs,
+                Math.Min(clockSongTimeMs, AudioDurationMs));
         }
     }
 
@@ -234,19 +235,34 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
             return;
         }
 
+        double normalizedStartMs = NormalizeTestMs(startMs);
+
+        if (!CanStartTestPlayback(normalizedStartMs))
+        {
+            Debug.LogWarning(
+                "Test playback was blocked because the chart could not be " +
+                "compiled.",
+                this);
+            return;
+        }
+
         audioSource.Stop();
         int startSample = (int)Math.Min(
             clip.samples - 1L,
             Math.Max(
                 0L,
                 (long)Math.Round(
-                    NormalizeTestMs(startMs) * clip.frequency / 1000d)));
+                    normalizedStartMs * clip.frequency / 1000d)));
         audioSource.timeSamples = startSample;
         playbackStartMs = startSample * 1000d / clip.frequency;
         SetTestMs(playbackStartMs);
-        songStartDspTime = AudioSettings.dspTime + schedulingLeadTimeSeconds;
+        double scheduledStartDspTime =
+            AudioSettings.dspTime + schedulingLeadTimeSeconds;
+        songClock = new DspSongClock(
+            scheduledStartDspTime,
+            playbackStartMs);
+        audioSource.PlayScheduled(scheduledStartDspTime);
         SetPlaybackState(true);
-        audioSource.PlayScheduled(songStartDspTime);
     }
 
     /// <summary>테스트 재생을 끝내고 음악·타임라인·표시 위치를 시작점으로 되돌립니다.</summary>
@@ -414,6 +430,34 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
 
         isTestPlaying = playing;
         TestPlaybackChanged?.Invoke(isTestPlaying);
+    }
+
+    private bool CanStartTestPlayback(double startMs)
+    {
+        if (TestPlaybackStarting == null)
+        {
+            return true;
+        }
+
+        Delegate[] validators = TestPlaybackStarting.GetInvocationList();
+
+        for (int i = 0; i < validators.Length; i++)
+        {
+            try
+            {
+                if (!((Func<double, bool>)validators[i]).Invoke(startMs))
+                {
+                    return false;
+                }
+            }
+            catch (Exception exception)
+            {
+                Debug.LogException(exception, this);
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static double NormalizeBpm(double value)

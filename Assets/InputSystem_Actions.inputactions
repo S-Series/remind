@@ -314,7 +314,7 @@
                     "initialStateCheck": false
                 },
                 {
-                    "name": "TogglePowered",
+                    "name": "EditSelectedTap",
                     "type": "Button",
                     "id": "a3000000-0000-4000-8000-000000000012",
                     "expectedControlType": "Button",
@@ -583,7 +583,7 @@
                     "interactions": "",
                     "processors": "",
                     "groups": "Keyboard&Mouse",
-                    "action": "TogglePowered",
+                    "action": "EditSelectedTap",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
