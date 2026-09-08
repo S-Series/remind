@@ -20,22 +20,17 @@ internal static class ChartFileDialog
     public static string OpenChartFile(string initialPath)
     {
 #if UNITY_EDITOR
-        return EditorUtility.OpenFilePanelWithFilters(
+        return EditorUtility.OpenFilePanel(
             "Open Chart",
             GetInitialDirectory(initialPath),
-            new[]
-            {
-                "Chart Files", "txt,json",
-                "All Files", "*"
-            });
+            ChartToFile.ChartFileExtensionWithoutDot);
 #elif UNITY_STANDALONE_WIN
         return ShowWindowsDialog(
             false,
             initialPath,
             "Open Chart",
-            "Chart Files (*.txt;*.json)\0*.txt;*.json\0" +
-            "All Files (*.*)\0*.*\0\0",
-            "txt");
+            "REmind Chart Data (*.rd)\0*.rd\0\0",
+            ChartToFile.ChartFileExtensionWithoutDot);
 #else
         Debug.LogError(
             "Runtime chart file dialogs are currently supported on Windows only.");
@@ -71,19 +66,22 @@ internal static class ChartFileDialog
 
     public static string SaveChartFile(string initialPath)
     {
+        string chartInitialPath = GetChartSaveInitialPath(initialPath);
+
 #if UNITY_EDITOR
         return EditorUtility.SaveFilePanel(
             "Save Chart",
-            GetInitialDirectory(initialPath),
-            GetInitialFileName(initialPath),
-            "txt");
+            GetInitialDirectory(chartInitialPath),
+            GetInitialFileName(chartInitialPath),
+            ChartToFile.ChartFileExtensionWithoutDot);
 #elif UNITY_STANDALONE_WIN
         return ShowWindowsDialog(
             true,
-            initialPath,
+            chartInitialPath,
             "Save Chart",
-            "Chart Files (*.txt)\0*.txt\0All Files (*.*)\0*.*\0\0",
-            "txt");
+            "REmind Chart Data (*.rd)\0*.rd\0" +
+            "All Files (*.*)\0*.*\0\0",
+            ChartToFile.ChartFileExtensionWithoutDot);
 #else
         Debug.LogError(
             "Runtime chart file dialogs are currently supported on Windows only.");
@@ -112,8 +110,25 @@ internal static class ChartFileDialog
     private static string GetInitialFileName(string initialPath)
     {
         return string.IsNullOrWhiteSpace(initialPath)
-            ? "chart.txt"
-            : Path.GetFileName(initialPath);
+            ? ChartToFile.DefaultChartFileName
+            : Path.ChangeExtension(
+                Path.GetFileName(initialPath),
+                ChartToFile.ChartFileExtension);
+    }
+
+    private static string GetChartSaveInitialPath(string initialPath)
+    {
+        if (string.IsNullOrWhiteSpace(initialPath))
+        {
+            return Path.Combine(
+                Application.persistentDataPath,
+                ChartToFile.DefaultChartFileName);
+        }
+
+        string fullPath = Path.GetFullPath(initialPath);
+        return Directory.Exists(fullPath)
+            ? Path.Combine(fullPath, ChartToFile.DefaultChartFileName)
+            : Path.ChangeExtension(fullPath, ChartToFile.ChartFileExtension);
     }
 
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR

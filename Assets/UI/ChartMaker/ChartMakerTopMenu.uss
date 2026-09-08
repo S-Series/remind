@@ -63,6 +63,22 @@
     flex-grow: 1;
 }
 
+.document-status-label {
+    max-width: 55%;
+    margin-right: 8px;
+    overflow: hidden;
+    color: rgb(55, 70, 85);
+    font-size: 11px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    -unity-text-align: middle-right;
+}
+
+.document-status-error {
+    color: rgb(175, 42, 42);
+    -unity-font-style: bold;
+}
+
 .note-edit-window {
     position: absolute;
     top: 42px;
@@ -185,6 +201,11 @@
     -unity-font-style: bold;
     white-space: normal;
     letter-spacing: 0;
+}
+
+.note-edit-error.note-edit-success {
+    color: rgb(31, 112, 63);
+    -unity-font-style: normal;
 }
 
 .note-edit-actions {

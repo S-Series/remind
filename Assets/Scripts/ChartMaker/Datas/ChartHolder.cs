@@ -45,7 +45,14 @@ public class ChartHolder
     public float targetBpm = -1f; // -1 means that the BPM does not change.
     public bool hasLineSpeedChange;
     public float targetLineSpeed = 1f;
-    public bool isEffect; // Reserved for chart effects.
+    public bool isEffect;
+    public string effectId;
+    public string effectTypeId;
+    public string effectCommandId;
+    public int effectOrder;
+    // Attached editing state: written only to the difficulty's parameter JSON.
+    public string effectParametersJson;
+    public bool isMarker;
     public bool isCameraMove;
     public float cameraOffsetX;
     public ChartCameraSpinDirection cameraSpinDirection =
@@ -56,6 +63,8 @@ public class ChartHolder
     [NonSerialized] public GameObject[][] airNoteObjectGroups;
     [NonSerialized] public GameObject[] actionNoteObjects;
     [NonSerialized] public GameObject[] cameraNoteObjects;
+    [NonSerialized] public GameObject[] markerNoteObjects;
+    [NonSerialized] public GameObject[] effectNoteObjects;
 
     public int AbsoluteChartPosition =>
         checked(ChartNumber * PositionUnitsPerMeasure + ChartPos);
@@ -86,7 +95,8 @@ public class ChartHolder
             return targetBpm != -1f ||
                 hasLineSpeedChange ||
                 isEffect ||
-                isCameraMove;
+                isCameraMove ||
+                isMarker;
         }
     }
 
@@ -449,6 +459,74 @@ public class ChartHolder
         return isCameraMove;
     }
 
+    public void EnsureEffectIdentity()
+    {
+        if (isEffect && string.IsNullOrWhiteSpace(effectId))
+            effectId = "fx_" + Guid.NewGuid().ToString("N");
+    }
+
+    public void ClearEffectDefinition()
+    {
+        isEffect = false;
+        effectId = effectTypeId = effectCommandId = effectParametersJson = null;
+        effectOrder = 0;
+    }
+
+    public bool AddEffectNote(GameObject[] noteObjects)
+    {
+        if (isEffect || !IsValidNoteObjects(noteObjects)) return false;
+        isEffect = true;
+        EnsureEffectIdentity();
+        effectNoteObjects = noteObjects;
+        return true;
+    }
+
+    public bool TryGetEffectNote(out GameObject[] noteObjects)
+    {
+        noteObjects = effectNoteObjects;
+        return isEffect;
+    }
+
+    public bool AttachEffectNoteObjects(GameObject[] noteObjects)
+    {
+        if (!isEffect || effectNoteObjects != null || !IsValidNoteObjects(noteObjects))
+            return false;
+        effectNoteObjects = noteObjects;
+        return true;
+    }
+
+    internal bool TryDetachEffectNote(GameObject noteObject, out GameObject[] noteObjects)
+    {
+        noteObjects = null;
+        if (!isEffect || !FindNoteObject(effectNoteObjects, noteObject)) return false;
+        noteObjects = effectNoteObjects;
+        effectNoteObjects = null;
+        ClearEffectDefinition();
+        return true;
+    }
+
+    /// <summary>값 없는 위치 Marker와 편집용 표현 오브젝트를 등록합니다.</summary>
+    public bool AddMarkerNote(GameObject[] noteObjects)
+    {
+        EnsureStorage();
+
+        if (isMarker || !IsValidNoteObjects(noteObjects))
+        {
+            return false;
+        }
+
+        isMarker = true;
+        markerNoteObjects = noteObjects;
+        return true;
+    }
+
+    public bool TryGetMarkerNote(out GameObject[] noteObjects)
+    {
+        EnsureStorage();
+        noteObjects = markerNoteObjects;
+        return isMarker;
+    }
+
     /// <summary>
     /// 클릭한 표현 오브젝트와 같은 노트에 속한 복제 오브젝트를 모두 삭제합니다.
     /// </summary>
@@ -460,6 +538,20 @@ public class ChartHolder
         }
 
         EnsureStorage();
+
+        if (FindNoteObject(effectNoteObjects, noteObject))
+        {
+            DestroyNoteObjects(effectNoteObjects);
+            effectNoteObjects = null;
+            ClearEffectDefinition();
+            return true;
+        }
+
+        if (FindNoteObject(markerNoteObjects, noteObject))
+        {
+            DeleteMarkerNote();
+            return true;
+        }
 
         if (FindNoteObject(cameraNoteObjects, noteObject))
         {
@@ -517,7 +609,9 @@ public class ChartHolder
         }
 
         EnsureStorage();
-        return FindNoteObject(cameraNoteObjects, noteObject) ||
+        return FindNoteObject(effectNoteObjects, noteObject) ||
+            FindNoteObject(markerNoteObjects, noteObject) ||
+            FindNoteObject(cameraNoteObjects, noteObject) ||
             FindNoteGroup(tapNoteObjectGroups, noteObject) >= 0 ||
             FindNoteGroup(airNoteObjectGroups, noteObject) >= 0 ||
             FindNoteGroup(scratchNoteObjectGroups, noteObject) >= 0;
@@ -532,6 +626,24 @@ public class ChartHolder
         out bool isPowered)
     {
         EnsureStorage();
+
+        if (FindNoteObject(effectNoteObjects, noteObject))
+        {
+            line = 0;
+            noteType = NoteType.Effect;
+            handleType = NoteHandleType.Unknown;
+            isPowered = false;
+            return isEffect;
+        }
+
+        if (FindNoteObject(markerNoteObjects, noteObject))
+        {
+            line = 0;
+            noteType = NoteType.Marker;
+            handleType = NoteHandleType.Unknown;
+            isPowered = false;
+            return isMarker;
+        }
 
         if (FindNoteObject(cameraNoteObjects, noteObject))
         {
@@ -612,6 +724,25 @@ public class ChartHolder
         isCameraMove = false;
         cameraOffsetX = 0f;
         cameraSpinDirection = ChartCameraSpinDirection.None;
+        return true;
+    }
+
+    /// <summary>Marker를 파괴하지 않고 Holder에서 분리합니다.</summary>
+    internal bool TryDetachMarkerNote(
+        GameObject noteObject,
+        out GameObject[] noteObjects)
+    {
+        EnsureStorage();
+
+        if (!isMarker || !FindNoteObject(markerNoteObjects, noteObject))
+        {
+            noteObjects = null;
+            return false;
+        }
+
+        noteObjects = markerNoteObjects;
+        markerNoteObjects = null;
+        isMarker = false;
         return true;
     }
 
@@ -757,6 +888,10 @@ public class ChartHolder
 
         DestroyNoteObjects(cameraNoteObjects);
         cameraNoteObjects = null;
+        DestroyNoteObjects(markerNoteObjects);
+        markerNoteObjects = null;
+        DestroyNoteObjects(effectNoteObjects);
+        effectNoteObjects = null;
     }
 
     /// <summary>파일에서 먼저 복원한 노트 데이터에 표시 오브젝트를 연결합니다.</summary>
@@ -841,6 +976,20 @@ public class ChartHolder
         return true;
     }
 
+    public bool AttachMarkerNoteObjects(GameObject[] noteObjects)
+    {
+        EnsureStorage();
+
+        if (!isMarker || markerNoteObjects != null ||
+            !IsValidNoteObjects(noteObjects))
+        {
+            return false;
+        }
+
+        markerNoteObjects = noteObjects;
+        return true;
+    }
+
     private void DeleteTapNote(int index)
     {
         DestroyNoteObjects(tapNoteObjectGroups[index]);
@@ -874,6 +1023,13 @@ public class ChartHolder
         isCameraMove = false;
         cameraOffsetX = 0f;
         cameraSpinDirection = ChartCameraSpinDirection.None;
+    }
+
+    private void DeleteMarkerNote()
+    {
+        DestroyNoteObjects(markerNoteObjects);
+        markerNoteObjects = null;
+        isMarker = false;
     }
 
     private static bool FindNoteObject(
@@ -1057,6 +1213,12 @@ public class ChartHolder
             hasLineSpeedChange = hasLineSpeedChange,
             targetLineSpeed = targetLineSpeed,
             isEffect = isEffect,
+            effectId = effectId,
+            effectTypeId = effectTypeId,
+            effectCommandId = effectCommandId,
+            effectOrder = effectOrder,
+            effectParametersJson = effectParametersJson,
+            isMarker = isMarker,
             isCameraMove = isCameraMove,
             cameraOffsetX = cameraOffsetX,
             cameraSpinDirection = cameraSpinDirection

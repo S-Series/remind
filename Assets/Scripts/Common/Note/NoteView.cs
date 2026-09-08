@@ -1,9 +1,14 @@
+using System;
 using UnityEngine;
 
 [DisallowMultipleComponent]
 public sealed class NoteView : MonoBehaviour
 {
     [SerializeField] private Collider2D[] clickColliders;
+
+    private Vector3 baseLocalScale;
+    private NoteLength noteLength;
+    private bool displayScaleInitialized;
 
     private void Awake()
     {
@@ -45,6 +50,35 @@ public sealed class NoteView : MonoBehaviour
     public void RefreshClickColliders()
     {
         clickColliders = GetComponentsInChildren<Collider2D>(true);
+    }
+
+    /// <summary>
+    /// 부모의 세로 간격이 확대되어도 노트 머리의 화면 크기는 유지합니다.
+    /// Long Note의 리본 길이는 NoteLength에서 별도로 복원합니다.
+    /// </summary>
+    public void SetVerticalDisplayScale(float displayScale)
+    {
+        if (float.IsNaN(displayScale) ||
+            float.IsInfinity(displayScale) ||
+            displayScale <= 0f)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(displayScale),
+                displayScale,
+                "Display scale must be finite and greater than zero.");
+        }
+
+        if (!displayScaleInitialized)
+        {
+            baseLocalScale = transform.localScale;
+            noteLength = GetComponent<NoteLength>();
+            displayScaleInitialized = true;
+        }
+
+        Vector3 compensatedScale = baseLocalScale;
+        compensatedScale.y /= displayScale;
+        transform.localScale = compensatedScale;
+        noteLength?.SetVerticalDisplayScale(displayScale);
     }
 
     private void Reset()

@@ -36,6 +36,8 @@ public sealed class GuideGenerate : MonoBehaviour
     [SerializeField] private Color guideColor = Color.white;
     [SerializeField] private Color measureGuideColor =
         new Color(0.35f, 0.8f, 1f, 1f);
+    [SerializeField, Range(0f, 1f)]
+    private float subdivisionGuideAlpha = 0.45f;
 
     [Header("Pool")]
     [SerializeField, Min(1)] private int initialPoolSize = 64;
@@ -43,6 +45,8 @@ public sealed class GuideGenerate : MonoBehaviour
 
     private readonly Dictionary<int, GameObject> visibleGuides =
         new Dictionary<int, GameObject>();
+    private readonly Dictionary<GameObject, Vector3> guideBaseScales =
+        new Dictionary<GameObject, Vector3>();
     private readonly List<int> releaseIndices = new List<int>();
 
     private int currentFirstIndex = -1;
@@ -110,6 +114,8 @@ public sealed class GuideGenerate : MonoBehaviour
             Pool.Clear();
             Pool = null;
         }
+
+        guideBaseScales.Clear();
 
         if (Instance == this)
         {
@@ -245,6 +251,7 @@ public sealed class GuideGenerate : MonoBehaviour
         currentFirstIndex = -1;
         currentLastIndex = -1;
         RefreshVisibleGuides(true);
+        ApplyVisibleGuideDisplayScales();
         VerticalDisplayScaleChanged?.Invoke(scale);
     }
 
@@ -308,18 +315,46 @@ public sealed class GuideGenerate : MonoBehaviour
                 GetGuidePositionY(sectionIndex, indexInSection, spacing),
                 templatePosition.z);
 
+            int absoluteGuideIndex = index - 1;
             string format = string.Format(
                 "{0:D3}\n{1}/{2}",
-                (indexInSection / guidesPerMeasure),
-                (indexInSection % guidesPerMeasure),
-                (guidesPerMeasure)
+                absoluteGuideIndex / guidesPerMeasure,
+                absoluteGuideIndex % guidesPerMeasure,
+                guidesPerMeasure
             );
             guide.transform.GetChild(0)
                 .GetComponent<TextMeshPro>().text = format;
 
             ApplyGuideColor(guide, index);
+            ApplyGuideDisplayScale(guide);
             visibleGuides.Add(index, guide);
         }
+    }
+
+    private void ApplyVisibleGuideDisplayScales()
+    {
+        foreach (GameObject guide in visibleGuides.Values)
+        {
+            ApplyGuideDisplayScale(guide);
+        }
+    }
+
+    private void ApplyGuideDisplayScale(GameObject guide)
+    {
+        if (!guide)
+        {
+            return;
+        }
+
+        if (!guideBaseScales.TryGetValue(guide, out Vector3 baseScale))
+        {
+            baseScale = guide.transform.localScale;
+            guideBaseScales.Add(guide, baseScale);
+        }
+
+        Vector3 compensatedScale = baseScale;
+        compensatedScale.y /= verticalDisplayScale;
+        guide.transform.localScale = compensatedScale;
     }
 
     private void ApplyGuideColor(GameObject guide, int guideIndex)
@@ -329,10 +364,24 @@ public sealed class GuideGenerate : MonoBehaviour
             return;
         }
 
-        bool isMeasureGuide = (guideIndex - 1) % guidesPerMeasure == 0;
-        spriteRenderer.color = isMeasureGuide
-            ? measureGuideColor
-            : guideColor;
+        int indexInMeasure = (guideIndex - 1) % guidesPerMeasure;
+
+        if (indexInMeasure == 0)
+        {
+            spriteRenderer.color = measureGuideColor;
+            return;
+        }
+
+        bool isQuarterGuide =
+            indexInMeasure * 4 % guidesPerMeasure == 0;
+        Color color = guideColor;
+
+        if (!isQuarterGuide)
+        {
+            color.a *= subdivisionGuideAlpha;
+        }
+
+        spriteRenderer.color = color;
     }
 
     private int GetSectionIndex(int guideIndex, float spacing)

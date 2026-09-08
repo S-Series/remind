@@ -5,12 +5,17 @@ using System.IO;
 using System.Text;
 using REmind.Charting;
 using REmind.Data;
+using UnityEngine;
 
 public static class ChartFileCodec
 {
-    public const int CurrentFormatVersion = 6;
+    public const int CurrentFormatVersion = 8;
+    private const int CompactJsonFormatVersion = 7;
     internal const int LegacyPositionUnitsPerMeasure = 1600;
 
+    private const string JsonFormatName = "REmindChart";
+    private const int ObjectJsonFormatVersion = 6;
+    private const int LegacyNativeFormatVersion = 6;
     private const string FormatHeader = "#REmindChart";
     private const string BpmHeader = "#BPM";
     private const string MusicStartCorrectionHeader =
@@ -27,8 +32,48 @@ public static class ChartFileCodec
     private static readonly CultureInfo Invariant =
         CultureInfo.InvariantCulture;
 
-    /// <summary>현재 채보와 편집용 타이밍 설정을 행 단위 텍스트 포맷으로 변환합니다.</summary>
+    /// <summary>현재 채보와 편집용 타이밍 설정을 JSON 문서로 변환합니다.</summary>
     public static string Serialize(
+        IReadOnlyList<ChartHolder> holders,
+        double baseBpm,
+        double musicStartCorrectionMs,
+        ChartEffectDocumentState.Metadata? effectMetadata = null)
+    {
+        // 기존 Native codec의 검증/정규화 규칙을 단일 기준으로 재사용한 뒤
+        // 검증된 편집 데이터를 JSON DTO로 변환합니다.
+        string validatedText = SerializeLegacyText(
+            holders,
+            baseBpm,
+            musicStartCorrectionMs);
+        ChartFile normalized = ParseLegacyText(validatedText);
+        ChartEffectDocumentState.Metadata metadata = effectMetadata ??
+            new ChartEffectDocumentState.Metadata("untitled", "default", "", "");
+        normalized.MusicId = metadata.MusicId;
+        normalized.DifficultyId = metadata.DifficultyId;
+        normalized.GimmickId = metadata.GimmickId;
+        normalized.EffectRevision = metadata.Revision;
+        Dictionary<int, ChartHolder> sources = new Dictionary<int, ChartHolder>();
+        foreach (ChartHolder source in holders)
+        {
+            if (source == null || !source.isEffect) continue;
+            source.EnsureEffectIdentity();
+            sources.Add(source.AbsoluteChartPosition, source);
+        }
+        normalized.HasEffectParameterFile = sources.Count > 0;
+        foreach (ChartHolder target in normalized.chartDatas)
+        {
+            if (!target.isEffect) continue;
+            ChartHolder source = sources[target.AbsoluteChartPosition];
+            target.effectId = source.effectId;
+            target.effectTypeId = source.effectTypeId;
+            target.effectCommandId = source.effectCommandId;
+            target.effectOrder = source.effectOrder;
+        }
+        return SerializeJson(normalized);
+    }
+
+    /// <summary>기존 .txt 채보를 읽기 위한 Native 텍스트 직렬화 규칙입니다.</summary>
+    internal static string SerializeLegacyText(
         IReadOnlyList<ChartHolder> holders,
         double baseBpm,
         double musicStartCorrectionMs)
@@ -102,6 +147,11 @@ public static class ChartFileCodec
             output.Append('|');
             output.Append(FormatCamera(holder));
 
+            if (holder.isMarker)
+            {
+                output.Append('*');
+            }
+
             previousPosition = holder.AbsoluteChartPosition;
         }
 
@@ -109,8 +159,14 @@ public static class ChartFileCodec
         return output.ToString();
     }
 
-    /// <summary>텍스트 전체를 검증한 뒤 독립된 채보 데이터로 변환합니다.</summary>
+    /// <summary>JSON 전체를 검증한 뒤 독립된 채보 데이터로 변환합니다.</summary>
     public static ChartFile Parse(string text)
+    {
+        return ParseJson(text);
+    }
+
+    /// <summary>기존 Native 텍스트 전체를 검증해 현재 채보 데이터로 변환합니다.</summary>
+    internal static ChartFile ParseLegacyText(string text)
     {
         if (text == null)
         {
@@ -139,6 +195,22 @@ public static class ChartFileCodec
             if (line.Length == 0)
             {
                 continue;
+            }
+
+            bool isMarker = false;
+
+            if (!line.StartsWith("#", StringComparison.Ordinal) &&
+                line.EndsWith("*", StringComparison.Ordinal))
+            {
+                isMarker = true;
+                line = line.Substring(0, line.Length - 1);
+            }
+
+            if (line.IndexOf('*') >= 0)
+            {
+                throw CreateFormatException(
+                    lineNumber,
+                    "Marker '*' is only allowed once at the end of a chart row.");
             }
 
             if (TryParseMetadata(
@@ -216,6 +288,7 @@ public static class ChartFileCodec
             ChartHolder holder = new ChartHolder(
                 absolutePosition / ChartHolder.PositionUnitsPerMeasure,
                 absolutePosition % ChartHolder.PositionUnitsPerMeasure);
+            holder.isMarker = isMarker;
             ParseMainNotes(fields[2], holder, openLongs, lineNumber);
 
             if (formatVersion >= 4)
@@ -308,6 +381,794 @@ public static class ChartFileCodec
         };
     }
 
+    /// <summary>문서가 현재 ChartMaker JSON 형식인지 헤더만 확인합니다.</summary>
+    public static bool IsCurrentJsonDocument(string text)
+    {
+        if (!StartsWithJsonObject(text))
+        {
+            return false;
+        }
+
+        try
+        {
+            JsonChartHeader header =
+                JsonUtility.FromJson<JsonChartHeader>(text);
+            return header != null &&
+                string.Equals(
+                    header.format,
+                    JsonFormatName,
+                    StringComparison.Ordinal);
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    private static string SerializeJson(ChartFile chartFile)
+    {
+        ChartHolder[] holders = chartFile.chartDatas ??
+            Array.Empty<ChartHolder>();
+        string nativeText = SerializeLegacyText(
+            holders,
+            chartFile.BaseBpm,
+            chartFile.MusicStartCorrectionMs);
+        List<string> eventRows = new List<string>(holders.Length);
+
+        using StringReader reader = new StringReader(nativeText);
+        string row;
+
+        while ((row = reader.ReadLine()) != null)
+        {
+            row = row.Trim();
+
+            if (row.Length > 0 &&
+                !row.StartsWith("#", StringComparison.Ordinal))
+            {
+                eventRows.Add(row);
+            }
+        }
+
+        JsonCompactChartDocument document = new JsonCompactChartDocument
+        {
+            format = JsonFormatName,
+            formatVersion = CurrentFormatVersion,
+            baseBpm = chartFile.BaseBpm,
+            musicStartCorrectionMs = chartFile.MusicStartCorrectionMs,
+            events = eventRows.ToArray(),
+            musicId = chartFile.MusicId,
+            difficultyId = chartFile.DifficultyId,
+            gimmickId = chartFile.GimmickId,
+            revision = chartFile.EffectRevision,
+            hasEffectParameters = chartFile.HasEffectParameterFile,
+            effectDefinitions = BuildEffectDefinitions(holders)
+        };
+        return JsonUtility.ToJson(document, true);
+    }
+
+    private static ChartFile ParseJson(string text)
+    {
+        if (text == null)
+        {
+            throw new ArgumentNullException(nameof(text));
+        }
+
+        if (!StartsWithJsonObject(text))
+        {
+            throw new FormatException(
+                "Chart JSON must start with an object.");
+        }
+
+        JsonChartHeader header;
+
+        try
+        {
+            header = JsonUtility.FromJson<JsonChartHeader>(text);
+        }
+        catch (ArgumentException exception)
+        {
+            throw new FormatException(
+                $"Invalid chart JSON: {exception.Message}",
+                exception);
+        }
+
+        if (header == null ||
+            !string.Equals(
+                header.format,
+                JsonFormatName,
+                StringComparison.Ordinal))
+        {
+            throw new FormatException(
+                $"Chart JSON requires format '{JsonFormatName}'.");
+        }
+
+        if (header.formatVersion == CurrentFormatVersion ||
+            header.formatVersion == CompactJsonFormatVersion)
+        {
+            return ParseCompactJson(text);
+        }
+
+        if (header.formatVersion != ObjectJsonFormatVersion)
+        {
+            throw new FormatException(
+                $"Unsupported JSON chart format version " +
+                $"'{header.formatVersion}'. Expected " +
+                $"{ObjectJsonFormatVersion} or {CurrentFormatVersion}.");
+        }
+
+        JsonChartDocument document;
+
+        try
+        {
+            document = JsonUtility.FromJson<JsonChartDocument>(text);
+        }
+        catch (ArgumentException exception)
+        {
+            throw new FormatException(
+                $"Invalid chart JSON: {exception.Message}",
+                exception);
+        }
+
+        if (document == null ||
+            !string.Equals(
+                document.format,
+                JsonFormatName,
+                StringComparison.Ordinal))
+        {
+            throw new FormatException(
+                $"Chart JSON requires format '{JsonFormatName}'.");
+        }
+
+        if (document.formatVersion != ObjectJsonFormatVersion)
+        {
+            throw new FormatException(
+                $"Unsupported JSON chart format version " +
+                $"'{document.formatVersion}'. Expected " +
+                $"{ObjectJsonFormatVersion}.");
+        }
+
+        ValidateBaseBpm(document.baseBpm);
+        ValidateFinite(
+            document.musicStartCorrectionMs,
+            nameof(document.musicStartCorrectionMs));
+        JsonChartEvent[] sourceEvents = document.events ??
+            Array.Empty<JsonChartEvent>();
+        ChartHolder[] holders = new ChartHolder[sourceEvents.Length];
+        bool[] openLongTaps = new bool[ChartHolder.MainLineCount];
+        bool[] openLongScratches =
+            new bool[ChartHolder.ScratchLineCount];
+        int previousPosition = -1;
+
+        for (int eventIndex = 0;
+             eventIndex < sourceEvents.Length;
+             eventIndex++)
+        {
+            JsonChartEvent source = sourceEvents[eventIndex];
+
+            if (source == null)
+            {
+                throw CreateJsonFormatException(
+                    eventIndex,
+                    "Event cannot be null.");
+            }
+
+            if (source.measure < 0 ||
+                source.measure > ChartHolder.MaximumMeasureNumber ||
+                source.position < 0 ||
+                source.position >= ChartHolder.PositionUnitsPerMeasure)
+            {
+                throw CreateJsonFormatException(
+                    eventIndex,
+                    $"Position must be measure 0-{ChartHolder.MaximumMeasureNumber} " +
+                    $"and position 0-{ChartHolder.PositionUnitsPerMeasure - 1}.");
+            }
+
+            int absolutePosition = checked(
+                source.measure * ChartHolder.PositionUnitsPerMeasure +
+                source.position);
+
+            if (absolutePosition <= previousPosition)
+            {
+                throw CreateJsonFormatException(
+                    eventIndex,
+                    "Events must be ordered by position without duplicates.");
+            }
+
+            ChartHolder holder = new ChartHolder(
+                source.measure,
+                source.position);
+            ParseJsonMainNotes(
+                source.mainNotes,
+                holder,
+                openLongTaps,
+                eventIndex);
+            ParseJsonScratchNotes(
+                source.scratchNotes,
+                holder,
+                openLongScratches,
+                eventIndex);
+            ParseJsonAirNotes(source.airNotes, holder, eventIndex);
+            ParseJsonEvents(source, holder, eventIndex);
+            holders[eventIndex] = holder;
+            previousPosition = absolutePosition;
+        }
+
+        EnsureNoOpenLongTaps(openLongTaps, "End of JSON chart");
+        EnsureNoOpenLongScratches(
+            openLongScratches,
+            "End of JSON chart");
+        return new ChartFile
+        {
+            FormatVersion = document.formatVersion,
+            HasBaseBpm = true,
+            BaseBpm = document.baseBpm,
+            HasMusicStartCorrectionMs = true,
+            MusicStartCorrectionMs = document.musicStartCorrectionMs,
+            chartDatas = holders
+        };
+    }
+
+    private static ChartFile ParseCompactJson(string text)
+    {
+        JsonCompactChartDocument document;
+
+        try
+        {
+            document = JsonUtility.FromJson<JsonCompactChartDocument>(text);
+        }
+        catch (ArgumentException exception)
+        {
+            throw new FormatException(
+                $"Invalid compact chart JSON: {exception.Message}",
+                exception);
+        }
+
+        if (document == null ||
+            !string.Equals(
+                document.format,
+                JsonFormatName,
+                StringComparison.Ordinal) ||
+            (document.formatVersion != CurrentFormatVersion &&
+             document.formatVersion != CompactJsonFormatVersion))
+        {
+            throw new FormatException(
+                $"Compact chart JSON requires format '{JsonFormatName}' " +
+                $"version {CurrentFormatVersion}.");
+        }
+
+        ValidateBaseBpm(document.baseBpm);
+        ValidateFinite(
+            document.musicStartCorrectionMs,
+            nameof(document.musicStartCorrectionMs));
+        string[] eventRows = document.events ?? Array.Empty<string>();
+        StringBuilder nativeText = new StringBuilder();
+        AppendMetadata(
+            nativeText,
+            document.baseBpm,
+            document.musicStartCorrectionMs);
+
+        for (int eventIndex = 0;
+             eventIndex < eventRows.Length;
+             eventIndex++)
+        {
+            string row = eventRows[eventIndex];
+
+            if (string.IsNullOrWhiteSpace(row))
+            {
+                throw CreateJsonFormatException(
+                    eventIndex,
+                    "Compact event row cannot be empty.");
+            }
+
+            row = row.Trim();
+
+            if (row.StartsWith("#", StringComparison.Ordinal) ||
+                row.IndexOf('\r') >= 0 ||
+                row.IndexOf('\n') >= 0)
+            {
+                throw CreateJsonFormatException(
+                    eventIndex,
+                    "Compact event row cannot contain metadata or a newline.");
+            }
+
+            nativeText.Append(row);
+            nativeText.Append('\n');
+        }
+
+        ChartFile parsed = ParseLegacyText(nativeText.ToString());
+        parsed.FormatVersion = document.formatVersion;
+        parsed.MusicId = document.musicId;
+        parsed.DifficultyId = document.difficultyId;
+        parsed.GimmickId = document.gimmickId;
+        parsed.EffectRevision = document.revision;
+        parsed.HasEffectParameterFile = document.hasEffectParameters;
+        if (document.formatVersion >= 8)
+            ApplyEffectDefinitions(parsed.chartDatas, document.effectDefinitions);
+        else
+            foreach (ChartHolder holder in parsed.chartDatas) holder.EnsureEffectIdentity();
+        return parsed;
+    }
+
+    private static JsonEffectDefinition[] BuildEffectDefinitions(IReadOnlyList<ChartHolder> holders)
+    {
+        List<JsonEffectDefinition> result = new List<JsonEffectDefinition>();
+        HashSet<string> ids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (ChartHolder holder in holders)
+        {
+            if (!holder.isEffect) continue;
+            if (string.IsNullOrWhiteSpace(holder.effectId) || !ids.Add(holder.effectId))
+                throw new FormatException("Effect IDs must be nonempty and unique: " + holder.effectId);
+            if (holder.effectOrder < 0) throw new FormatException("Effect order cannot be negative.");
+            result.Add(new JsonEffectDefinition {
+                position = holder.AbsoluteChartPosition,
+                effectId = holder.effectId,
+                effectTypeId = holder.effectTypeId ?? "",
+                commandId = holder.effectCommandId ?? "",
+                order = holder.effectOrder
+            });
+        }
+        return result.ToArray();
+    }
+
+    private static void ApplyEffectDefinitions(ChartHolder[] holders, JsonEffectDefinition[] definitions)
+    {
+        Dictionary<int, ChartHolder> effects = new Dictionary<int, ChartHolder>();
+        foreach (ChartHolder holder in holders)
+            if (holder.isEffect) effects.Add(holder.AbsoluteChartPosition, holder);
+        HashSet<string> ids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (JsonEffectDefinition definition in definitions ?? Array.Empty<JsonEffectDefinition>())
+        {
+            if (definition == null || string.IsNullOrWhiteSpace(definition.effectId) ||
+                !ids.Add(definition.effectId) || definition.order < 0 ||
+                !effects.TryGetValue(definition.position, out ChartHolder holder))
+                throw new FormatException("Effect definition has a duplicate ID, invalid order, or no matching Effect row.");
+            holder.effectId = definition.effectId;
+            holder.effectTypeId = definition.effectTypeId;
+            holder.effectCommandId = definition.commandId;
+            holder.effectOrder = definition.order;
+            effects.Remove(definition.position);
+        }
+        if (effects.Count > 0)
+            throw new FormatException("An Effect row has no matching definition. Restore the matching chart revision.");
+    }
+
+    private static void ParseJsonMainNotes(
+        JsonMainNote[] notes,
+        ChartHolder holder,
+        bool[] openLongTaps,
+        int eventIndex)
+    {
+        notes ??= Array.Empty<JsonMainNote>();
+
+        for (int noteIndex = 0; noteIndex < notes.Length; noteIndex++)
+        {
+            JsonMainNote note = notes[noteIndex];
+
+            if (note == null ||
+                note.line < 1 ||
+                note.line > ChartHolder.MainLineCount)
+            {
+                throw CreateJsonFormatException(
+                    eventIndex,
+                    $"Main note {noteIndex} requires line 1-4.");
+            }
+
+            int storageIndex = note.line - 1;
+
+            if (holder.noteTypes[storageIndex] != NoteType.Unknown)
+            {
+                throw CreateJsonFormatException(
+                    eventIndex,
+                    $"Main line {note.line} contains duplicate notes.");
+            }
+
+            if (!TryParseDefinedEnum(note.type, out NoteType noteType) ||
+                (noteType != NoteType.Tap &&
+                 noteType != NoteType.LongTap))
+            {
+                throw CreateJsonFormatException(
+                    eventIndex,
+                    $"Main note {noteIndex} has invalid type '{note.type}'.");
+            }
+
+            if (!TryParseDefinedEnum(
+                    note.hand,
+                    out NoteHandleType handleType) ||
+                handleType == NoteHandleType.Unknown)
+            {
+                throw CreateJsonFormatException(
+                    eventIndex,
+                    $"Main note {noteIndex} has invalid hand '{note.hand}'.");
+            }
+
+            if (noteType == NoteType.Tap)
+            {
+                if (!string.Equals(
+                        note.point,
+                        ScratchPointType.Tap.ToString(),
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    throw CreateJsonFormatException(
+                        eventIndex,
+                        $"Tap note {noteIndex} requires point 'Tap'.");
+                }
+            }
+            else if (string.Equals(
+                         note.point,
+                         ScratchPointType.Start.ToString(),
+                         StringComparison.OrdinalIgnoreCase))
+            {
+                if (openLongTaps[storageIndex])
+                {
+                    throw CreateJsonFormatException(
+                        eventIndex,
+                        $"Long Tap line {note.line} is already open.");
+                }
+
+                openLongTaps[storageIndex] = true;
+            }
+            else if (string.Equals(
+                         note.point,
+                         ScratchPointType.End.ToString(),
+                         StringComparison.OrdinalIgnoreCase))
+            {
+                if (!openLongTaps[storageIndex])
+                {
+                    throw CreateJsonFormatException(
+                        eventIndex,
+                        $"Long Tap line {note.line} has no Start.");
+                }
+
+                openLongTaps[storageIndex] = false;
+            }
+            else
+            {
+                throw CreateJsonFormatException(
+                    eventIndex,
+                    $"Long Tap note {noteIndex} requires Start or End.");
+            }
+
+            holder.noteTypes[storageIndex] = noteType;
+            holder.noteHandles[storageIndex] = handleType;
+            holder.isPoweredNotes[storageIndex] = false;
+        }
+    }
+
+    private static void ParseJsonScratchNotes(
+        JsonScratchNote[] notes,
+        ChartHolder holder,
+        bool[] openLongScratches,
+        int eventIndex)
+    {
+        notes ??= Array.Empty<JsonScratchNote>();
+
+        for (int noteIndex = 0; noteIndex < notes.Length; noteIndex++)
+        {
+            JsonScratchNote note = notes[noteIndex];
+
+            if (note == null)
+            {
+                throw CreateJsonFormatException(
+                    eventIndex,
+                    $"Scratch note {noteIndex} cannot be null.");
+            }
+
+            int scratchIndex = string.Equals(
+                note.side,
+                "Left",
+                StringComparison.OrdinalIgnoreCase)
+                    ? 0
+                    : string.Equals(
+                        note.side,
+                        "Right",
+                        StringComparison.OrdinalIgnoreCase)
+                            ? 1
+                            : -1;
+
+            if (scratchIndex < 0)
+            {
+                throw CreateJsonFormatException(
+                    eventIndex,
+                    $"Scratch note {noteIndex} has invalid side '{note.side}'.");
+            }
+
+            int storageIndex =
+                ChartHolder.MainLineCount + scratchIndex;
+
+            if (holder.noteTypes[storageIndex] != NoteType.Unknown)
+            {
+                throw CreateJsonFormatException(
+                    eventIndex,
+                    $"Scratch side {note.side} contains duplicate notes.");
+            }
+
+            if (!TryParseDefinedEnum(note.type, out NoteType noteType) ||
+                !noteType.IsScratch() ||
+                !TryParseDefinedEnum(
+                    note.point,
+                    out ScratchPointType pointType) ||
+                !TryParseDefinedEnum(
+                    note.motion,
+                    out ScratchMotionType motionType))
+            {
+                throw CreateJsonFormatException(
+                    eventIndex,
+                    $"Scratch note {noteIndex} has an invalid type, point, " +
+                    "or motion.");
+            }
+
+            if (noteType == NoteType.Scratch)
+            {
+                if (pointType != ScratchPointType.Tap)
+                {
+                    throw CreateJsonFormatException(
+                        eventIndex,
+                        "Single Scratch requires point 'Tap'.");
+                }
+            }
+            else
+            {
+                ValidateJsonLongScratchPoint(
+                    pointType,
+                    openLongScratches,
+                    scratchIndex,
+                    eventIndex,
+                    note.side);
+            }
+
+            if (motionType == ScratchMotionType.Release &&
+                !ScratchMotionRules.IsReleaseAllowed(noteType, pointType))
+            {
+                throw CreateJsonFormatException(
+                    eventIndex,
+                    $"Scratch note {noteIndex}: Release is only valid on " +
+                    "Long Scratch Mid or End points.");
+            }
+
+            ScratchMotionData motion;
+
+            try
+            {
+                motion = ScratchMotionRules.NormalizeMotion(
+                    noteType,
+                    pointType,
+                    new ScratchMotionData(note.amount, motionType));
+            }
+            catch (ArgumentOutOfRangeException exception)
+            {
+                throw CreateJsonFormatException(
+                    eventIndex,
+                    $"Scratch note {noteIndex}: {exception.Message}");
+            }
+
+            holder.noteTypes[storageIndex] = noteType;
+            holder.scratchPointTypes[scratchIndex] = pointType;
+            holder.scratchMotions[scratchIndex] = motion;
+            holder.isPoweredNotes[storageIndex] =
+                motion.MotionType != ScratchMotionType.None;
+        }
+    }
+
+    private static void ValidateJsonLongScratchPoint(
+        ScratchPointType pointType,
+        bool[] openLongScratches,
+        int scratchIndex,
+        int eventIndex,
+        string side)
+    {
+        switch (pointType)
+        {
+            case ScratchPointType.Start:
+                if (openLongScratches[scratchIndex])
+                {
+                    throw CreateJsonFormatException(
+                        eventIndex,
+                        $"Long Scratch {side} is already open.");
+                }
+
+                openLongScratches[scratchIndex] = true;
+                break;
+            case ScratchPointType.Mid:
+                if (!openLongScratches[scratchIndex])
+                {
+                    throw CreateJsonFormatException(
+                        eventIndex,
+                        $"Long Scratch {side} Mid has no Start.");
+                }
+
+                break;
+            case ScratchPointType.End:
+                if (!openLongScratches[scratchIndex])
+                {
+                    throw CreateJsonFormatException(
+                        eventIndex,
+                        $"Long Scratch {side} End has no Start.");
+                }
+
+                openLongScratches[scratchIndex] = false;
+                break;
+            default:
+                throw CreateJsonFormatException(
+                    eventIndex,
+                    $"Long Scratch {side} requires Start, Mid, or End.");
+        }
+    }
+
+    private static void ParseJsonAirNotes(
+        JsonAirNote[] notes,
+        ChartHolder holder,
+        int eventIndex)
+    {
+        notes ??= Array.Empty<JsonAirNote>();
+
+        for (int noteIndex = 0; noteIndex < notes.Length; noteIndex++)
+        {
+            JsonAirNote note = notes[noteIndex];
+
+            if (note == null ||
+                note.line < 1 ||
+                note.line > ChartHolder.AirNoteCount ||
+                note.value < 1 ||
+                note.value > 99)
+            {
+                throw CreateJsonFormatException(
+                    eventIndex,
+                    $"Air note {noteIndex} requires line 1-4 and value 1-99.");
+            }
+
+            int airIndex = note.line - 1;
+
+            if (holder.airNoteValues[airIndex] != 0)
+            {
+                throw CreateJsonFormatException(
+                    eventIndex,
+                    $"Air line {note.line} contains duplicate notes.");
+            }
+
+            holder.airNoteValues[airIndex] = note.value;
+        }
+    }
+
+    private static void ParseJsonEvents(
+        JsonChartEvent source,
+        ChartHolder holder,
+        int eventIndex)
+    {
+        if (source.bpmChange != null && source.bpmChange.enabled)
+        {
+            double bpm = source.bpmChange.bpm;
+
+            if (!IsFinite(bpm) ||
+                bpm <= 0d ||
+                bpm > float.MaxValue)
+            {
+                throw CreateJsonFormatException(
+                    eventIndex,
+                    $"BPM must be positive and finite: {bpm}.");
+            }
+
+            holder.targetBpm = (float)bpm;
+        }
+
+        if (source.lineSpeedChange != null &&
+            source.lineSpeedChange.enabled)
+        {
+            double multiplier = source.lineSpeedChange.multiplier;
+
+            if (!IsFinite(multiplier) ||
+                multiplier <= 0d ||
+                multiplier > float.MaxValue)
+            {
+                throw CreateJsonFormatException(
+                    eventIndex,
+                    $"Line Speed must be positive and finite: " +
+                    $"{multiplier}.");
+            }
+
+            holder.hasLineSpeedChange = true;
+            holder.targetLineSpeed = (float)multiplier;
+        }
+
+        holder.isEffect = source.effect;
+
+        if (source.camera == null || !source.camera.enabled)
+        {
+            return;
+        }
+
+        if (!IsFinite(source.camera.offsetX) ||
+            source.camera.offsetX < -float.MaxValue ||
+            source.camera.offsetX > float.MaxValue ||
+            !TryParseDefinedEnum(
+                source.camera.spin,
+                out ChartCameraSpinDirection spinDirection))
+        {
+            throw CreateJsonFormatException(
+                eventIndex,
+                "Camera requires a finite offsetX and spin None, Left, or Right.");
+        }
+
+        holder.isCameraMove = true;
+        holder.cameraOffsetX = (float)source.camera.offsetX;
+        holder.cameraSpinDirection = spinDirection;
+    }
+
+    private static bool StartsWithJsonObject(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (!char.IsWhiteSpace(text[i]))
+            {
+                return text[i] == '{';
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryParseDefinedEnum<T>(
+        string text,
+        out T value)
+        where T : struct, Enum
+    {
+        value = default;
+
+        if (string.IsNullOrWhiteSpace(text) ||
+            !Enum.TryParse(text, true, out value) ||
+            !Enum.IsDefined(typeof(T), value))
+        {
+            return false;
+        }
+
+        string definedName = Enum.GetName(typeof(T), value);
+        return string.Equals(
+            text,
+            definedName,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void EnsureNoOpenLongTaps(
+        bool[] openLongTaps,
+        string context)
+    {
+        for (int index = 0; index < openLongTaps.Length; index++)
+        {
+            if (openLongTaps[index])
+            {
+                throw new FormatException(
+                    $"{context}: Long Tap in line {index + 1} has no End.");
+            }
+        }
+    }
+
+    private static void EnsureNoOpenLongScratches(
+        bool[] openLongScratches,
+        string context)
+    {
+        for (int index = 0; index < openLongScratches.Length; index++)
+        {
+            if (openLongScratches[index])
+            {
+                string side = index == 0 ? "Left" : "Right";
+                throw new FormatException(
+                    $"{context}: Long Scratch {side} has no End.");
+            }
+        }
+    }
+
+    private static FormatException CreateJsonFormatException(
+        int eventIndex,
+        string message)
+    {
+        return new FormatException(
+            $"Chart JSON event {eventIndex}: {message}");
+    }
+
     private static void AppendMetadata(
         StringBuilder output,
         double baseBpm,
@@ -315,7 +1176,7 @@ public static class ChartFileCodec
     {
         output.Append(FormatHeader);
         output.Append('|');
-        output.Append(CurrentFormatVersion.ToString(Invariant));
+        output.Append(LegacyNativeFormatVersion.ToString(Invariant));
         output.Append('\n');
         output.Append(BpmHeader);
         output.Append('|');
@@ -360,7 +1221,7 @@ public static class ChartFileCodec
                         Invariant,
                         out formatVersion) ||
                     formatVersion < 1 ||
-                    formatVersion > CurrentFormatVersion)
+                    formatVersion > LegacyNativeFormatVersion)
                 {
                     throw CreateFormatException(
                         lineNumber,
@@ -487,6 +1348,7 @@ public static class ChartFileCodec
                 ScratchMotionType.None => 'N',
                 ScratchMotionType.Gradual => 'G',
                 ScratchMotionType.Instant => 'I',
+                ScratchMotionType.Release => 'R',
                 _ => throw new InvalidOperationException(
                     $"Scratch line {scratchIndex + 1} has an unsupported " +
                     $"motion type: {motion.MotionType}.")
@@ -626,6 +1488,7 @@ public static class ChartFileCodec
                 'N' => ScratchMotionType.None,
                 'G' => ScratchMotionType.Gradual,
                 'I' => ScratchMotionType.Instant,
+                'R' => ScratchMotionType.Release,
                 _ => throw CreateFormatException(
                     lineNumber,
                     $"Invalid motion type '{token[0]}' in scratch line " +
@@ -670,6 +1533,17 @@ public static class ChartFileCodec
                     pointType,
                     lineNumber);
                 holder.noteTypes[index] = NoteType.LongScratch;
+            }
+
+            if (motionType == ScratchMotionType.Release &&
+                !ScratchMotionRules.IsReleaseAllowed(
+                    holder.noteTypes[index],
+                    pointType))
+            {
+                throw CreateFormatException(
+                    lineNumber,
+                    $"Scratch Release is only valid on Long Scratch Mid " +
+                    $"or End points on scratch line {scratchIndex + 1}.");
             }
 
             holder.scratchPointTypes[scratchIndex] = pointType;
@@ -1354,4 +2228,111 @@ public static class ChartFileCodec
     {
         return !double.IsNaN(value) && !double.IsInfinity(value);
     }
+
+    [Serializable]
+    private sealed class JsonChartHeader
+    {
+        public string format = null;
+        public int formatVersion = 0;
+    }
+
+    [Serializable]
+    #pragma warning disable CS0649 // JsonUtility populates legacy v6 DTO fields.
+    private sealed class JsonChartDocument
+    {
+        public string format;
+        public int formatVersion;
+        public double baseBpm;
+        public double musicStartCorrectionMs;
+        public JsonChartEvent[] events;
+    }
+
+    [Serializable]
+    private sealed class JsonCompactChartDocument
+    {
+        public string format;
+        public int formatVersion;
+        public double baseBpm;
+        public double musicStartCorrectionMs;
+        public string[] events;
+        public string musicId;
+        public string difficultyId;
+        public string gimmickId;
+        public string revision;
+        public bool hasEffectParameters;
+        public JsonEffectDefinition[] effectDefinitions;
+    }
+
+    [Serializable]
+    private sealed class JsonEffectDefinition
+    {
+        public int position;
+        public string effectId;
+        public string effectTypeId;
+        public string commandId;
+        public int order;
+    }
+
+    [Serializable]
+    private sealed class JsonChartEvent
+    {
+        public int measure;
+        public int position;
+        public JsonMainNote[] mainNotes;
+        public JsonScratchNote[] scratchNotes;
+        public JsonAirNote[] airNotes;
+        public JsonBpmChange bpmChange;
+        public JsonLineSpeedChange lineSpeedChange;
+        public bool effect;
+        public JsonCameraEvent camera;
+    }
+
+    [Serializable]
+    private sealed class JsonMainNote
+    {
+        public int line;
+        public string type;
+        public string hand;
+        public string point;
+    }
+
+    [Serializable]
+    private sealed class JsonScratchNote
+    {
+        public string side;
+        public string type;
+        public string point;
+        public string motion;
+        public int amount;
+    }
+
+    [Serializable]
+    private sealed class JsonAirNote
+    {
+        public int line;
+        public int value;
+    }
+
+    [Serializable]
+    private sealed class JsonBpmChange
+    {
+        public bool enabled;
+        public double bpm;
+    }
+
+    [Serializable]
+    private sealed class JsonLineSpeedChange
+    {
+        public bool enabled;
+        public double multiplier;
+    }
+
+    [Serializable]
+    private sealed class JsonCameraEvent
+    {
+        public bool enabled;
+        public double offsetX;
+        public string spin;
+    }
+    #pragma warning restore CS0649
 }

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System;
 using REmind.Charting;
 using REmind.Common.UI;
 using REmind.Data;
@@ -25,6 +26,9 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
     private ScratchMotionPath motionPath = ScratchMotionPath.Empty;
     private PlayableChartSnapshot sessionSnapshot;
     private PlayableChartSnapshot displaySnapshot;
+    private float displayScale = 1f;
+
+    public float DisplayScale => displayScale;
 
     private void OnEnable()
     {
@@ -70,9 +74,9 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
 
         float previewEndY = Mathf.Max(
             0f,
-            sourceGraphic.GetPoint(1).y);
+            sourceGraphic.GetPoint(1).y * displayScale);
         float previewStartY = Mathf.Clamp(
-            sourceGraphic.GetPoint(0).y,
+            sourceGraphic.GetPoint(0).y * displayScale,
             0f,
             previewEndY);
         CollectSegmentBoundaries(previewStartY, previewEndY);
@@ -96,6 +100,29 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
     public void SetSessionSnapshot(PlayableChartSnapshot snapshot)
     {
         sessionSnapshot = snapshot;
+        Rebuild();
+    }
+
+    /// <summary>
+    /// Preview 배속을 Transform Scale이 아닌 좌표와 경로 길이에 적용합니다.
+    /// 노트 및 라인의 두께와 프리팹 Scale은 변경되지 않습니다.
+    /// </summary>
+    public void SetDisplayScale(float scale)
+    {
+        if (float.IsNaN(scale) || float.IsInfinity(scale) || scale <= 0f)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(scale),
+                scale,
+                "Preview display scale must be finite and greater than zero.");
+        }
+
+        if (Mathf.Approximately(displayScale, scale))
+        {
+            return;
+        }
+
+        displayScale = scale;
         Rebuild();
     }
 
@@ -186,6 +213,13 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
             else
             {
                 pendingLongPoint = null;
+
+                if (pointType == ScratchPointType.End &&
+                    holder.GetScratchMotion(line).MotionType ==
+                    ScratchMotionType.Release)
+                {
+                    AddMotionEffect(holder, holder, line);
+                }
             }
         }
 
@@ -218,10 +252,17 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
         }
 
         float direction = GetDisplayedScratchDirection(line);
+        float startY = GetDisplayY(startHolder);
+        float endY = ScratchMotionRules.UsesInstantTransition(
+                motion.MotionType)
+            ? GetInstantMotionEndDisplayY(startHolder)
+            : GetDisplayY(endHolder);
         motionEffects.Add(new ScratchMotionEffect(
-            GetDisplayY(startHolder),
-            GetDisplayY(endHolder),
+            startY,
+            endY,
             direction *
+                ScratchMotionRules.GetHorizontalDirectionMultiplier(
+                    motion.MotionType) *
                 ScratchMotionRules.MoveAmountToHorizontalUnits(
                     motion.MoveAmount),
             motion.MotionType));
@@ -295,7 +336,7 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
         }
 
         float centerX = EvaluateCenterX(
-            positionY,
+            positionY * displayScale,
             includeInstantAtPosition: true);
         return previewLineField.TransformVector(
             new Vector3(centerX, 0f, 0f));
@@ -308,8 +349,52 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
     public float EvaluateCenterOffsetX(float positionY)
     {
         return EvaluateCenterX(
-            positionY,
+            positionY * displayScale,
             includeInstantAtPosition: true);
+    }
+
+    /// <summary>
+    /// 일반 편집 Preview의 현재 채보 Y를 공용 Snapshot 시간으로 변환하여
+    /// Camera Note 상태를 평가합니다.
+    /// </summary>
+    public bool TryEvaluateCameraMotionAtChartY(
+        float chartY,
+        out CameraMotionState cameraState,
+        out float scratchTiltDegrees)
+    {
+        cameraState = default;
+        scratchTiltDegrees = 0f;
+
+        if (displaySnapshot == null ||
+            float.IsNaN(chartY) ||
+            float.IsInfinity(chartY))
+        {
+            return false;
+        }
+
+        int absolutePosition = Mathf.Clamp(
+            ChartHolder.WorldYToAbsolutePosition(Mathf.Max(0f, chartY)),
+            0,
+            ChartHolder.MaximumAbsolutePosition);
+        double chartTimeMs = displaySnapshot.TimingMap.TimeAtPosition(
+            absolutePosition);
+        cameraState = displaySnapshot.CameraMotionMap.EvaluateAtTime(
+            chartTimeMs);
+        scratchTiltDegrees = (float)displaySnapshot.ScratchCameraTiltMap
+            .EvaluateAtTime(chartTimeMs);
+        return true;
+    }
+
+    /// <summary>
+    /// Camera Note가 기록한 FloorPosition의 라인 중심과 OffsetX를 합칩니다.
+    /// </summary>
+    public float EvaluateCameraReferenceX(CameraMotionState cameraState)
+    {
+        return cameraState.HasReference
+            ? EvaluateCenterOffsetX(
+                  (float)cameraState.ReferenceFloorPosition) +
+              (float)cameraState.ReferenceOffsetX
+            : 0f;
     }
 
     private void ApplyPreviewNoteOffsets()
@@ -603,7 +688,6 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
         {
             ScratchMotionEffect effect = effects[i];
             bool isInstant =
-                effect.MotionType == ScratchMotionType.Instant ||
                 effect.EndPosition <= effect.StartPosition;
 
             if (isInstant && Mathf.Approximately(
@@ -659,11 +743,29 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
 
     private float GetDisplayY(ChartHolder holder)
     {
-        return displaySnapshot != null
+        return GetDisplayYAtChartPosition(holder.AbsoluteChartPosition);
+    }
+
+    private float GetInstantMotionEndDisplayY(ChartHolder holder)
+    {
+        int transitionUnits =
+            ChartHolder.PositionUnitsPerMeasure /
+            ScratchMotionRules.InstantTransitionDivisionsPerMeasure;
+        int endPosition = Mathf.Min(
+            holder.AbsoluteChartPosition + transitionUnits,
+            ChartHolder.MaximumAbsolutePosition);
+        return GetDisplayYAtChartPosition(endPosition);
+    }
+
+    private float GetDisplayYAtChartPosition(int absoluteChartPosition)
+    {
+        float rawDisplayY = displaySnapshot != null
             ? (float)displaySnapshot.ScrollMap
                 .FloorPositionAtChartPosition(
-                    holder.AbsoluteChartPosition)
-            : holder.WorldY;
+                    absoluteChartPosition)
+            : ChartHolder.AbsolutePositionToWorldY(
+                absoluteChartPosition);
+        return rawDisplayY * displayScale;
     }
 
     private void AddSegment(

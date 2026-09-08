@@ -19,25 +19,35 @@ public enum ChartToolType
     Eraser = 6
 }
 
+public enum ChartToolShortcut
+{
+    Tap = 0,
+    Scratch = 1,
+    Eraser = 2,
+    Air = 3,
+    Specials = 4
+}
+
 [DisallowMultipleComponent]
 public sealed class ChartMakerInputRouter : MonoBehaviour
 {
     private const string ActionMapName = "ChartMaker";
 
-    private static readonly ToolBinding[] ToolBindings =
+    private static readonly ShortcutBinding[] ShortcutBindings =
     {
-        new ToolBinding("SelectSingleTap", ChartToolType.SingleTap),
-        new ToolBinding("SelectLongTap", ChartToolType.LongTap),
-        new ToolBinding("SelectSingleSCT", ChartToolType.SingleScratch),
-        new ToolBinding("SelectLongSCT", ChartToolType.LongScratch),
-        new ToolBinding("SelectSingleAir", ChartToolType.SingleAir),
-        new ToolBinding("SelectEraser", ChartToolType.Eraser)
+        new ShortcutBinding("SelectTap", ChartToolShortcut.Tap),
+        new ShortcutBinding("SelectScratch", ChartToolShortcut.Scratch),
+        new ShortcutBinding("SelectEraser", ChartToolShortcut.Eraser),
+        new ShortcutBinding("SelectAir", ChartToolShortcut.Air),
+        new ShortcutBinding("SelectSpecial", ChartToolShortcut.Specials)
     };
 
     [SerializeField] private InputActionAsset inputActions;
 
-    private readonly Dictionary<InputAction, ChartToolType> toolByAction =
-        new Dictionary<InputAction, ChartToolType>(ToolBindings.Length);
+    private readonly Dictionary<InputAction, ChartToolShortcut>
+        shortcutByAction =
+            new Dictionary<InputAction, ChartToolShortcut>(
+                ShortcutBindings.Length);
 
     private InputActionMap actionMap;
     private InputAction cancelAction;
@@ -53,24 +63,27 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
     private InputAction openChartAction;
     private InputAction openMusicAction;
     private bool isBound;
+    private bool editingEnabled = true;
 
     public event Action<ChartToolType> ToolSelected;
+    public event Action<ChartToolShortcut> ToolShortcutRequested;
     public event Action CancelRequested;
     public event Action DeleteRequested;
     public event Action SaveRequested;
     public event Action UndoRequested;
     public event Action RedoRequested;
     /// <summary>
-    /// 선택된 Tap 계열 편집을 요청합니다. true이면 Tap/Long Tap 종류를,
-    /// false이면 왼손/오른손을 전환합니다.
+    /// 선택된 Tap/Scratch 계열 편집을 요청합니다. true이면 일반/Long 종류를,
+    /// false이면 Tap 손 방향 또는 Scratch Powered 상태를 전환합니다.
     /// </summary>
-    public event Action<bool> EditSelectedTapRequested;
+    public event Action<bool> EditSelectedNoteRequested;
     public event Action<Vector2Int, bool> MoveSelectionRequested;
     public event Action OpenChartRequested;
     public event Action OpenMusicRequested;
 
     public ChartToolType CurrentTool { get; private set; }
     public bool IsReady => isBound;
+    public bool EditingEnabled => editingEnabled;
 
     private void Awake()
     {
@@ -116,8 +129,31 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
     /// <summary>키보드와 UI 버튼이 공유하는 현재 편집 도구를 선택합니다.</summary>
     public void SelectTool(ChartToolType toolType)
     {
+        if (!editingEnabled && toolType != ChartToolType.None)
+        {
+            return;
+        }
+
         CurrentTool = toolType;
         ToolSelected?.Invoke(CurrentTool);
+    }
+
+    /// <summary>
+    /// Preview owns an immutable chart snapshot. Disable every editing shortcut
+    /// and clear the active tool while that snapshot is running.
+    /// </summary>
+    public void SetEditingEnabled(bool value)
+    {
+        if (editingEnabled == value)
+        {
+            return;
+        }
+
+        editingEnabled = value;
+        if (!editingEnabled)
+        {
+            CancelTool();
+        }
     }
 
     public void SelectSingleTap()
@@ -182,9 +218,9 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
             return false;
         }
 
-        for (int i = 0; i < ToolBindings.Length; i++)
+        for (int i = 0; i < ShortcutBindings.Length; i++)
         {
-            ToolBinding binding = ToolBindings[i];
+            ShortcutBinding binding = ShortcutBindings[i];
             InputAction action = actionMap.FindAction(binding.ActionName, false);
 
             if (action == null)
@@ -192,8 +228,8 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
                 return FailBinding(binding.ActionName);
             }
 
-            toolByAction.Add(action, binding.ToolType);
-            action.performed += HandleToolPerformed;
+            shortcutByAction.Add(action, binding.Shortcut);
+            action.performed += HandleShortcutPerformed;
         }
 
         cancelAction = FindAction("Cancel");
@@ -267,12 +303,13 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
 
     private void UnbindActions()
     {
-        foreach (KeyValuePair<InputAction, ChartToolType> pair in toolByAction)
+        foreach (KeyValuePair<InputAction, ChartToolShortcut> pair in
+                 shortcutByAction)
         {
-            pair.Key.performed -= HandleToolPerformed;
+            pair.Key.performed -= HandleShortcutPerformed;
         }
 
-        toolByAction.Clear();
+        shortcutByAction.Clear();
         Unsubscribe(cancelAction, HandleCancelPerformed);
         Unsubscribe(deleteAction, HandleDeletePerformed);
         Unsubscribe(saveAction, HandleSavePerformed);
@@ -306,15 +343,17 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
         isBound = false;
     }
 
-    private void HandleToolPerformed(InputAction.CallbackContext context)
+    private void HandleShortcutPerformed(InputAction.CallbackContext context)
     {
-        if (IsEditingText() ||
-            !toolByAction.TryGetValue(context.action, out ChartToolType tool))
+        if (!editingEnabled || IsEditingText() ||
+            !shortcutByAction.TryGetValue(
+                context.action,
+                out ChartToolShortcut shortcut))
         {
             return;
         }
 
-        SelectTool(tool);
+        ToolShortcutRequested?.Invoke(shortcut);
     }
 
     private void HandleCancelPerformed(InputAction.CallbackContext _)
@@ -327,7 +366,7 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
 
     private void HandleDeletePerformed(InputAction.CallbackContext _)
     {
-        if (!IsEditingText())
+        if (editingEnabled && !IsEditingText())
         {
             DeleteRequested?.Invoke();
         }
@@ -335,7 +374,7 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
 
     private void HandleSavePerformed(InputAction.CallbackContext _)
     {
-        if (!PopupContext.HasOpenPopup)
+        if (editingEnabled && !PopupContext.HasOpenPopup)
         {
             SaveRequested?.Invoke();
         }
@@ -344,7 +383,8 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
     private void HandleUndoPerformed(InputAction.CallbackContext _)
     {
         // Ctrl+Shift+Z also satisfies Ctrl+Z unless shortcut consumption is enabled.
-        if (!IsEditingText() && Keyboard.current?.shiftKey.isPressed != true)
+        if (editingEnabled && !IsEditingText() &&
+            Keyboard.current?.shiftKey.isPressed != true)
         {
             UndoRequested?.Invoke();
         }
@@ -352,7 +392,7 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
 
     private void HandleRedoPerformed(InputAction.CallbackContext _)
     {
-        if (!IsEditingText())
+        if (editingEnabled && !IsEditingText())
         {
             RedoRequested?.Invoke();
         }
@@ -360,11 +400,11 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
 
     private void HandleEditSelectedTapPerformed(InputAction.CallbackContext _)
     {
-        if (!IsEditingText())
+        if (editingEnabled && !IsEditingText())
         {
             bool toggleLongType =
                 Keyboard.current?.shiftKey.isPressed == true;
-            EditSelectedTapRequested?.Invoke(toggleLongType);
+            EditSelectedNoteRequested?.Invoke(toggleLongType);
         }
     }
 
@@ -390,7 +430,7 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
 
     private void RequestSelectionMove(Vector2Int direction)
     {
-        if (IsEditingText())
+        if (!editingEnabled || IsEditingText())
         {
             return;
         }
@@ -403,7 +443,7 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
     private void HandleOpenChartPerformed(InputAction.CallbackContext _)
     {
         // Ctrl+Shift+O also satisfies the Ctrl+O composite.
-        if (!PopupContext.HasOpenPopup &&
+        if (editingEnabled && !PopupContext.HasOpenPopup &&
             Keyboard.current?.shiftKey.isPressed != true)
         {
             OpenChartRequested?.Invoke();
@@ -412,7 +452,7 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
 
     private void HandleOpenMusicPerformed(InputAction.CallbackContext _)
     {
-        if (!PopupContext.HasOpenPopup)
+        if (editingEnabled && !PopupContext.HasOpenPopup)
         {
             OpenMusicRequested?.Invoke();
         }
@@ -471,15 +511,17 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
         }
     }
 
-    private readonly struct ToolBinding
+    private readonly struct ShortcutBinding
     {
         public string ActionName { get; }
-        public ChartToolType ToolType { get; }
+        public ChartToolShortcut Shortcut { get; }
 
-        public ToolBinding(string actionName, ChartToolType toolType)
+        public ShortcutBinding(
+            string actionName,
+            ChartToolShortcut shortcut)
         {
             ActionName = actionName;
-            ToolType = toolType;
+            Shortcut = shortcut;
         }
     }
 }

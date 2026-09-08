@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using REmind.Charting;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
@@ -15,6 +16,7 @@ public sealed class ChartScroll : MonoBehaviour
     /// </summary>
     public static float PreviewCameraRotationReferenceX;
     public static float PreviewCameraSpinDegrees;
+    public static float PreviewCameraScratchTiltDegrees;
 
     [SerializeField] private RectTransform scrollTrans;
     [SerializeField, Min(1f)] private float scrollPower = 40f;
@@ -29,7 +31,17 @@ public sealed class ChartScroll : MonoBehaviour
 
     [Header("Preview Camera Line Following")]
     [SerializeField] private ChartPreviewFloorRenderer previewFloorRenderer;
+    [SerializeField]
+    private bool previewCameraUseOnlyPoweredKickX;
     [SerializeField] private float previewCameraTiltDegreesPerXUnit = 0.6f;
+    [SerializeField, Min(0f)]
+    private float previewCameraSpinCounterMoveX = 3.5f;
+    [SerializeField, Min(0f)]
+    private float previewCameraReferenceTiltCounterMoveX = 2f;
+    [SerializeField, Min(0f)]
+    private float previewCameraPoweredKickMaxX = 7.5f;
+    [SerializeField, Min(0f)]
+    private float previewCameraPoweredYawMaxDegrees = 2.5f;
 
     [Header("Vertical Zoom")]
     [SerializeField, Min(0.1f)] private float minimumVerticalZoom = 0.5f;
@@ -56,6 +68,18 @@ public sealed class ChartScroll : MonoBehaviour
     private bool cameraScrollingReady;
     private float previewHighSpeedScale = 1f;
     private Vector3 previewCameraLineLocalOffset;
+    private float previewCameraPoweredKickLocalX;
+    private float previewCameraPoweredYawDegrees;
+    private Vector2 effectCameraOffset;
+    private float effectCameraRollDegrees;
+
+    public void SetEffectCameraOffset(Vector2 offset, float rollDegrees)
+    {
+        effectCameraOffset = offset;
+        effectCameraRollDegrees = rollDegrees;
+        if (cameraScrollingReady && previewCameraTransform && guideGenerate)
+            ApplyPreviewCameraPosition(-ScrollY);
+    }
     private Vector3 contentBaseScale;
     private float verticalZoom = 1f;
 
@@ -78,6 +102,7 @@ public sealed class ChartScroll : MonoBehaviour
     {
         PreviewCameraRotationReferenceX = 0f;
         PreviewCameraSpinDegrees = 0f;
+        PreviewCameraScratchTiltDegrees = 0f;
     }
 
     private void Awake()
@@ -273,6 +298,7 @@ public sealed class ChartScroll : MonoBehaviour
         }
 
         previewHighSpeedScale = scale;
+        previewFloorRenderer?.SetDisplayScale(scale);
 
         if (cameraScrollingReady)
         {
@@ -755,28 +781,122 @@ public sealed class ChartScroll : MonoBehaviour
         }
 
         float chartY = -ScrollY * guideGenerate.ScrollToChartRatio;
-        Vector3 worldLineOffset =
-            previewFloorRenderer.EvaluateWorldCenterOffset(chartY);
-        previewCameraLineLocalOffset = previewCameraTransform.parent
-            ? previewCameraTransform.parent.InverseTransformVector(
-                worldLineOffset)
-            : worldLineOffset;
+
+        if (!externalTimelineControl)
+        {
+            UpdateEditorPreviewCameraMotion(chartY);
+        }
+
+        if (previewCameraUseOnlyPoweredKickX)
+        {
+            previewCameraLineLocalOffset = Vector3.zero;
+        }
+        else
+        {
+            Vector3 worldLineOffset =
+                previewFloorRenderer.EvaluateWorldCenterOffset(chartY);
+            previewCameraLineLocalOffset = previewCameraTransform.parent
+                ? previewCameraTransform.parent.InverseTransformVector(
+                    worldLineOffset)
+                : worldLineOffset;
+        }
+
+        UpdatePreviewCameraPoweredKickX();
         ApplyPreviewCameraPosition(-ScrollY);
+    }
+
+    private void UpdateEditorPreviewCameraMotion(float chartY)
+    {
+        if (!previewFloorRenderer.TryEvaluateCameraMotionAtChartY(
+                chartY,
+                out CameraMotionState cameraState,
+                out float scratchTiltDegrees))
+        {
+            PreviewCameraRotationReferenceX = 0f;
+            PreviewCameraSpinDegrees = 0f;
+            PreviewCameraScratchTiltDegrees = 0f;
+            return;
+        }
+
+        PreviewCameraRotationReferenceX =
+            previewFloorRenderer.EvaluateCameraReferenceX(cameraState);
+        PreviewCameraSpinDegrees = (float)cameraState.SpinDegrees;
+        PreviewCameraScratchTiltDegrees = scratchTiltDegrees;
     }
 
     private void ApplyPreviewCameraPosition(float viewportOffsetY)
     {
+        Vector3 nonPoweredHorizontalOffset =
+            previewCameraUseOnlyPoweredKickX
+                ? Vector3.zero
+                : previewCameraLineLocalOffset +
+                  Vector3.right * GetPreviewCameraRotationCounterMoveX();
+
+        // 확인 모드에서는 Line 및 다른 회전의 X 보정을 제외합니다.
         previewCameraTransform.localPosition =
             previewCameraBaseLocalPosition +
             Vector3.forward * GetPreviewCameraZOffset(viewportOffsetY) +
-            previewCameraLineLocalOffset;
+            nonPoweredHorizontalOffset;
+
+        // Powered Scratch의 카메라 킥은 Line 추적에 섞이지 않도록 마지막에
+        // 독립 변수로 더합니다.
+        Vector3 kickedLocalPosition = previewCameraTransform.localPosition;
+        kickedLocalPosition.x += previewCameraPoweredKickLocalX;
+        kickedLocalPosition += new Vector3(effectCameraOffset.x, effectCameraOffset.y, 0f);
+        previewCameraTransform.localPosition = kickedLocalPosition;
+
         float tiltDegrees =
             -PreviewCameraRotationReferenceX *
             previewCameraTiltDegreesPerXUnit +
-            PreviewCameraSpinDegrees;
+            PreviewCameraSpinDegrees +
+            PreviewCameraScratchTiltDegrees + effectCameraRollDegrees;
         previewCameraTransform.localRotation =
             previewCameraBaseLocalRotation *
-            Quaternion.Euler(0f, 0f, tiltDegrees);
+            Quaternion.Euler(
+                0f,
+                previewCameraPoweredYawDegrees,
+                tiltDegrees);
+    }
+
+    /// <summary>
+    /// Left 회전은 Right(+X), Right 회전은 Left(-X)로 이동시켜 회전감을
+    /// 강조합니다. 360도 Spin은 시작과 끝에서 0, 중간에서 최대가 됩니다.
+    /// Camera Note 기준 기울기를 사용합니다. Powered Scratch의 X 이동은 Line
+    /// 추적 뒤에 별도 변수로 적용합니다.
+    /// </summary>
+    private float GetPreviewCameraRotationCounterMoveX()
+    {
+        float spinProgress = Mathf.Clamp01(
+            Mathf.Abs(PreviewCameraSpinDegrees) / 360f);
+        float spinEnvelope = Mathf.Sin(spinProgress * Mathf.PI);
+        float spinOffsetX = Mathf.Sign(PreviewCameraSpinDegrees) *
+            spinEnvelope *
+            previewCameraSpinCounterMoveX;
+        float referenceTiltDegrees =
+            -PreviewCameraRotationReferenceX *
+            previewCameraTiltDegreesPerXUnit;
+        float referenceTiltProgress = Mathf.Clamp(
+            referenceTiltDegrees /
+            (float)ScratchCameraTiltMap.PeakTiltDegrees,
+            -1f,
+            1f);
+        float referenceTiltOffsetX = referenceTiltProgress *
+            previewCameraReferenceTiltCounterMoveX;
+        return spinOffsetX + referenceTiltOffsetX;
+    }
+
+    private void UpdatePreviewCameraPoweredKickX()
+    {
+        // Powered Scratch의 200ms Z 롤을 독립된 X 카메라 킥으로 변환합니다.
+        float poweredTiltProgress = Mathf.Clamp(
+            PreviewCameraScratchTiltDegrees /
+            (float)ScratchCameraTiltMap.PeakTiltDegrees,
+            -1f,
+            1f);
+        previewCameraPoweredKickLocalX =
+            poweredTiltProgress * previewCameraPoweredKickMaxX;
+        previewCameraPoweredYawDegrees =
+            -poweredTiltProgress * previewCameraPoweredYawMaxDegrees;
     }
 
     private Vector3 GetCameraWorldOffset(float viewportOffsetY)

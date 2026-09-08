@@ -215,7 +215,7 @@
             "id": "a3000000-0000-4000-8000-000000000000",
             "actions": [
                 {
-                    "name": "SelectSingleTap",
+                    "name": "SelectTap",
                     "type": "Button",
                     "id": "a3000000-0000-4000-8000-000000000001",
                     "expectedControlType": "",
@@ -224,7 +224,7 @@
                     "initialStateCheck": false
                 },
                 {
-                    "name": "SelectLongTap",
+                    "name": "SelectScratch",
                     "type": "Button",
                     "id": "a3000000-0000-4000-8000-000000000002",
                     "expectedControlType": "",
@@ -233,7 +233,7 @@
                     "initialStateCheck": false
                 },
                 {
-                    "name": "SelectSingleSCT",
+                    "name": "SelectEraser",
                     "type": "Button",
                     "id": "a3000000-0000-4000-8000-000000000003",
                     "expectedControlType": "",
@@ -242,7 +242,7 @@
                     "initialStateCheck": false
                 },
                 {
-                    "name": "SelectLongSCT",
+                    "name": "SelectAir",
                     "type": "Button",
                     "id": "a3000000-0000-4000-8000-000000000004",
                     "expectedControlType": "",
@@ -251,18 +251,9 @@
                     "initialStateCheck": false
                 },
                 {
-                    "name": "SelectSingleAir",
+                    "name": "SelectSpecial",
                     "type": "Button",
                     "id": "a3000000-0000-4000-8000-000000000005",
-                    "expectedControlType": "Button",
-                    "processors": "",
-                    "interactions": "",
-                    "initialStateCheck": false
-                },
-                {
-                    "name": "SelectEraser",
-                    "type": "Button",
-                    "id": "a3000000-0000-4000-8000-000000000006",
                     "expectedControlType": "Button",
                     "processors": "",
                     "interactions": "",
@@ -385,7 +376,7 @@
                     "interactions": "",
                     "processors": "",
                     "groups": "Keyboard&Mouse",
-                    "action": "SelectSingleTap",
+                    "action": "SelectTap",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
@@ -396,51 +387,40 @@
                     "interactions": "",
                     "processors": "",
                     "groups": "Keyboard&Mouse",
-                    "action": "SelectLongTap",
+                    "action": "SelectScratch",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
                 {
                     "name": "",
                     "id": "b3000000-0000-4000-8000-000000000003",
-                    "path": "<Keyboard>/1",
+                    "path": "<Keyboard>/e",
                     "interactions": "",
                     "processors": "",
                     "groups": "Keyboard&Mouse",
-                    "action": "SelectSingleSCT",
+                    "action": "SelectEraser",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
                 {
                     "name": "",
                     "id": "b3000000-0000-4000-8000-000000000004",
-                    "path": "<Keyboard>/2",
+                    "path": "<Keyboard>/r",
                     "interactions": "",
                     "processors": "",
                     "groups": "Keyboard&Mouse",
-                    "action": "SelectLongSCT",
+                    "action": "SelectAir",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
                 {
                     "name": "",
                     "id": "b3000000-0000-4000-8000-000000000005",
-                    "path": "<Keyboard>/3",
+                    "path": "<Keyboard>/t",
                     "interactions": "",
                     "processors": "",
                     "groups": "Keyboard&Mouse",
-                    "action": "SelectSingleAir",
-                    "isComposite": false,
-                    "isPartOfComposite": false
-                },
-                {
-                    "name": "",
-                    "id": "b3000000-0000-4000-8000-000000000006",
-                    "path": "<Keyboard>/e",
-                    "interactions": "",
-                    "processors": "",
-                    "groups": "Keyboard&Mouse",
-                    "action": "SelectEraser",
+                    "action": "SelectSpecial",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },

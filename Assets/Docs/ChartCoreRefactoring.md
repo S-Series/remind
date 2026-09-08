@@ -359,7 +359,7 @@ Presentation Adapter 또는 View Registry가 별도로 관리한다.
 
 - [x] `ChartHolder -> ChartDocument` 변환
 - [x] 변환 오류와 지원하지 않는 데이터 보고
-- [ ] 기존 native 저장 결과를 유지하는 회귀 테스트
+- [ ] 현재 JSON 저장 round-trip 및 legacy native 읽기 회귀 테스트
 
 완료 조건:
 

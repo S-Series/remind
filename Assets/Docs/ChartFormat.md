@@ -419,36 +419,46 @@ JSON Text
 - BPM 이벤트의 에디터 내부 tick 표현
 - JSON Schema 파일의 위치와 자동 생성 방식
 
-## 18. ChartMaker Native v6
+## 18. ChartMaker Editor JSON v7
 
-현재 ChartMaker의 native 텍스트 포맷(`#REmindChart`)은 위 JSON 초안과 별개다.
-Native 편집 데이터는 `measure|position`을 원본으로 사용한다. 테스트 플레이와
-Gameplay에 전달하기 전 공용 `ChartCompiler`가 BPM 구간마다 `StartPosition`,
-`StartTimeMs`, `Bpm`을 가진 TimingPoint를 만들고 각 노트의 최종 판정 시각을
-계산한다. 따라서 JSON의 `timeMs` 원칙은 컴파일 이후의 런타임/교환 포맷에
-적용되며 Native 편집 좌표와 충돌하지 않는다.
+ChartMaker의 기본 저장 형식은 UTF-8 JSON이며 전용 확장자는 `.rd`이다. 편집 원본은
+`measure`와 `position`을 유지하고, 테스트 플레이와 Gameplay에 전달하기 전에 공용
+`ChartCompiler`가 `ChartTime`과 `FloorPosition`을 계산한다. 반복되는 채보 본문은
+기존 Native TXT 한 줄을 그대로 JSON 문자열 배열에 담아 간결하게 유지한다.
 
-저장 시에는 항상 v6를 출력하며, 메타데이터와 채보 행은 다음 순서로 기록한다.
-
-```text
-#REmindChart|6
-#BPM|120
-#MUSIC_START_CORRECTION_MS|0
-measure|position|main notes|scratch notes|air notes|target BPM|line speed|effect|camera
+```json
+{
+  "format": "REmindChart",
+  "formatVersion": 7,
+  "baseBpm": 120.0,
+  "musicStartCorrectionMs": 0.0,
+  "events": [
+    "000|0000|LF------|--------|00000000|-1|-|F|-",
+    "000|1200|--------|----NS16|00010000|240|0.5|F|N:-5*"
+  ]
+}
 ```
 
-Line Speed 필드는 해당 Position에서 새 표시 배율을 시작한다. 이벤트가 없으면 `-`,
-있으면 `0`보다 큰 유한한 숫자를 기록한다. 예를 들어 `0.5`는 그 지점부터 같은
-BPM의 기본 표시 이동량을 절반으로 만든다. v1~v4 파일을 불러오면 Line Speed
-이벤트가 없는 것으로 변환하여 기본값 `1`을 사용한다.
+- 각 `events` 문자열의 열은
+  `measure|position|main notes|scratch notes|air notes|target BPM|line speed|effect|camera`
+  순서다.
+- 행은 `(measure, position)` 오름차순이며 같은 위치를 중복할 수 없다.
+- `position`은 한 마디 안의 `0000`~`4799` 정수다.
+- Main Note의 line은 `1`~`4`, hand는 `L` 또는 `R`이다.
+- Tap의 `point`는 `Tap`, Long Tap은 `Start`와 `End`를 순서대로 사용한다.
+- 일반 Tap과 Long Tap에는 Powered 속성이 없다.
+- Scratch side는 `Left` 또는 `Right`다. 단 Scratch는 `Tap`, Long Scratch는
+  `Start`, 0개 이상의 `Mid`, `End` 순서로 닫힌다.
+- Scratch motion은 `N`(None), `G`(Gradual), `I`(Instant), `R`(Release),
+  amount는 `00`~`99`다. `R`은 Long Scratch의 `Mid`와 `End`에만 사용할 수 있다.
+- Air Note는 Main 1~4에 대응하며 값은 `00`~`99`다.
+- 변경 없는 BPM은 `-1`, Line Speed와 Camera는 `-`, Effect는 `F`로 쓴다.
+- Camera는 `spin:offsetX`이며 spin은 `L`, `N`, `R` 중 하나다.
+- Marker가 있는 행은 별도 열을 추가하지 않고 Camera 열 뒤, 즉 문자열 마지막에
+  `*`를 하나 붙인다. Marker는 판정·스크롤·카메라에 영향을 주지 않는 위치 표식이다.
 
-Camera 필드는 이벤트가 없으면 `-`, 있으면 `[L|N|R]:offsetX`로 기록한다.
-
-```text
-N:-5   # 라인 중심 X에 -5를 더하고 추가 회전 없음
-L:0    # 라인 중심 X를 기준으로 갱신하고 왼쪽으로 360도 회전
-R:3.5  # 라인 중심 X에 3.5를 더하고 오른쪽으로 360도 회전
-```
+Line Speed는 표시 이동량만 변경하고 판정 시각은 바꾸지 않는다. 예를 들어
+`multiplier: 0.5`는 그 지점부터 같은 BPM의 기본 표시 이동량을 절반으로 만든다.
 
 Camera Note가 처리되는 순간의 기준값은 다음과 같다.
 
@@ -457,60 +467,69 @@ CameraReferenceX = LineCenterXAtEvent + OffsetX
 SpinDurationMs = 175 * 120 / EventBpm
 ```
 
-`L`은 반시계 `+360도`, `R`은 시계 `-360도`, `N`은 회전 없음이다. 회전 진행은
-EaseInOut으로 평가하며 BPM 120에서는 175ms, BPM 240에서는 87.5ms가 걸린다.
-v1~v5의 Camera `T`는 `N:0`, `F`는 이벤트 없음으로 변환한다.
+`Left`는 반시계 `+360도`, `Right`는 시계 `-360도`, `None`은 회전 없음이다.
+회전 진행은 EaseInOut으로 평가하며 BPM 120에서는 175ms, BPM 240에서는
+87.5ms가 걸린다.
 
-Main 필드는 4개 라인의 2글자 토큰을 이어 붙인 8글자다. 각 토큰은
-`[Handle][State]`이며 노트가 없는 라인은 `--`로 기록한다.
+Preview와 Test Play 카메라는 회전감을 강조하기 위해 회전 방향의 반대쪽으로 X를
+함께 보정한다. 360도 Spin은 시작과 끝에서 `0`, 회전 중간에서 최대 `3.5`만큼
+이동한다. Camera Note가 정한 기준 X의 기울기는 현재 각도에 비례하여 최대 `2`만큼
+이동한다. Preview Camera는 Line 중심을 추적하며, Powered Scratch의 X는 Line 추적
+계산 이후 독립 변수로 최대 `7.5`만큼 추가 적용한다. 오른쪽 `-10도` 롤은 카메라 `-7.5 X`, 왼쪽
+`+10도` 롤은 카메라 `+7.5 X`가 된다. Powered 롤에 비례한 Y 회전도 추가하여
+`Z +10도`에서는 `Y -2.5도`, `Z -10도`에서는 `Y +2.5도`를 적용한다.
+Z 롤이 복귀하면 X 이동도 같은 곡선으로 `0`에 복귀한다.
 
-| 위치 | 값 | 의미 |
-|---|---|---|
-| 1 | `L` / `R` | Left / Right Hand |
-| 2 | `F` / `S` / `E` | Tap / Long Tap Start / Long Tap End |
+Scratch 이동 거리는 Amount `10`당 `7.5 horizontal units`, 즉 Amount `1`당
+`0.75`다. Long Scratch의 `End`는 `None` 또는 `Release`를 사용할 수 있다. End까지
+이어지는 이동은 앞선 `Start` 또는 `Mid`의 Motion을 사용하고, End가 `Release`라면
+End부터 별도의 역방향 이동을 시작한다.
 
-- 일반 Tap과 Long Tap에는 Powered 속성이 없다.
-- 구버전의 Powered Tap 상태 `T`는 읽을 때 일반 Tap `F`로 정규화하며, 새로
-  저장할 때는 `T`를 출력하지 않는다.
-- 에디터에서 Tap 계열 노트를 선택하고 `Tab`을 누르면 Left/Right Hand가
-  전환되고, `Shift+Tab`을 누르면 Tap/Long Tap이 전환된다.
+`Instant` Scratch는 저장 타입과 판정 시각은 그대로 유지하되 화면 경로를 노트
+위치부터 `1/32마디` 동안 선형 보간한다. 현재 좌표계에서는 `150 position units`에
+해당하며, Line Speed가 적용된 Preview에서는 같은 두 ChartPosition의
+FloorPosition 구간을 사용한다.
 
-Scratch 필드는 왼쪽과 오른쪽 토큰을 이어 붙인 8글자다. 각 토큰은
-`[Motion][Point][Amount]`의 4글자이며 노트가 없는 쪽은 `----`로 기록한다.
+`Release`는 `Instant`와 같은 `1/32마디` 선형 보간을 사용하되, 지정한 Amount만큼
+반대 방향으로 이동한다. Long Scratch의 `Mid`와 `End`에만 저장할 수 있다.
 
-| 위치 | 값 | 의미 |
-|---|---|---|
-| 1 | `N` / `G` / `I` | None / Gradual / Instant |
-| 2 | `T` / `S` / `M` / `E` | Tap / Start / Mid / End |
-| 3~4 | `00`~`99` | 이동량 |
+Instant Scratch가 처리되면 카메라는 이동 방향의 반대쪽으로 최대 `10도` 기울었다가
+원래 자세로 돌아온다. 전체 지속시간은 `200 * 120 / EventBpm` 밀리초다. 처음 10%의
+시간에 EaseOut으로 빠르게 최대 각도에 도달하고, 남은 90% 동안 감쇠하며 복귀한다.
+BPM 120에서는 약 20ms에 최대 각도에 도달하고 180ms 동안 돌아온다. 좌우 Instant
+Scratch가 동시에 처리되면 서로 상쇄하고, 겹친 연출의 최종 기울기는
+`-10도`~`10도`로 제한한다. 이 연출은 표시 전용이므로 판정 시각에는 영향을 주지 않는다.
+`Release`는 같은 지속시간과 곡선을 사용하며 기울기 방향만 `Instant`의 반대로 적용한다.
 
-예시:
+Long Scratch의 `Gradual`이 시작되면 BPM과 관계없이 고정 `100ms` 동안 Linear로
+이동 방향의 반대쪽 `5도`까지 기울고, 해당 구간이 끝날 때까지 각도를 유지한다.
+다음 `Mid`의 Motion이 다시 `Gradual`이면 Attack을 재시작하지 않고 그대로 유지한다.
+`Instant`이면 그 위치부터 Instant 충격 곡선을 사용하며, `None`이면 해제를 시작한다.
+Long Scratch의 `Mid` 또는 `End`에서 `Release`를 만나면 유지 중인 Gradual 기울기를
+고정 `20ms` 동안 원래 각도로 복귀시키는 동시에 역방향 Instant 충격 곡선을 적용한다.
+End의 `None`은 Gradual 기울기만 해제한다. Gradual의 Attack과 해제도 표시 전용이며
+판정에는 영향을 주지 않는다.
 
-```text
-GS16----  # 왼쪽 Long Scratch Start, Gradual 16
-NM42----  # 왼쪽 Long Scratch Mid, 이동 없이 42 보존
-----NE08  # 오른쪽 Long Scratch End, 이동 명령 무시
-----IT10  # 오른쪽 단 Scratch Tap, Instant 10 (= 7.5 horizontal units)
-```
+에디터에서 Tap 계열 노트를 선택하고 `Tab`을 누르면 Left/Right Hand가 전환되고,
+`Shift+Tab`을 누르면 Tap/Long Tap이 전환된다.
+Scratch 계열 노트를 선택한 경우 `Tab`은 Powered를 전환하고, `Shift+Tab`은
+Scratch/Long Scratch를 전환한다. Powered를 켤 때 일반 Scratch는 `Instant`, Long
+Scratch의 Start/Mid는 `Gradual`, End는 `Release`를 기본값으로 사용한다.
 
-- `T`는 단 Scratch에만 사용한다.
-- Long Scratch는 `S`, 0개 이상의 `M`, `E` 순서로 닫혀야 한다.
-- `M`은 열린 Long Scratch 안에서만 사용할 수 있다.
-- `G`는 현재 점부터 다음 `M` 또는 `E`까지 점진적으로 이동한다.
-- `I`는 해당 점에서 즉시 이동한다.
-- 다음 구간이 없는 `T`의 이동은 즉시 적용된다.
-- Long Scratch의 `E`에 기록된 Motion은 무시하며 유효 Motion을 `N`으로
-  정규화한다. `E`까지 이어지는 이동은 앞선 `S` 또는 `M`의 Motion을 사용한다.
-- `N`은 새 이동을 적용하지 않으므로 이전 위치를 유지한다. 뒤의 숫자는 의미를
-  제한하지 않고 그대로 저장하고 다시 불러온다.
-- 이동 거리는 Amount `10`당 `7.5 horizontal units`, 즉 Amount `1`당 `0.75`다.
-- 새 Scratch 노트의 초기 Amount는 `10`이다.
-- 왼쪽 Scratch의 이동은 왼쪽, 오른쪽 Scratch의 이동은 오른쪽으로 누적된다.
-- 노트의 X 위치에는 해당 시점까지 누적된 Scratch 이동을 동일하게 적용한다.
-- 이동량 변환과 구간 보간은 Unity 오브젝트와 분리된 공용 계산기를 사용하며,
-  ChartMaker Preview와 실제 게임은 같은 규칙을 사용한다.
-- 기존 Scratch 단노트 상태 문자 `F`는 v4에서 `T`로 바뀐다. 이 규칙은 Scratch
-  토큰에만 적용된다.
+노트 배치 도구 단축키는 `Q` Tap, `W` Scratch, `E` Eraser, `R` Air,
+`T` Specials다. Tap 또는 Scratch 도구가 활성화된 상태에서 같은 단축키를 다시
+누르면 일반형과 Long형을 전환한다. Specials는 `Speed`, `Effect`, `Camera`,
+`Marker` 순서로 순환한다.
+
+같은 Main 라인에 닫히지 않은 Long Tap 시작점이 있으면 일반 Tap 도구로 배치한
+다음 Tap도 그 Long Tap의 End로 처리한다. 편집 입력만 Tap 도구를 공유하며 저장
+데이터는 기존과 동일하게 `LongTap End`이므로 파일 형식과 컴파일 규칙은 바뀌지 않는다.
+마찬가지로 같은 Scratch 라인에 닫히지 않은 Long Scratch가 있으면 일반 Scratch
+도구로 배치한 다음 Scratch를 `LongScratch End`로 처리한다.
+
+Long Tap과 Long Scratch 프리팹은 일반 노트와 구분할 수 있도록 짧은 반투명 Ribbon
+Stub을 포함한다. 배치 미리보기와 아직 닫히지 않은 Start/Mid에서만 Stub을 표시하며,
+구간이 닫히면 시작점의 Stub은 실제 Ribbon으로 교체하고 End에서는 숨긴다.
 
 저장 시 닫히지 않은 Long Note는 저장을 실패시키지 않고 자동 정규화한다.
 
@@ -522,7 +541,24 @@ NM42----  # 왼쪽 Long Scratch Mid, 이동 없이 42 보존
 저장 성공 후 에디터의 데이터와 표시 오브젝트에도 같은 변환을 적용하므로 바로
 Test Play를 시작해도 저장 파일과 동일한 결과를 사용한다.
 
-### 18.1 좌표 호환성
+### 18.1 이전 형식 읽기 호환
+
+ChartMaker의 파일 열기와 최근 파일 복원은 `.rd` 확장자만 허용한다. `.json`과 `.txt`는
+선택창에 표시하지 않으며 경로가 직접 전달되어도 로드 전에 차단한다. 포맷 변환을 위한
+기존 JSON 객체형 v6, Native v1~v6, 구버전 병렬 배열 파서는 내부 호환 코드로만 유지한다.
+
+```text
+#REmindChart|6
+#BPM|120
+#MUSIC_START_CORRECTION_MS|0
+measure|position|main notes|scratch notes|air notes|target BPM|line speed|effect|camera
+```
+
+구버전 Powered Tap `T`는 일반 Tap으로 정규화한다. v1~v5 Camera `T`는
+`spin: None`, `offsetX: 0`으로 변환한다. v1~v4 파일에는 Line Speed 이벤트가
+없는 것으로 처리하여 기본 배율 `1`을 사용한다.
+
+### 18.2 좌표 호환성
 
 native 포맷 v3~v6의 위치 좌표는 다음 규칙을 사용한다.
 
@@ -540,4 +576,4 @@ native v1, v2와 버전 헤더가 없는 파일은 기존 `1600 units/measure`�
 이전 정수 좌표는 전부 손실 없이 변환되며 화면 위치와 BPM 기반 재생 시각은 변하지 않는다.
 
 레거시 `TempChartData` JSON의 `NotePos`도 기존 1600 단위로 해석한다. 이 경로는
-호환용이며, 향후 위 JSON 초안을 실제 런타임 포맷으로 확정할 때 명시적인 버전 변환을 거쳐야 한다.
+불러오기 호환용이며 저장할 때는 현재 ChartMaker Editor JSON으로 변환한다.

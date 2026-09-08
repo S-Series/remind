@@ -11,6 +11,7 @@ namespace REmind.Data
         Speed = 6,
         Effect = 7,
         Camera = 8,
+        Marker = 9,
     }
 
     public static class NoteTypeExtensions
@@ -40,7 +41,8 @@ namespace REmind.Data
         {
             return noteType == NoteType.Speed ||
                 noteType == NoteType.Effect ||
-                noteType == NoteType.Camera;
+                noteType == NoteType.Camera ||
+                noteType == NoteType.Marker;
         }
     }
 

@@ -58,7 +58,9 @@ internal static class ChartEditHistory
 
         ChartEditChange change = new ChartEditChange(
             transaction.BeforeStates,
-            CaptureStates(transaction.BeforeStates));
+            CaptureStates(transaction.BeforeStates),
+            transaction.BeforeMetadata,
+            ChartEffectDocumentState.CaptureEditable());
         PushChange(UndoChanges, change);
         RedoChanges.Clear();
     }
@@ -105,6 +107,9 @@ internal static class ChartEditHistory
         ChartEditState[] states = useBeforeState
             ? change.Before
             : change.After;
+
+        ChartEffectDocumentState.RestoreEditable(
+            useBeforeState ? change.BeforeMetadata : change.AfterMetadata);
 
         for (int i = 0; i < states.Length; i++)
         {
@@ -161,11 +166,13 @@ internal static class ChartEditHistory
     internal readonly struct ChartEditTransaction
     {
         public ChartEditState[] BeforeStates { get; }
+        public ChartEffectDocumentState.EditableMetadata BeforeMetadata { get; }
         public bool IsValid => BeforeStates != null && BeforeStates.Length > 0;
 
         public ChartEditTransaction(ChartEditState[] beforeStates)
         {
             BeforeStates = beforeStates;
+            BeforeMetadata = ChartEffectDocumentState.CaptureEditable();
         }
     }
 
@@ -173,13 +180,19 @@ internal static class ChartEditHistory
     {
         public ChartEditState[] Before { get; }
         public ChartEditState[] After { get; }
+        public ChartEffectDocumentState.EditableMetadata BeforeMetadata { get; }
+        public ChartEffectDocumentState.EditableMetadata AfterMetadata { get; }
 
         public ChartEditChange(
             ChartEditState[] before,
-            ChartEditState[] after)
+            ChartEditState[] after,
+            ChartEffectDocumentState.EditableMetadata beforeMetadata,
+            ChartEffectDocumentState.EditableMetadata afterMetadata)
         {
             Before = before;
             After = after;
+            BeforeMetadata = beforeMetadata;
+            AfterMetadata = afterMetadata;
         }
     }
 

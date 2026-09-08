@@ -24,6 +24,8 @@ public sealed class NoteLength : MonoBehaviour
     [SerializeField] private Sprite baseSprite;
     [SerializeField] private RibbonPoint[] ribbonPoints =
         Array.Empty<RibbonPoint>();
+    [Header("Editor Preview")]
+    [SerializeField] private GameObject unlinkedPreviewRibbon;
 
     private float currentLength;
     private GameObject ribbonObject;
@@ -34,6 +36,7 @@ public sealed class NoteLength : MonoBehaviour
     private Material ribbonMaterial;
     private NoteView noteView;
     private bool ribbonColliderEnabled = true;
+    private float verticalDisplayScale = 1f;
 
     /// <summary>선택한 Sprite가 차지하는 로컬 폭의 절반입니다.</summary>
     public float DefaultHalfWidth => baseSprite
@@ -50,6 +53,12 @@ public sealed class NoteLength : MonoBehaviour
         }
 
         currentLength = Mathf.Max(0f, length);
+
+        if (currentLength > Mathf.Epsilon)
+        {
+            SetUnlinkedPreviewVisible(false);
+        }
+
         RefreshRibbon();
     }
 
@@ -71,13 +80,55 @@ public sealed class NoteLength : MonoBehaviour
     {
         currentLength = Mathf.Max(0f, length);
         ribbonPoints = ClonePoints(points);
+
+        if (currentLength > Mathf.Epsilon)
+        {
+            SetUnlinkedPreviewVisible(false);
+        }
+
         RefreshRibbon();
+    }
+
+    /// <summary>
+    /// 연결 전 Long Note임을 구분하는 짧은 편집용 Ribbon Stub을 표시합니다.
+    /// 실제 길이가 존재하면 Stub 대신 생성 Ribbon을 사용합니다.
+    /// </summary>
+    public void SetUnlinkedPreviewVisible(bool visible)
+    {
+        if (unlinkedPreviewRibbon)
+        {
+            unlinkedPreviewRibbon.SetActive(
+                visible && currentLength <= Mathf.Epsilon);
+        }
     }
 
     /// <summary>런타임에서 리본 단면 배열을 교체하고 현재 길이로 다시 만듭니다.</summary>
     public void SetRibbonPoints(RibbonPoint[] points)
     {
         ribbonPoints = ClonePoints(points);
+        RefreshRibbon();
+    }
+
+    /// <summary>
+    /// 노트 머리 크기를 역보정할 때에도 Long 구간의 화면상 길이는 유지하도록
+    /// 리본의 세로 길이에만 표시 배율을 적용합니다.
+    /// </summary>
+    public void SetVerticalDisplayScale(float scale)
+    {
+        if (float.IsNaN(scale) || float.IsInfinity(scale) || scale <= 0f)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(scale),
+                scale,
+                "Vertical display scale must be finite and greater than zero.");
+        }
+
+        if (Mathf.Approximately(verticalDisplayScale, scale))
+        {
+            return;
+        }
+
+        verticalDisplayScale = scale;
         RefreshRibbon();
     }
 
@@ -96,6 +147,7 @@ public sealed class NoteLength : MonoBehaviour
     private void Awake()
     {
         noteView = GetComponent<NoteView>();
+        SetUnlinkedPreviewVisible(false);
         RefreshRibbon();
     }
 
@@ -254,7 +306,8 @@ public sealed class NoteLength : MonoBehaviour
         float startY = ribbonPoints[0].y;
         float profileLength =
             ribbonPoints[ribbonPoints.Length - 1].y - startY;
-        float lengthScale = currentLength / profileLength;
+        float lengthScale =
+            currentLength * verticalDisplayScale / profileLength;
         Vector4 spriteUv = DataUtility.GetOuterUV(baseSprite);
 
         for (int i = 0; i < segmentCount; i++)

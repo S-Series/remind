@@ -57,6 +57,11 @@ namespace REmind.Charting
             new List<ChartLineSpeedEvent>();
         private readonly List<ChartCameraEvent> cameraEvents =
             new List<ChartCameraEvent>();
+        private readonly List<ChartEffectEvent> effectEvents =
+            new List<ChartEffectEvent>();
+        private readonly List<ChartScratchCameraTiltEvent>
+            scratchCameraTiltEvents =
+                new List<ChartScratchCameraTiltEvent>();
 
         public ChartDocument(
             int positionUnitsPerMeasure,
@@ -74,7 +79,30 @@ namespace REmind.Charting
         public IList<ChartTimingEvent> TimingEvents => timingEvents;
         public IList<ChartLineSpeedEvent> LineSpeedEvents => lineSpeedEvents;
         public IList<ChartCameraEvent> CameraEvents => cameraEvents;
+        public IList<ChartEffectEvent> EffectEvents => effectEvents;
+        public IList<ChartScratchCameraTiltEvent> ScratchCameraTiltEvents =>
+            scratchCameraTiltEvents;
         public IList<ChartDocumentNote> Notes => notes;
+    }
+
+    /// <summary>Passive editing data only. Runtime configuration lives outside ChartDocument.</summary>
+    public sealed class ChartEffectEvent
+    {
+        public ChartEffectEvent(int position, string effectId, string effectTypeId,
+            string commandId, int order)
+        {
+            Position = position;
+            EffectId = effectId;
+            EffectTypeId = effectTypeId;
+            CommandId = commandId;
+            Order = order;
+        }
+
+        public int Position { get; set; }
+        public string EffectId { get; set; }
+        public string EffectTypeId { get; set; }
+        public string CommandId { get; set; }
+        public int Order { get; set; }
     }
 
     public sealed class ChartTimingEvent
@@ -132,6 +160,36 @@ namespace REmind.Charting
         public int Position { get; set; }
         public double OffsetX { get; set; }
         public ChartCameraSpinDirection SpinDirection { get; set; }
+    }
+
+    /// <summary>
+    /// Scratch Motion이 시작되거나 해제되는 순간의 카메라 롤 연출입니다. 방향은
+    /// 최종 입력 레인으로 보존하고, 각도와 지속시간은 컴파일러가 결정합니다.
+    /// </summary>
+    public enum ChartScratchCameraTiltEventType
+    {
+        Instant = 0,
+        Gradual = 1,
+        Release = 2,
+        ReverseInstant = 3
+    }
+
+    public sealed class ChartScratchCameraTiltEvent
+    {
+        public ChartScratchCameraTiltEvent(
+            int position,
+            ChartLane lane,
+            ChartScratchCameraTiltEventType eventType =
+                ChartScratchCameraTiltEventType.Instant)
+        {
+            Position = position;
+            Lane = lane;
+            EventType = eventType;
+        }
+
+        public int Position { get; set; }
+        public ChartLane Lane { get; set; }
+        public ChartScratchCameraTiltEventType EventType { get; set; }
     }
 
     public sealed class ChartDocumentNote

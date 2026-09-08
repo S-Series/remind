@@ -20,7 +20,14 @@ public sealed class ScratchArrowPattern : MonoBehaviour
             return;
         }
 
-        patternRenderer.sprite = side == NoteHandleType.Right
+        bool pointsRight = side == NoteHandleType.Right;
+
+        if (motionType == ScratchMotionType.Release)
+        {
+            pointsRight = !pointsRight;
+        }
+
+        patternRenderer.sprite = pointsRight
             ? rightArrowSprite
             : leftArrowSprite;
         patternRenderer.enabled =

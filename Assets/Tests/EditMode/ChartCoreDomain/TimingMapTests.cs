@@ -225,6 +225,165 @@ namespace REmind.Charting.Tests
                 Is.EqualTo(-180d).Within(0.000001d));
         }
 
+        [Test]
+        public void InstantScratchCameraTiltAt120Bpm_HitsFastAndReturnsIn200Ms()
+        {
+            ChartDocument document = new ChartDocument(4800, 4, 120d);
+            document.ScratchCameraTiltEvents.Add(
+                new ChartScratchCameraTiltEvent(
+                    0,
+                    ChartLane.GroundRight));
+
+            ScratchCameraTiltMap tiltMap = ChartCompiler
+                .Compile(document)
+                .Snapshot
+                .ScratchCameraTiltMap;
+            ScratchCameraTiltPoint point = tiltMap.Points[0];
+
+            Assert.That(point.DurationMs, Is.EqualTo(200d));
+            Assert.That(tiltMap.EvaluateAtTime(0d), Is.EqualTo(0d));
+            Assert.That(tiltMap.EvaluateAtTime(10d), Is.EqualTo(-8.75d));
+            Assert.That(tiltMap.EvaluateAtTime(20d), Is.EqualTo(-10d));
+            Assert.That(
+                tiltMap.EvaluateAtTime(100d),
+                Is.EqualTo(-250d / 81d).Within(0.000001d));
+            Assert.That(tiltMap.EvaluateAtTime(200d), Is.EqualTo(0d));
+        }
+
+        [Test]
+        public void InstantScratchCameraTiltAt240Bpm_Uses100Milliseconds()
+        {
+            ChartDocument document = CreateDocument();
+            document.ScratchCameraTiltEvents.Add(
+                new ChartScratchCameraTiltEvent(
+                    4800,
+                    ChartLane.GroundLeft));
+
+            ScratchCameraTiltMap tiltMap = ChartCompiler
+                .Compile(document)
+                .Snapshot
+                .ScratchCameraTiltMap;
+            ScratchCameraTiltPoint point = tiltMap.Points[0];
+
+            Assert.That(
+                point.DurationMs,
+                Is.EqualTo(100d).Within(0.000001d));
+            Assert.That(
+                tiltMap.EvaluateAtTime(point.TimeMs + 10d),
+                Is.EqualTo(10d).Within(0.000001d));
+        }
+
+        [Test]
+        public void ReverseInstantScratchCameraTilt_UsesOppositeDirection()
+        {
+            ChartDocument document = new ChartDocument(4800, 4, 120d);
+            document.ScratchCameraTiltEvents.Add(
+                new ChartScratchCameraTiltEvent(
+                    0,
+                    ChartLane.GroundRight,
+                    ChartScratchCameraTiltEventType.ReverseInstant));
+
+            ScratchCameraTiltMap tiltMap = ChartCompiler
+                .Compile(document)
+                .Snapshot
+                .ScratchCameraTiltMap;
+
+            Assert.That(tiltMap.Points.Count, Is.EqualTo(1));
+            Assert.That(tiltMap.Points[0].DurationMs, Is.EqualTo(200d));
+            Assert.That(tiltMap.EvaluateAtTime(20d), Is.EqualTo(10d));
+            Assert.That(tiltMap.EvaluateAtTime(200d), Is.EqualTo(0d));
+        }
+
+        [Test]
+        public void GradualScratchCameraTilt_AttacksHoldsAndReleasesAtEnd()
+        {
+            ChartDocument document = new ChartDocument(4800, 4, 120d);
+            document.ScratchCameraTiltEvents.Add(
+                new ChartScratchCameraTiltEvent(
+                    0,
+                    ChartLane.GroundLeft,
+                    ChartScratchCameraTiltEventType.Gradual));
+            document.ScratchCameraTiltEvents.Add(
+                new ChartScratchCameraTiltEvent(
+                    4800,
+                    ChartLane.GroundLeft,
+                    ChartScratchCameraTiltEventType.Release));
+
+            ChartCompileResult result = ChartCompiler.Compile(document);
+
+            Assert.That(result.Succeeded, Is.True);
+            ScratchCameraTiltMap tiltMap = result.Snapshot
+                .ScratchCameraTiltMap;
+            Assert.That(tiltMap.HoldPoints.Count, Is.EqualTo(1));
+            Assert.That(tiltMap.EvaluateAtTime(0d), Is.EqualTo(0d));
+            Assert.That(tiltMap.EvaluateAtTime(10d), Is.EqualTo(0.5d));
+            Assert.That(tiltMap.EvaluateAtTime(50d), Is.EqualTo(2.5d));
+            Assert.That(tiltMap.EvaluateAtTime(100d), Is.EqualTo(5d));
+            Assert.That(tiltMap.EvaluateAtTime(1000d), Is.EqualTo(5d));
+            Assert.That(tiltMap.EvaluateAtTime(2000d), Is.EqualTo(5d));
+            Assert.That(tiltMap.EvaluateAtTime(2010d), Is.EqualTo(2.5d));
+            Assert.That(tiltMap.EvaluateAtTime(2020d), Is.EqualTo(0d));
+        }
+
+        [Test]
+        public void GradualScratchCameraTilt_GradualMidDoesNotRestartAttack()
+        {
+            ChartDocument document = new ChartDocument(4800, 4, 120d);
+            document.ScratchCameraTiltEvents.Add(
+                new ChartScratchCameraTiltEvent(
+                    0,
+                    ChartLane.GroundRight,
+                    ChartScratchCameraTiltEventType.Gradual));
+            document.ScratchCameraTiltEvents.Add(
+                new ChartScratchCameraTiltEvent(
+                    2400,
+                    ChartLane.GroundRight,
+                    ChartScratchCameraTiltEventType.Gradual));
+            document.ScratchCameraTiltEvents.Add(
+                new ChartScratchCameraTiltEvent(
+                    4800,
+                    ChartLane.GroundRight,
+                    ChartScratchCameraTiltEventType.Release));
+
+            ScratchCameraTiltMap tiltMap = ChartCompiler
+                .Compile(document)
+                .Snapshot
+                .ScratchCameraTiltMap;
+
+            Assert.That(tiltMap.HoldPoints.Count, Is.EqualTo(1));
+            Assert.That(tiltMap.HoldPoints[0].StartPosition, Is.EqualTo(0));
+            Assert.That(tiltMap.HoldPoints[0].EndPosition, Is.EqualTo(4800));
+            Assert.That(tiltMap.EvaluateAtTime(1000d), Is.EqualTo(-5d));
+        }
+
+        [Test]
+        public void GradualScratchCameraTilt_InstantMidUsesTheNewMotion()
+        {
+            ChartDocument document = new ChartDocument(4800, 4, 120d);
+            document.ScratchCameraTiltEvents.Add(
+                new ChartScratchCameraTiltEvent(
+                    0,
+                    ChartLane.GroundLeft,
+                    ChartScratchCameraTiltEventType.Gradual));
+            document.ScratchCameraTiltEvents.Add(
+                new ChartScratchCameraTiltEvent(
+                    2400,
+                    ChartLane.GroundLeft,
+                    ChartScratchCameraTiltEventType.Instant));
+
+            ScratchCameraTiltMap tiltMap = ChartCompiler
+                .Compile(document)
+                .Snapshot
+                .ScratchCameraTiltMap;
+
+            Assert.That(tiltMap.HoldPoints.Count, Is.EqualTo(1));
+            Assert.That(tiltMap.Points.Count, Is.EqualTo(1));
+            Assert.That(tiltMap.HoldPoints[0].EndPosition, Is.EqualTo(2400));
+            Assert.That(tiltMap.EvaluateAtTime(1000d), Is.EqualTo(5d));
+            Assert.That(tiltMap.EvaluateAtTime(1010d), Is.EqualTo(10d));
+            Assert.That(tiltMap.EvaluateAtTime(1200d), Is.EqualTo(0d));
+        }
+
         private static ChartCompileResult CompileExample()
         {
             return ChartCompiler.Compile(CreateDocument());

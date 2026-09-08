@@ -8,6 +8,8 @@ public readonly struct RuleContext
     public bool IsFever { get; }
     public bool MissGuardAvailable { get; }
     public bool IsChartCompleted { get; }
+    // Chart time of the input/automatic event, not the render frame time.
+    public double EvaluationTimeMs { get; }
 
     public RuleContext(
         int currentHealth,
@@ -15,7 +17,8 @@ public readonly struct RuleContext
         NoteType noteType,
         bool isFever,
         bool missGuardAvailable,
-        bool isChartCompleted)
+        bool isChartCompleted,
+        double evaluationTimeMs = double.NaN)
     {
         CurrentHealth = currentHealth;
         CurrentCombo = currentCombo;
@@ -23,5 +26,10 @@ public readonly struct RuleContext
         IsFever = isFever;
         MissGuardAvailable = missGuardAvailable;
         IsChartCompleted = isChartCompleted;
+        EvaluationTimeMs = evaluationTimeMs;
     }
+
+    public RuleContext AtTime(double chartTimeMs) => new RuleContext(
+        CurrentHealth, CurrentCombo, NoteType, IsFever, MissGuardAvailable,
+        IsChartCompleted, chartTimeMs);
 }

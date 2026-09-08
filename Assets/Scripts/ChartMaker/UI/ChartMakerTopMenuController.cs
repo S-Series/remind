@@ -11,7 +11,6 @@ using UnityEditor;
 public sealed class ChartMakerTopMenuController : MonoBehaviour
 {
     private const string RuntimeThemeResourceName = "ChartMakerRuntimeTheme";
-    private const string DefaultChartFileName = "chart.txt";
 
     [Header("UI")]
     [SerializeField] private VisualTreeAsset menuAsset;
@@ -58,11 +57,13 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
     private VisualElement playbackMenuPopup;
     private VisualElement unsavedChangesOverlay;
     private Label unsavedChangesMessage;
+    private Label documentStatusLabel;
     private PendingFileAction pendingFileAction;
     private TopMenuType openMenu;
     private bool isMenuBound;
 
     public VisualElement RootVisualElement => document?.rootVisualElement;
+    public string CurrentStatusMessage => documentStatusLabel?.text;
     public event Action ChartOpened;
 
     /// <summary>미저장 변경 확인을 포함한 채보 파일 열기 흐름을 요청합니다.</summary>
@@ -230,6 +231,8 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
             "unsaved-changes-overlay");
         unsavedChangesMessage = RootVisualElement.Q<Label>(
             "unsaved-changes-message");
+        documentStatusLabel = RootVisualElement.Q<Label>(
+            "document-status-label");
 
         if (!HasRequiredMenuElements())
         {
@@ -275,6 +278,10 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
         if (chartCore)
         {
             chartCore.TestPlaybackChanged += HandlePlaybackChanged;
+            chartCore.TestPlaybackStartFailed +=
+                HandleTestPlaybackStartFailed;
+            chartCore.AudioClipChanged += HandleAudioClipChanged;
+            chartCore.AudioLoadFailed += HandleAudioLoadFailed;
         }
 
         isMenuBound = true;
@@ -284,6 +291,10 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
             placementController);
         HideMenus();
         HideUnsavedChangesDialog();
+        SetEditingEnabled(!chartCore || !chartCore.IsTestPlaying);
+        RefreshDocumentCommandState();
+        RefreshEditMenuState();
+        RefreshPlaybackMenuState();
     }
 
     private void UnbindMenu()
@@ -329,6 +340,10 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
         if (chartCore)
         {
             chartCore.TestPlaybackChanged -= HandlePlaybackChanged;
+            chartCore.TestPlaybackStartFailed -=
+                HandleTestPlaybackStartFailed;
+            chartCore.AudioClipChanged -= HandleAudioClipChanged;
+            chartCore.AudioLoadFailed -= HandleAudioLoadFailed;
         }
 
         isMenuBound = false;
@@ -369,11 +384,13 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
                viewMenuPopup != null &&
                playbackMenuPopup != null &&
                unsavedChangesOverlay != null &&
-               unsavedChangesMessage != null;
+               unsavedChangesMessage != null &&
+               documentStatusLabel != null;
     }
 
     private void ToggleFileMenu()
     {
+        RefreshDocumentCommandState();
         ToggleMenu(TopMenuType.File, fileMenuButton, fileMenuPopup);
     }
 
@@ -442,6 +459,11 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
     {
         HideMenus();
 
+        if (!TryRequireDocumentEditing("undo"))
+        {
+            return;
+        }
+
         if (placementController)
         {
             ChartEditHistory.Undo(placementController);
@@ -452,6 +474,11 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
     {
         HideMenus();
 
+        if (!TryRequireDocumentEditing("redo"))
+        {
+            return;
+        }
+
         if (placementController)
         {
             ChartEditHistory.Redo(placementController);
@@ -461,6 +488,10 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
     private void HandleDeleteRequested()
     {
         HideMenus();
+        if (!TryRequireDocumentEditing("delete notes"))
+        {
+            return;
+        }
         selectionController?.DeleteSelection();
     }
 
@@ -494,7 +525,15 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
     private void HandleStartTestPlayRequested()
     {
         HideMenus();
-        chartCore?.StartTestPlay();
+        if (!chartCore)
+        {
+            SetStatus("Preview is unavailable because ChartCore was not found.",
+                true);
+            return;
+        }
+
+        SetStatus("Preparing Preview…", false);
+        chartCore.StartTestPlay();
     }
 
     private void HandleEndTestPlayRequested()
@@ -503,16 +542,73 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
         chartCore?.EndTestPlay();
     }
 
-    private void HandlePlaybackChanged(bool _)
+    private void HandlePlaybackChanged(bool isPlaying)
     {
+        HideMenus();
+        // A previous listener can synchronously stop the session while every
+        // subscriber is still receiving the original transition value. Drive
+        // the editor lock from the committed core state, not a stale callback.
+        bool actualPlaying = chartCore && chartCore.IsTestPlaying;
+        if (actualPlaying)
+        {
+            CancelPendingAction();
+        }
+        SetEditingEnabled(!actualPlaying);
+        RefreshDocumentCommandState();
+        RefreshEditMenuState();
         RefreshPlaybackMenuState();
+        SetStatus(actualPlaying ? "Preview started. Editing is locked."
+            : "Preview stopped. Editing is available.", false);
+    }
+
+    private void HandleTestPlaybackStartFailed(string message)
+    {
+        // A rejected re-entrant/already-running start must not unlock the
+        // document while the existing Preview session is still active.
+        SetEditingEnabled(CanEditDocument);
+        RefreshDocumentCommandState();
+        RefreshEditMenuState();
+        RefreshPlaybackMenuState();
+        // Missing Effect Type is an expected, user-fixable authoring state.
+        // Keep its guidance visible without styling it as a red system error.
+        SetStatus(message, !ChartTestPlay.IsPreviewSetupGuidance(message));
+    }
+
+    private void HandleAudioClipChanged(AudioClip clip)
+    {
+        if (!clip)
+        {
+            return;
+        }
+
+        string path = chartCore?.CurrentAudioFilePath;
+        SetStatus(string.IsNullOrWhiteSpace(path)
+            ? $"Music loaded: {clip.name}"
+            : $"Music loaded: {Path.GetFileName(path)}", false);
+    }
+
+    private void HandleAudioLoadFailed(string message)
+    {
+        SetStatus(message, true);
+    }
+
+    private void RefreshDocumentCommandState()
+    {
+        bool canEdit = CanEditDocument;
+        newChartButton?.SetEnabled(canEdit);
+        openChartButton?.SetEnabled(canEdit);
+        openMusicButton?.SetEnabled(canEdit);
+        saveChartButton?.SetEnabled(canEdit);
+        saveAsChartButton?.SetEnabled(canEdit);
     }
 
     private void RefreshEditMenuState()
     {
-        undoButton.SetEnabled(ChartEditHistory.CanUndo);
-        redoButton.SetEnabled(ChartEditHistory.CanRedo);
+        bool canEdit = CanEditDocument;
+        undoButton.SetEnabled(canEdit && ChartEditHistory.CanUndo);
+        redoButton.SetEnabled(canEdit && ChartEditHistory.CanRedo);
         deleteButton.SetEnabled(
+            canEdit &&
             selectionController != null &&
             selectionController.SelectedNoteObjects.Count > 0);
     }
@@ -537,11 +633,19 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
 
     private void HandleNewRequested()
     {
+        if (!TryRequireDocumentEditing("create a new chart"))
+        {
+            return;
+        }
         RequestDestructiveAction(PendingFileAction.NewChart);
     }
 
     private void HandleOpenRequested()
     {
+        if (!TryRequireDocumentEditing("open another chart"))
+        {
+            return;
+        }
         RequestDestructiveAction(PendingFileAction.OpenChart);
     }
 
@@ -549,8 +653,15 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
     {
         HideMenus();
 
+        if (!TryRequireDocumentEditing("open music"))
+        {
+            return;
+        }
+
         if (!chartCore)
         {
+            SetStatus("Open Music is unavailable because ChartCore was not found.",
+                true);
             Debug.LogError("ChartCore was not found.", this);
             return;
         }
@@ -561,26 +672,47 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
         if (!string.IsNullOrWhiteSpace(filePath) &&
             !chartCore.LoadAudioFile(filePath))
         {
+            SetStatus("The selected music could not start loading.", true);
             Debug.LogWarning(
                 "The selected music could not start loading.",
                 this);
+        }
+        else if (!string.IsNullOrWhiteSpace(filePath))
+        {
+            SetStatus($"Loading music: {Path.GetFileName(filePath)}", false);
         }
     }
 
     private void HandleSaveRequested()
     {
         HideMenus();
+        if (!TryRequireDocumentEditing("save the chart"))
+        {
+            return;
+        }
         TrySaveCurrentChart();
     }
 
     private void HandleSaveAsRequested()
     {
         HideMenus();
+        if (!TryRequireDocumentEditing("save the chart"))
+        {
+            return;
+        }
         TrySaveChartAs();
     }
 
     private void HandleExitRequested()
     {
+        // Exit is the one file command that remains useful during Preview.
+        // End the active session first so temporary camera/rule state is
+        // disposed before an unsaved-changes prompt or application shutdown.
+        if (chartCore && chartCore.IsTestPlaying)
+        {
+            chartCore.EndTestPlay();
+        }
+
         RequestDestructiveAction(PendingFileAction.Exit);
     }
 
@@ -676,6 +808,7 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
         ChartManager.ClearChart();
         ChartEditHistory.Clear();
         chartToFile?.ResetDocument();
+        SetStatus("Created a new chart.", false);
         Debug.Log("Created a new chart.", this);
     }
 
@@ -697,12 +830,14 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
 
         if (!fileToChart.TryLoadFromPath(filePath, out _, out string error))
         {
+            SetStatus($"Open failed: {error}", true);
             Debug.LogError($"Failed to open chart: {error}", this);
             return;
         }
 
         ChartEditHistory.Clear();
         ChartOpened?.Invoke();
+        SetStatus($"Opened: {Path.GetFileName(filePath)}", false);
         Debug.Log($"Chart opened: {Path.GetFullPath(filePath)}", this);
     }
 
@@ -710,6 +845,7 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
     {
         if (!chartToFile)
         {
+            SetStatus("Save failed: ChartToFile was not found.", true);
             Debug.LogError("ChartToFile was not found.", this);
             return false;
         }
@@ -723,10 +859,13 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
                 chartToFile.CurrentFilePath,
                 out string error))
         {
+            SetStatus($"Save failed: {error}", true);
             Debug.LogError($"Failed to save chart: {error}", this);
             return false;
         }
 
+        SetStatus($"Saved: {Path.GetFileName(chartToFile.CurrentFilePath)}",
+            false);
         Debug.Log($"Chart saved: {chartToFile.CurrentFilePath}", this);
         return true;
     }
@@ -736,6 +875,7 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
     {
         if (!chartToFile)
         {
+            SetStatus("Save failed: ChartToFile was not found.", true);
             Debug.LogError("ChartToFile was not found.", this);
             return false;
         }
@@ -745,7 +885,7 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
             : Path.Combine(
                 Application.persistentDataPath,
                 "Charts",
-                DefaultChartFileName);
+                ChartToFile.DefaultChartFileName);
         string filePath = ChartFileDialog.SaveChartFile(initialPath);
 
         if (string.IsNullOrWhiteSpace(filePath))
@@ -753,19 +893,69 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
             return false;
         }
 
-        if (string.IsNullOrEmpty(Path.GetExtension(filePath)))
-        {
-            filePath += ".txt";
-        }
+        filePath = Path.ChangeExtension(
+            filePath,
+            ChartToFile.ChartFileExtension);
 
         if (!chartToFile.TrySaveToPath(filePath, out string error))
         {
+            SetStatus($"Save failed: {error}", true);
             Debug.LogError($"Failed to save chart: {error}", this);
             return false;
         }
 
+        SetStatus($"Saved: {Path.GetFileName(chartToFile.CurrentFilePath)}",
+            false);
         Debug.Log($"Chart saved: {chartToFile.CurrentFilePath}", this);
         return true;
+    }
+
+    private bool CanEditDocument => !chartCore || !chartCore.IsTestPlaying;
+
+    private bool TryRequireDocumentEditing(string action)
+    {
+        if (CanEditDocument)
+        {
+            return true;
+        }
+
+        HideMenus();
+        SetStatus($"Stop Preview before you {action}.", true);
+        return false;
+    }
+
+    private void SetEditingEnabled(bool value)
+    {
+        if (inputRouter)
+        {
+            inputRouter.SetEditingEnabled(value);
+        }
+        else if (!value && placementController)
+        {
+            placementController.SetCurrentTool(ChartToolType.None);
+        }
+
+        if (!value)
+        {
+            selectionController?.ClearSelection();
+        }
+    }
+
+    private void SetStatus(string message, bool isError)
+    {
+        if (documentStatusLabel == null)
+        {
+            return;
+        }
+
+        string normalized = string.IsNullOrWhiteSpace(message)
+            ? "Ready"
+            : message.Trim();
+        documentStatusLabel.text = normalized;
+        documentStatusLabel.tooltip = normalized;
+        documentStatusLabel.EnableInClassList(
+            "document-status-error",
+            isError && !string.IsNullOrWhiteSpace(message));
     }
 
     private static void ExitChartMaker()

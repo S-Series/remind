@@ -7,7 +7,8 @@ namespace REmind.Data
     {
         Instant = 0,
         Gradual = 1,
-        None = 2
+        None = 2,
+        Release = 3
     }
 
     public enum ScratchPointType
@@ -151,6 +152,12 @@ namespace REmind.Data
     /// </summary>
     public static class ScratchMotionRules
     {
+        /// <summary>
+        /// Instant Scratch의 화면 이동은 노트 위치부터 이 분할 길이만큼 보간합니다.
+        /// 판정 시각과 저장 타입은 Instant 그대로 유지됩니다.
+        /// </summary>
+        public const int InstantTransitionDivisionsPerMeasure = 32;
+
         public const float HorizontalUnitsPerTenAmount = 7.5f;
         public const float HorizontalUnitsPerAmount =
             HorizontalUnitsPerTenAmount / 10f;
@@ -183,10 +190,39 @@ namespace REmind.Data
                     "Unsupported Scratch motion type.");
             }
 
+            if (motionType == ScratchMotionType.Release)
+            {
+                return IsReleaseAllowed(noteType, pointType)
+                        ? ScratchMotionType.Release
+                        : ScratchMotionType.None;
+            }
+
             return noteType == NoteType.LongScratch &&
                 pointType == ScratchPointType.End
                     ? ScratchMotionType.None
                     : motionType;
+        }
+
+        public static bool IsReleaseAllowed(
+            NoteType noteType,
+            ScratchPointType pointType)
+        {
+            return noteType == NoteType.LongScratch &&
+                (pointType == ScratchPointType.Mid ||
+                 pointType == ScratchPointType.End);
+        }
+
+        public static bool UsesInstantTransition(
+            ScratchMotionType motionType)
+        {
+            return motionType == ScratchMotionType.Instant ||
+                motionType == ScratchMotionType.Release;
+        }
+
+        public static float GetHorizontalDirectionMultiplier(
+            ScratchMotionType motionType)
+        {
+            return motionType == ScratchMotionType.Release ? -1f : 1f;
         }
 
         public static ScratchMotionData NormalizeMotion(
@@ -285,8 +321,7 @@ namespace REmind.Data
                     continue;
                 }
 
-                if (effect.MotionType == ScratchMotionType.Instant ||
-                    isZeroLength)
+                if (isZeroLength)
                 {
                     if (position > effect.StartPosition ||
                         (includeInstantAtPosition &&

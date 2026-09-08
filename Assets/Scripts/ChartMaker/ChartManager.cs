@@ -128,6 +128,7 @@ public static class ChartManager
         }
 
         ChartHolderList.Clear();
+        ChartEffectDocumentState.Reset();
         NotifyChartChanged();
     }
 
@@ -449,6 +450,19 @@ public static class ChartManager
                 out _);
         }
 
+        if (noteType == NoteType.Effect)
+        {
+            return MoveEffectNote(noteObject, targetAbsolutePosition, out _);
+        }
+
+        if (noteType == NoteType.Marker)
+        {
+            return MoveMarkerNote(
+                noteObject,
+                targetAbsolutePosition,
+                out _);
+        }
+
         int airValue = noteType == NoteType.Air
             ? holder.airNoteValues[sourceLine - 1]
             : 0;
@@ -462,6 +476,84 @@ public static class ChartManager
             null,
             null,
             out _);
+    }
+
+    /// <summary>Effect 이동은 고유 ID와 JSON 설정 연결을 그대로 보존합니다.</summary>
+    internal static bool MoveEffectNote(
+        GameObject noteObject,
+        int targetAbsolutePosition,
+        out string error)
+    {
+        if (!TryGetNoteData(noteObject, out ChartHolder sourceHolder,
+                out _, out NoteType noteType, out _, out _) ||
+            noteType != NoteType.Effect)
+        {
+            error = "Selected Effect note could not be found.";
+            return false;
+        }
+
+        if (targetAbsolutePosition < 0 ||
+            targetAbsolutePosition > ChartHolder.MaximumAbsolutePosition)
+        {
+            error = "Effect position is outside the supported chart range.";
+            return false;
+        }
+
+        if (sourceHolder.AbsoluteChartPosition == targetAbsolutePosition)
+        {
+            error = null;
+            return true;
+        }
+
+        ChartHolder targetHolder = GetHolder(targetAbsolutePosition);
+        if (targetHolder != null && targetHolder.isEffect)
+        {
+            error = "Another Effect already exists at the target position.";
+            return false;
+        }
+
+        ChartHolder sourceData = sourceHolder.CloneData();
+        if (!sourceHolder.TryDetachEffectNote(noteObject, out GameObject[] objects))
+        {
+            error = "Selected Effect could not be detached.";
+            return false;
+        }
+
+        bool createdTarget = targetHolder == null;
+        targetHolder ??= GetOrCreateHolder(
+            targetAbsolutePosition / ChartHolder.PositionUnitsPerMeasure,
+            targetAbsolutePosition % ChartHolder.PositionUnitsPerMeasure);
+        if (!targetHolder.AddEffectNote(objects))
+        {
+            sourceHolder.AddEffectNote(objects);
+            CopyEffectDefinition(sourceData, sourceHolder, false);
+            if (createdTarget && !targetHolder.HasChartData)
+            {
+                ChartHolderList.Remove(targetHolder);
+            }
+            error = "Effect target could not be updated.";
+            return false;
+        }
+
+        CopyEffectDefinition(sourceData, targetHolder, false);
+        if (!sourceHolder.HasChartData)
+        {
+            ChartHolderList.Remove(sourceHolder);
+        }
+        error = null;
+        return true;
+    }
+
+    internal static void CopyEffectDefinition(
+        ChartHolder source, ChartHolder target, bool assignNewIdentity)
+    {
+        target.effectId = assignNewIdentity
+            ? Guid.NewGuid().ToString("N")
+            : source.effectId;
+        target.effectTypeId = source.effectTypeId;
+        target.effectCommandId = source.effectCommandId;
+        target.effectOrder = source.effectOrder;
+        target.effectParametersJson = source.effectParametersJson;
     }
 
     /// <summary>Camera 이벤트의 위치, 기준 X 오프셋과 회전 방향을 원자적으로 수정합니다.</summary>
@@ -567,6 +659,82 @@ public static class ChartManager
         return true;
     }
 
+    /// <summary>값 없는 Marker 이벤트의 위치를 원자적으로 이동합니다.</summary>
+    internal static bool MoveMarkerNote(
+        GameObject noteObject,
+        int targetAbsolutePosition,
+        out string error)
+    {
+        if (!TryGetNoteData(
+                noteObject,
+                out ChartHolder sourceHolder,
+                out _,
+                out NoteType noteType,
+                out _,
+                out _) ||
+            noteType != NoteType.Marker)
+        {
+            error = "Selected Marker data could not be found.";
+            return false;
+        }
+
+        if (targetAbsolutePosition < 0 ||
+            targetAbsolutePosition > ChartHolder.MaximumAbsolutePosition)
+        {
+            error = "Marker position is outside the supported chart range.";
+            return false;
+        }
+
+        if (sourceHolder.AbsoluteChartPosition == targetAbsolutePosition)
+        {
+            error = null;
+            return true;
+        }
+
+        ChartHolder targetHolder = GetHolder(targetAbsolutePosition);
+
+        if (targetHolder != null && targetHolder.isMarker)
+        {
+            error = "Another Marker already exists at the target position.";
+            return false;
+        }
+
+        if (!sourceHolder.TryDetachMarkerNote(
+                noteObject,
+                out GameObject[] noteObjects))
+        {
+            error = "Selected Marker could not be detached from its source.";
+            return false;
+        }
+
+        bool createdTargetHolder = targetHolder == null;
+        targetHolder ??= GetOrCreateHolder(
+            targetAbsolutePosition / ChartHolder.PositionUnitsPerMeasure,
+            targetAbsolutePosition % ChartHolder.PositionUnitsPerMeasure);
+
+        if (!targetHolder.AddMarkerNote(noteObjects))
+        {
+            sourceHolder.AddMarkerNote(noteObjects);
+
+            if (createdTargetHolder && !targetHolder.HasChartData)
+            {
+                ChartHolderList.Remove(targetHolder);
+            }
+
+            error = "The target Marker could not be updated.";
+            return false;
+        }
+
+        if (!sourceHolder.HasChartData)
+        {
+            ChartHolderList.Remove(sourceHolder);
+        }
+
+        NotifyChartChanged();
+        error = null;
+        return true;
+    }
+
     internal static ScratchPointType GetSuggestedScratchPointType(
         int line,
         int targetAbsolutePosition)
@@ -603,6 +771,47 @@ public static class ChartManager
         }
 
         return isOpen ? ScratchPointType.End : ScratchPointType.Start;
+    }
+
+    /// <summary>
+    /// 대상 위치보다 앞선 Long Tap을 두 개씩 짝지었을 때 같은 라인에 닫히지 않은
+    /// 시작점이 남아 있는지 반환합니다.
+    /// </summary>
+    internal static bool HasOpenLongTap(
+        int line,
+        int targetAbsolutePosition)
+    {
+        if (line < 1 || line > ChartHolder.MainLineCount)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(line),
+                line,
+                $"Main line must be between 1 and " +
+                $"{ChartHolder.MainLineCount}.");
+        }
+
+        bool isOpen = false;
+
+        for (int i = 0; i < ChartHolderList.Count; i++)
+        {
+            ChartHolder holder = ChartHolderList[i];
+
+            if (holder.AbsoluteChartPosition >= targetAbsolutePosition)
+            {
+                break;
+            }
+
+            if (holder.TryGetNote(
+                    line,
+                    out NoteType noteType,
+                    out _) &&
+                noteType == NoteType.LongTap)
+            {
+                isOpen = !isOpen;
+            }
+        }
+
+        return isOpen;
     }
 
     internal static ChartHolder GetHolder(int absolutePosition)
@@ -675,15 +884,20 @@ public static class ChartManager
                 continue;
             }
 
-            // 짝수 번째와 짝이 없는 마지막 노트는 길이 0으로 유지합니다.
-            SetNoteLength(noteObjects, 0f);
-
             if (pendingStartObjects == null)
             {
+                SetNoteLength(
+                    noteObjects,
+                    0f,
+                    showUnlinkedPreview: true);
                 pendingStartObjects = noteObjects;
                 pendingStartPosition = holder.AbsoluteChartPosition;
                 continue;
             }
+
+            // End에는 Stub을 표시하지 않고, Start의 Stub은 실제 Ribbon으로
+            // 교체합니다.
+            SetNoteLength(noteObjects, 0f);
 
             float length = Mathf.Max(
                 0f,
@@ -712,16 +926,21 @@ public static class ChartManager
                 continue;
             }
 
-            SetNoteLength(noteObjects, 0f);
             ScratchPointType pointType =
                 holder.GetScratchPointType(line);
 
             if (pointType == ScratchPointType.Start)
             {
+                SetNoteLength(
+                    noteObjects,
+                    0f,
+                    showUnlinkedPreview: true);
                 pendingSegmentObjects = noteObjects;
                 pendingSegmentPosition = holder.AbsoluteChartPosition;
                 continue;
             }
+
+            SetNoteLength(noteObjects, 0f);
 
             if (pendingSegmentObjects != null)
             {
@@ -735,6 +954,10 @@ public static class ChartManager
 
             if (pointType == ScratchPointType.Mid)
             {
+                SetNoteLength(
+                    noteObjects,
+                    0f,
+                    showUnlinkedPreview: true);
                 pendingSegmentObjects = noteObjects;
                 pendingSegmentPosition = holder.AbsoluteChartPosition;
             }
@@ -745,7 +968,10 @@ public static class ChartManager
         }
     }
 
-    private static void SetNoteLength(GameObject[] noteObjects, float length)
+    private static void SetNoteLength(
+        GameObject[] noteObjects,
+        float length,
+        bool showUnlinkedPreview = false)
     {
         if (noteObjects == null)
         {
@@ -760,6 +986,8 @@ public static class ChartManager
                 noteObject.TryGetComponent(out NoteLength noteLength))
             {
                 noteLength.SetStraightLength(length);
+                noteLength.SetUnlinkedPreviewVisible(
+                    showUnlinkedPreview);
             }
         }
     }

@@ -18,13 +18,28 @@ public sealed class GamePlay : MonoBehaviour
     private double heldSongTimeMs;
     private double scheduledSongTimeMs;
     private DspSongClock songClock;
+    private bool startInProgress;
+    private bool startCancellationRequested;
+    private int stateNotificationDepth;
 
     public event Action<PlaybackState> PlaybackStateChanged;
     public event Action PlaybackCompleted;
+    // Starting prepares private state, Committing activates it before audio/state are
+    // published, and Started confirms success. Any failed start after preparation is
+    // paired with PlaybackStartAborted so provisional state can be rolled back.
+    public event Func<double, bool> PlaybackStarting;
+    public event Func<double, bool> PlaybackCommitting;
+    public event Action<double> PlaybackStarted;
+    public event Action<double> PlaybackStartAborted;
 
     public PlaybackState State { get; private set; } = PlaybackState.Empty;
     public AudioClip CurrentSong => audioSource != null ? audioSource.clip : null;
     public bool IsPlaying => State == PlaybackState.Playing;
+    public bool IsStartInProgress => startInProgress;
+    public PlaybackStartReason StartReason { get; private set; } =
+        PlaybackStartReason.Play;
+    public bool HasReachedScheduledStart => IsPlaying &&
+        AudioSettings.dspTime >= songClock.DspTimeAt(scheduledSongTimeMs);
     public double SongStartDspTime { get; private set; }
     public double InputTimeToDspOffset { get; private set; }
 
@@ -113,11 +128,19 @@ public sealed class GamePlay : MonoBehaviour
         audioSource.Stop();
         heldSongTimeMs = SongDurationMs;
         SetState(PlaybackState.Finished);
-        PlaybackCompleted?.Invoke();
+        InvokeSafely(PlaybackCompleted);
     }
 
     public bool PrepareSong(AudioClip song, float volume = 1f)
     {
+        if (startInProgress)
+        {
+            Debug.LogWarning(
+                "Cannot replace the song while a playback start is being committed.",
+                this);
+            return false;
+        }
+
         if (song == null)
         {
             Debug.LogError("Cannot prepare a null AudioClip.", this);
@@ -155,11 +178,13 @@ public sealed class GamePlay : MonoBehaviour
             return Resume();
         }
 
-        return ScheduleFrom(0d);
+        return ScheduleFrom(0d, PlaybackStartReason.Play);
     }
 
     public bool Pause()
     {
+        if (startInProgress)
+            startCancellationRequested = true;
         if (State != PlaybackState.Playing)
         {
             return false;
@@ -173,12 +198,13 @@ public sealed class GamePlay : MonoBehaviour
 
     public bool Resume()
     {
-        return State == PlaybackState.Paused && ScheduleFrom(heldSongTimeMs);
+        return State == PlaybackState.Paused &&
+            ScheduleFrom(heldSongTimeMs, PlaybackStartReason.Resume);
     }
 
     public bool Restart()
     {
-        return ScheduleFrom(0d);
+        return ScheduleFrom(0d, PlaybackStartReason.Restart);
     }
 
     public bool TryGetInputSongTimeMs(double inputEventTime, out double inputSongTimeMs)
@@ -214,6 +240,8 @@ public sealed class GamePlay : MonoBehaviour
 
     public void Stop()
     {
+        if (startInProgress)
+            startCancellationRequested = true;
         audioSource.Stop();
         if (CurrentSong != null)
         {
@@ -225,7 +253,30 @@ public sealed class GamePlay : MonoBehaviour
         SetState(CurrentSong == null ? PlaybackState.Empty : PlaybackState.Ready);
     }
 
-    private bool ScheduleFrom(double songTimeMs)
+    private bool ScheduleFrom(double songTimeMs, PlaybackStartReason reason)
+    {
+        if (startInProgress || stateNotificationDepth > 0)
+        {
+            Debug.LogWarning(
+                "Playback cannot start recursively from another start or state-change callback.",
+                this);
+            return false;
+        }
+
+        startInProgress = true;
+        startCancellationRequested = false;
+        try
+        {
+            return ScheduleFromCore(songTimeMs, reason);
+        }
+        finally
+        {
+            startInProgress = false;
+            startCancellationRequested = false;
+        }
+    }
+
+    private bool ScheduleFromCore(double songTimeMs, PlaybackStartReason reason)
     {
         AudioClip song = CurrentSong;
         if (song == null || song.samples <= 0 || song.frequency <= 0)
@@ -246,24 +297,133 @@ public sealed class GamePlay : MonoBehaviour
         int startSample = (int)Math.Round(startTimeMs / 1000d * song.frequency);
         startSample = Mathf.Clamp(startSample, 0, song.samples - 1);
         double sampleAlignedStartTimeMs = startSample / (double)song.frequency * 1000d;
+        // A paused clock may sit between audio samples. Never move its logical
+        // timeline backwards merely because the nearest sample is earlier.
+        double logicalStartTimeMs = reason == PlaybackStartReason.Resume
+            ? Math.Max(startTimeMs, sampleAlignedStartTimeMs)
+            : sampleAlignedStartTimeMs;
 
-        audioSource.Stop();
-        audioSource.timeSamples = startSample;
+        StartReason = reason;
+        if (!CanStartPlayback(logicalStartTimeMs))
+        {
+            InvokeSafely(PlaybackStartAborted, logicalStartTimeMs);
+            return false;
+        }
+        if (startCancellationRequested)
+        {
+            InvokeSafely(PlaybackStartAborted, logicalStartTimeMs);
+            return false;
+        }
 
-        double dspNow = AudioSettings.dspTime;
-        InputTimeToDspOffset = dspNow - Time.realtimeSinceStartupAsDouble;
+        if (!CanCommitPlayback(logicalStartTimeMs) ||
+            startCancellationRequested)
+        {
+            InvokeSafely(PlaybackStartAborted, logicalStartTimeMs);
+            Stop();
+            return false;
+        }
 
-        double scheduledDspTime = dspNow + schedulingLeadTimeSeconds;
-        songClock = new DspSongClock(
-            scheduledDspTime,
-            sampleAlignedStartTimeMs);
-        SongStartDspTime = songClock.DspTimeAt(0d);
-        heldSongTimeMs = sampleAlignedStartTimeMs;
-        scheduledSongTimeMs = sampleAlignedStartTimeMs;
+        try
+        {
+            audioSource.Stop();
+            audioSource.timeSamples = startSample;
 
-        audioSource.PlayScheduled(scheduledDspTime);
-        SetState(PlaybackState.Playing);
+            double dspNow = AudioSettings.dspTime;
+            InputTimeToDspOffset = dspNow - Time.realtimeSinceStartupAsDouble;
+
+            double scheduledDspTime = dspNow + schedulingLeadTimeSeconds;
+            songClock = new DspSongClock(
+                scheduledDspTime,
+                logicalStartTimeMs);
+            SongStartDspTime = songClock.DspTimeAt(0d);
+            heldSongTimeMs = logicalStartTimeMs;
+            scheduledSongTimeMs = logicalStartTimeMs;
+
+            audioSource.PlayScheduled(scheduledDspTime);
+            SetState(PlaybackState.Playing);
+            if (State != PlaybackState.Playing)
+            {
+                InvokeSafely(PlaybackStartAborted, logicalStartTimeMs);
+                return false;
+            }
+
+            InvokeSafely(PlaybackStarted, logicalStartTimeMs);
+            return true;
+        }
+        catch (Exception exception)
+        {
+            Debug.LogException(exception, this);
+            InvokeSafely(PlaybackStartAborted, logicalStartTimeMs);
+            Stop();
+            return false;
+        }
+    }
+
+    private bool CanStartPlayback(double startTimeMs)
+    {
+        if (PlaybackStarting == null) return true;
+        foreach (Delegate validator in PlaybackStarting.GetInvocationList())
+        {
+            try
+            {
+                if (!((Func<double, bool>)validator)(startTimeMs)) return false;
+            }
+            catch (Exception exception)
+            {
+                Debug.LogException(exception, this);
+                return false;
+            }
+        }
         return true;
+    }
+
+    private bool CanCommitPlayback(double startTimeMs)
+    {
+        if (PlaybackCommitting == null) return true;
+        foreach (Delegate validator in PlaybackCommitting.GetInvocationList())
+        {
+            try
+            {
+                if (!((Func<double, bool>)validator)(startTimeMs)) return false;
+            }
+            catch (Exception exception)
+            {
+                Debug.LogException(exception, this);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void InvokeSafely(Action<double> callbacks, double value)
+    {
+        if (callbacks == null) return;
+        foreach (Delegate callback in callbacks.GetInvocationList())
+        {
+            try { ((Action<double>)callback)(value); }
+            catch (Exception exception) { Debug.LogException(exception, this); }
+        }
+    }
+
+    private void InvokeSafely(Action callbacks)
+    {
+        if (callbacks == null) return;
+        foreach (Delegate callback in callbacks.GetInvocationList())
+        {
+            try { ((Action)callback)(); }
+            catch (Exception exception) { Debug.LogException(exception, this); }
+        }
+    }
+
+    private void InvokeSafely(Action<PlaybackState> callbacks,
+        PlaybackState value)
+    {
+        if (callbacks == null) return;
+        foreach (Delegate callback in callbacks.GetInvocationList())
+        {
+            try { ((Action<PlaybackState>)callback)(value); }
+            catch (Exception exception) { Debug.LogException(exception, this); }
+        }
     }
 
     private void SetState(PlaybackState state)
@@ -274,7 +434,9 @@ public sealed class GamePlay : MonoBehaviour
         }
 
         State = state;
-        PlaybackStateChanged?.Invoke(state);
+        stateNotificationDepth++;
+        try { InvokeSafely(PlaybackStateChanged, state); }
+        finally { stateNotificationDepth--; }
     }
 
     private static double Clamp(double value, double min, double max)

@@ -21,22 +21,36 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
     private DspSongClock songClock;
     private double playbackStartMs;
     private bool isTestPlaying;
+    private bool startInProgress;
+    private bool startCancellationRequested;
+    private bool stopInProgress;
+    private int playbackStateNotificationDepth;
+    private long nextTestPlaybackAttemptId;
     private AudioClip loadedAudioClip;
 
     public event Action<double> TestMsChanged;
     public event Action<double> BpmChanged;
     public event Action<double> StartCorrectionMsChanged;
     public event Func<double, bool> TestPlaybackStarting;
+    public event Action TestPlaybackStartAborted;
     public event Action<bool> TestPlaybackChanged;
+    public event Action<string> TestPlaybackStartFailed;
     public event Action<AudioClip> AudioClipChanged;
+    public event Action<string> AudioLoadFailed;
 
     public AudioSource AudioSource => audioSource;
     public bool IsTestPlaying => isTestPlaying;
+    public bool IsTestPlaybackStartInProgress => startInProgress;
+    public long CurrentTestPlaybackAttemptId { get; private set; }
+    public long ActiveTestPlaybackSessionId { get; private set; }
+    public bool HasReachedScheduledStart => isTestPlaying &&
+        AudioSettings.dspTime >= songClock.DspTimeAt(playbackStartMs);
     public double TestMs => testMs;
     public double Bpm => bpm;
     public double StartCorrectionMs => startCorrectionMs;
     public string CurrentAudioFilePath { get; private set; }
     public bool IsAudioLoading { get; private set; }
+    public string LastTestPlaybackError { get; private set; }
     public double CorrectedTestMs => AudioMs + StartCorrectionMs;
     public double AudioDurationMs
     {
@@ -142,7 +156,8 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
     /// <summary>선택한 로컬 음악 파일을 비동기로 읽어 테스트 AudioSource에 적용합니다.</summary>
     public bool LoadAudioFile(string filePath)
     {
-        if (audioSource == null || IsAudioLoading)
+        if (audioSource == null || IsAudioLoading || IsTestPlaying ||
+            startInProgress || stopInProgress)
         {
             return false;
         }
@@ -221,6 +236,42 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
     /// <summary>지정한 음악 위치부터 DSP 예약 재생을 시작합니다.</summary>
     public void StartTestPlay(double startMs)
     {
+        if (startInProgress || stopInProgress ||
+            playbackStateNotificationDepth > 0)
+        {
+            RejectTestPlaybackStart(
+                "Test playback cannot start recursively from another start, " +
+                "stop, or playback-state callback.");
+            return;
+        }
+
+        if (IsTestPlaying)
+        {
+            RejectTestPlaybackStart(
+                "Test playback is already running. End it before starting a new preview session.");
+            return;
+        }
+
+        LastTestPlaybackError = null;
+        startInProgress = true;
+        startCancellationRequested = false;
+        CurrentTestPlaybackAttemptId = NextTestPlaybackAttemptId();
+
+        try
+        {
+            StartTestPlayCore(startMs, CurrentTestPlaybackAttemptId);
+        }
+        finally
+        {
+            CurrentTestPlaybackAttemptId = 0L;
+            startCancellationRequested = false;
+            startInProgress = false;
+        }
+    }
+
+    private void StartTestPlayCore(double startMs, long attemptId)
+    {
+
         AudioClip clip = audioSource != null ? audioSource.clip : null;
 
         if (clip == null ||
@@ -229,32 +280,40 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
             clip.loadState == AudioDataLoadState.Failed ||
             IsAudioLoading)
         {
-            Debug.LogWarning(
-                "Test playback requires a loaded audio clip and no active audio load.",
-                this);
+            RejectTestPlaybackStart(
+                "Test playback requires a loaded audio clip and no active audio load.");
             return;
         }
 
         double normalizedStartMs = NormalizeTestMs(startMs);
-
-        if (!CanStartTestPlayback(normalizedStartMs))
-        {
-            Debug.LogWarning(
-                "Test playback was blocked because the chart could not be " +
-                "compiled.",
-                this);
-            return;
-        }
-
-        audioSource.Stop();
         int startSample = (int)Math.Min(
             clip.samples - 1L,
             Math.Max(
                 0L,
                 (long)Math.Round(
                     normalizedStartMs * clip.frequency / 1000d)));
+        double sampleAlignedStartMs =
+            startSample * 1000d / clip.frequency;
+
+        if (!CanStartTestPlayback(sampleAlignedStartMs))
+        {
+            NotifyTestPlaybackStartAborted(attemptId);
+            RejectTestPlaybackStart(
+                string.IsNullOrWhiteSpace(LastTestPlaybackError)
+                    ? "Test playback was blocked because the chart could not be compiled."
+                    : LastTestPlaybackError);
+            return;
+        }
+
+        if (startCancellationRequested)
+        {
+            NotifyTestPlaybackStartAborted(attemptId);
+            return;
+        }
+
+        audioSource.Stop();
         audioSource.timeSamples = startSample;
-        playbackStartMs = startSample * 1000d / clip.frequency;
+        playbackStartMs = sampleAlignedStartMs;
         SetTestMs(playbackStartMs);
         double scheduledStartDspTime =
             AudioSettings.dspTime + schedulingLeadTimeSeconds;
@@ -262,18 +321,43 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
             scheduledStartDspTime,
             playbackStartMs);
         audioSource.PlayScheduled(scheduledStartDspTime);
+        ActiveTestPlaybackSessionId = attemptId;
+        LastTestPlaybackError = null;
         SetPlaybackState(true);
+
+        if (!IsTestPlaying || startCancellationRequested)
+        {
+            NotifyTestPlaybackStartAborted(attemptId);
+
+            if (IsTestPlaying)
+            {
+                CompleteTestPlayback(rewindTimeline: true);
+            }
+        }
     }
 
     /// <summary>테스트 재생을 끝내고 음악·타임라인·표시 위치를 시작점으로 되돌립니다.</summary>
     public void EndTestPlay()
     {
+        if (startInProgress)
+        {
+            startCancellationRequested = true;
+        }
+
         CompleteTestPlayback(rewindTimeline: true);
     }
 
     /// <summary>채보 계산에 사용할 BPM을 설정합니다.</summary>
     public void SetBpm(double value)
     {
+        if (IsTestPlaying || startInProgress || stopInProgress)
+        {
+            Debug.LogWarning(
+                "Stop test playback before changing the chart BPM.",
+                this);
+            return;
+        }
+
         if (!IsFinite(value) || value <= 0d)
         {
             Debug.LogWarning($"BPM must be greater than zero: {value}", this);
@@ -303,6 +387,14 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
     /// <summary>음악 시작점과 채보 시작점 사이의 밀리초 보정값을 설정합니다.</summary>
     public void SetStartCorrectionMs(double value)
     {
+        if (IsTestPlaying || startInProgress || stopInProgress)
+        {
+            Debug.LogWarning(
+                "Stop test playback before changing the music start correction.",
+                this);
+            return;
+        }
+
         double normalizedValue = NormalizeCorrectionMs(value);
 
         if (startCorrectionMs.Equals(normalizedValue))
@@ -343,10 +435,9 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
 
         if (request.result != UnityWebRequest.Result.Success)
         {
-            Debug.LogError(
-                $"Failed to load music '{fullPath}': {request.error}",
-                this);
-            IsAudioLoading = false;
+            ReportAudioLoadFailure(
+                $"Failed to load music '{Path.GetFileName(fullPath)}': " +
+                request.error);
             yield break;
         }
 
@@ -354,8 +445,9 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
 
         if (!newClip)
         {
-            Debug.LogError($"The selected music could not be decoded: {fullPath}", this);
-            IsAudioLoading = false;
+            ReportAudioLoadFailure(
+                $"The selected music could not be decoded: " +
+                Path.GetFileName(fullPath));
             yield break;
         }
 
@@ -377,6 +469,16 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
         Debug.Log($"Music opened: {fullPath}", this);
     }
 
+    private void ReportAudioLoadFailure(string message)
+    {
+        IsAudioLoading = false;
+        string normalized = string.IsNullOrWhiteSpace(message)
+            ? "The selected music could not be loaded."
+            : message.Trim();
+        Debug.LogError(normalized, this);
+        AudioLoadFailed?.Invoke(normalized);
+    }
+
     private static bool TryGetAudioType(
         string filePath,
         out AudioType audioType)
@@ -396,6 +498,24 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
 
     private void CompleteTestPlayback(bool rewindTimeline)
     {
+        if (stopInProgress)
+        {
+            return;
+        }
+
+        stopInProgress = true;
+        try
+        {
+            CompleteTestPlaybackCore(rewindTimeline);
+        }
+        finally
+        {
+            stopInProgress = false;
+        }
+    }
+
+    private void CompleteTestPlaybackCore(bool rewindTimeline)
+    {
         double completedTimeMs = rewindTimeline
             ? 0d
             : Math.Min(TestMs, AudioDurationMs);
@@ -406,8 +526,21 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
             ResetAudioPosition();
         }
 
-        SetTestMs(completedTimeMs);
-        SetPlaybackState(false);
+        if (rewindTimeline)
+        {
+            // Stop listeners before publishing the backwards jump to zero. An active
+            // EffectRunner only accepts monotonic time, so treating the rewind as a
+            // playing frame would re-enter EndTestPlay through its failure path.
+            SetPlaybackState(false);
+            SetTestMs(completedTimeMs);
+        }
+        else
+        {
+            // Natural completion still publishes the final forward time while the
+            // preview session is alive, then releases the session.
+            SetTestMs(completedTimeMs);
+            SetPlaybackState(false);
+        }
     }
 
     private void ResetAudioPosition()
@@ -429,7 +562,64 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
         }
 
         isTestPlaying = playing;
-        TestPlaybackChanged?.Invoke(isTestPlaying);
+        if (!playing)
+        {
+            ActiveTestPlaybackSessionId = 0L;
+        }
+
+        if (TestPlaybackChanged == null) return;
+        playbackStateNotificationDepth++;
+        try
+        {
+            foreach (Delegate listener in TestPlaybackChanged.GetInvocationList())
+            {
+                try { ((Action<bool>)listener)(playing); }
+                catch (Exception exception) { Debug.LogException(exception, this); }
+            }
+        }
+        finally
+        {
+            playbackStateNotificationDepth--;
+        }
+    }
+
+    /// <summary>
+    /// A playback-start validator can provide the user-facing reason before it
+    /// returns false. The core publishes that reason after every owner has had a
+    /// chance to roll back its prepared state.
+    /// </summary>
+    internal void SetTestPlaybackFailureReason(string message)
+    {
+        if (startInProgress && !string.IsNullOrWhiteSpace(message))
+        {
+            LastTestPlaybackError = message.Trim();
+        }
+    }
+
+    private void RejectTestPlaybackStart(string message)
+    {
+        LastTestPlaybackError = string.IsNullOrWhiteSpace(message)
+            ? "Test playback could not start."
+            : message.Trim();
+        Debug.LogWarning(LastTestPlaybackError, this);
+
+        if (TestPlaybackStartFailed == null)
+        {
+            return;
+        }
+
+        foreach (Delegate listener in
+                 TestPlaybackStartFailed.GetInvocationList())
+        {
+            try
+            {
+                ((Action<string>)listener)(LastTestPlaybackError);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogException(exception, this);
+            }
+        }
     }
 
     private bool CanStartTestPlayback(double startMs)
@@ -458,6 +648,46 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
         }
 
         return true;
+    }
+
+    private void NotifyTestPlaybackStartAborted(long attemptId)
+    {
+        if (CurrentTestPlaybackAttemptId != attemptId)
+        {
+            return;
+        }
+
+        if (TestPlaybackStartAborted == null) return;
+
+        Delegate[] listeners = TestPlaybackStartAborted.GetInvocationList();
+        for (int i = 0; i < listeners.Length; i++)
+        {
+            try
+            {
+                ((Action)listeners[i]).Invoke();
+            }
+            catch (Exception exception)
+            {
+                // One observer must not prevent other owners from rolling back
+                // resources allocated during TestPlaybackStarting.
+                Debug.LogException(exception, this);
+            }
+        }
+    }
+
+    private long NextTestPlaybackAttemptId()
+    {
+        unchecked
+        {
+            nextTestPlaybackAttemptId++;
+        }
+
+        if (nextTestPlaybackAttemptId == 0L)
+        {
+            nextTestPlaybackAttemptId = 1L;
+        }
+
+        return nextTestPlaybackAttemptId;
     }
 
     private static double NormalizeBpm(double value)

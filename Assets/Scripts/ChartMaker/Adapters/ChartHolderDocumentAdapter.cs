@@ -56,6 +56,12 @@ public static class ChartHolderDocumentAdapter
             AddTimingEvent(holder, position, document, issues);
             AddLineSpeedEvent(holder, position, document, issues);
             AddCameraEvent(holder, position, document, issues);
+            if (holder.isEffect)
+            {
+                document.EffectEvents.Add(new ChartEffectEvent(
+                    position, holder.effectId, holder.effectTypeId,
+                    holder.effectCommandId, holder.effectOrder));
+            }
             AddMainNotes(
                 holder,
                 position,
@@ -288,6 +294,14 @@ public static class ChartHolderDocumentAdapter
 
             if (noteType == NoteType.Scratch)
             {
+                AddScratchCameraTiltEvent(
+                    holder,
+                    scratchIndex,
+                    noteType,
+                    ScratchPointType.Tap,
+                    position,
+                    lane,
+                    document);
                 AddSingleNote(
                     document,
                     viewBindings,
@@ -310,6 +324,14 @@ public static class ChartHolderDocumentAdapter
 
             ScratchPointType pointType =
                 holder.scratchPointTypes[scratchIndex];
+            AddScratchCameraTiltEvent(
+                holder,
+                scratchIndex,
+                noteType,
+                pointType,
+                position,
+                lane,
+                document);
             PendingLongNote pending = pendingScratch[scratchIndex];
 
             switch (pointType)
@@ -371,6 +393,61 @@ public static class ChartHolderDocumentAdapter
                     break;
             }
         }
+    }
+
+    private static void AddScratchCameraTiltEvent(
+        ChartHolder holder,
+        int scratchIndex,
+        NoteType noteType,
+        ScratchPointType pointType,
+        int position,
+        int lane,
+        ChartDocument document)
+    {
+        ScratchMotionData motion = ScratchMotionRules.NormalizeMotion(
+            noteType,
+            pointType,
+            holder.scratchMotions[scratchIndex]);
+
+        if (noteType == NoteType.Scratch)
+        {
+            if (motion.MotionType == ScratchMotionType.Instant &&
+                motion.MoveAmount > 0)
+            {
+                document.ScratchCameraTiltEvents.Add(
+                    new ChartScratchCameraTiltEvent(
+                        position,
+                        (ChartLane)lane,
+                        ChartScratchCameraTiltEventType.Instant));
+            }
+
+            return;
+        }
+
+        ChartScratchCameraTiltEventType eventType;
+
+        if (motion.MotionType == ScratchMotionType.Release &&
+            motion.MoveAmount > 0)
+        {
+            eventType = ChartScratchCameraTiltEventType.ReverseInstant;
+        }
+        else if (pointType == ScratchPointType.End ||
+                 motion.MotionType == ScratchMotionType.None ||
+                 motion.MoveAmount <= 0)
+        {
+            eventType = ChartScratchCameraTiltEventType.Release;
+        }
+        else
+        {
+            eventType = motion.MotionType == ScratchMotionType.Gradual
+                ? ChartScratchCameraTiltEventType.Gradual
+                : ChartScratchCameraTiltEventType.Instant;
+        }
+        document.ScratchCameraTiltEvents.Add(
+            new ChartScratchCameraTiltEvent(
+                position,
+                (ChartLane)lane,
+                eventType));
     }
 
     private static void AddSingleNote(

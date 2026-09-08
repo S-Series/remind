@@ -9,6 +9,8 @@ using UnityEngine.Serialization;
 public sealed class ChartTestPlay : MonoBehaviour
 {
     private const double TargetTimeEpsilonMs = 0.0001d;
+    internal const string PreviewSetupMessagePrefix =
+        "Preview needs setup:";
 
     [Header("Movement")]
     [FormerlySerializedAs("moveCameraTranform")]
@@ -23,6 +25,9 @@ public sealed class ChartTestPlay : MonoBehaviour
     [SerializeField] private bool hideProcessedNotes = true;
     [SerializeField] private ChartPreviewFloorRenderer previewFloorRenderer;
 
+    [Header("Editor Guidance")]
+    [SerializeField] private ChartNoteSelectionController selectionController;
+
     private ChartCore chartCore;
     private PlayableChartSnapshot snapshot;
     private IReadOnlyDictionary<string, ChartNoteViewBinding> viewBindings;
@@ -34,6 +39,17 @@ public sealed class ChartTestPlay : MonoBehaviour
     private double previousAutoTestTimeMs = double.NegativeInfinity;
     private int nextAutoTestNoteIndex;
     private bool hasStoredScrollPosition;
+    [Header("Effect Preview (test state only)")]
+    [SerializeField, Range(0, 100)] private float effectPreviewHealth = 100f;
+    private PreparedEffectPlan effectPlan;
+    private EffectRunner effectRunner;
+    private EffectCameraMixer effectCamera;
+    private EffectRuleService effectRules;
+    private EffectTransitionMailbox effectTransitions;
+    private long effectSessionId;
+    private bool initialized;
+    private bool eventsBound;
+    public string LastEffectMessage { get; private set; }
 
     public float ChartPositionY { get; private set; }
     public float CameraPositionY { get; private set; }
@@ -92,10 +108,79 @@ public sealed class ChartTestPlay : MonoBehaviour
                 FindFirstObjectByType<ChartPreviewFloorRenderer>();
         }
 
+        ResolveSelectionController();
+
+        initialized = true;
+        BindEvents();
+
+        SynchronizePlaybackView();
+    }
+
+    private void OnEnable()
+    {
+        // OnEnable precedes Start on the first activation. Re-enabling after Start
+        // must restore subscriptions exactly once and rebuild from current state.
+        if (!initialized) return;
+        BindEvents();
+        SynchronizePlaybackView();
+    }
+
+    private void OnDisable()
+    {
+        UnbindEvents();
+
+        // This component owns the preview Effect session. Do not leave audio and
+        // timeline callbacks running after its presenter has been disabled.
+        if (initialized && chartCore && chartCore.IsTestPlaying)
+        {
+            chartCore.EndTestPlay();
+        }
+
+        if (initialized && chartScroll)
+        {
+            ResetTestView();
+        }
+        else
+        {
+            DisposeEffects();
+            RestoreAutoTestNotes(clearQueue: true);
+            snapshot = null;
+            viewBindings = null;
+        }
+    }
+
+    private void OnDestroy()
+    {
+        UnbindEvents();
+        DisposeEffects();
+        RestoreAutoTestNotes(clearQueue: true);
+    }
+
+    private void BindEvents()
+    {
+        if (eventsBound || !chartCore) return;
         chartCore.TestPlaybackStarting += HandleTestPlaybackStarting;
+        chartCore.TestPlaybackStartAborted += HandleTestPlaybackStartAborted;
         chartCore.TestMsChanged += HandleTestMsChanged;
         chartCore.TestPlaybackChanged += HandleTestPlaybackChanged;
+        eventsBound = true;
+    }
 
+    private void UnbindEvents()
+    {
+        if (!eventsBound) return;
+        if (chartCore)
+        {
+            chartCore.TestPlaybackStarting -= HandleTestPlaybackStarting;
+            chartCore.TestPlaybackStartAborted -= HandleTestPlaybackStartAborted;
+            chartCore.TestMsChanged -= HandleTestMsChanged;
+            chartCore.TestPlaybackChanged -= HandleTestPlaybackChanged;
+        }
+        eventsBound = false;
+    }
+
+    private void SynchronizePlaybackView()
+    {
         if (chartCore.IsTestPlaying && TryCompileSnapshot())
         {
             BeginTestView();
@@ -106,21 +191,27 @@ public sealed class ChartTestPlay : MonoBehaviour
         }
     }
 
-    private void OnDestroy()
+    private bool HandleTestPlaybackStarting(double startSongTimeMs)
     {
-        RestoreAutoTestNotes(clearQueue: true);
-
-        if (chartCore != null)
+        long attemptId = chartCore.CurrentTestPlaybackAttemptId;
+        bool succeeded = attemptId != 0L && TryCompileSnapshot() &&
+            PrepareEffects(startSongTimeMs, attemptId);
+        if (!succeeded && chartCore &&
+            !string.IsNullOrWhiteSpace(LastEffectMessage))
         {
-            chartCore.TestPlaybackStarting -= HandleTestPlaybackStarting;
-            chartCore.TestMsChanged -= HandleTestMsChanged;
-            chartCore.TestPlaybackChanged -= HandleTestPlaybackChanged;
+            chartCore.SetTestPlaybackFailureReason(LastEffectMessage);
         }
+
+        return succeeded;
     }
 
-    private bool HandleTestPlaybackStarting(double _)
+    private void HandleTestPlaybackStartAborted()
     {
-        return TryCompileSnapshot();
+        long attemptId = chartCore.CurrentTestPlaybackAttemptId;
+        if (attemptId != 0L && effectSessionId == attemptId)
+        {
+            DisposeEffects();
+        }
     }
 
     private void HandleTestMsChanged(double songTimeMs)
@@ -185,6 +276,14 @@ public sealed class ChartTestPlay : MonoBehaviour
 
     private bool TryCompileSnapshot()
     {
+        if (TryGuideToUnresolvedEffect())
+        {
+            snapshot = null;
+            viewBindings = null;
+            effectPlan = null;
+            return false;
+        }
+
         ChartHolderDocumentBuildResult buildResult =
             ChartHolderDocumentAdapter.Build(
                 ChartManager.ChartHolders,
@@ -197,6 +296,7 @@ public sealed class ChartTestPlay : MonoBehaviour
         {
             snapshot = null;
             viewBindings = null;
+            ReportCompileFailure(buildResult.Issues);
             return false;
         }
 
@@ -211,12 +311,198 @@ public sealed class ChartTestPlay : MonoBehaviour
         {
             snapshot = null;
             viewBindings = null;
+            ReportCompileFailure(compileResult.Issues);
             return false;
         }
 
         snapshot = compileResult.Snapshot;
         viewBindings = buildResult.ViewBindings;
+        try
+        {
+            effectPlan = ChartEffectPreparation.Prepare(snapshot, ChartManager.ChartHolders,
+                ChartEffectDocumentState.GimmickId);
+            LastEffectMessage = null;
+        }
+        catch (Exception exception)
+        {
+            ReportEffectMessage(exception.Message);
+            return false;
+        }
         return true;
+    }
+
+    /// <summary>
+    /// An unresolved Effect is valid editor data, but it cannot be executed. Catch
+    /// this expected authoring state before compilation so Preview can guide the
+    /// user without producing a red Console error or a compiler stack trace.
+    /// </summary>
+    private bool TryGuideToUnresolvedEffect()
+    {
+        IReadOnlyList<ChartHolder> holders = ChartManager.ChartHolders;
+        for (int i = 0; i < holders.Count; i++)
+        {
+            ChartHolder holder = holders[i];
+            if (holder == null || !holder.isEffect ||
+                !string.IsNullOrWhiteSpace(holder.effectTypeId))
+            {
+                continue;
+            }
+
+            ResolveSelectionController();
+            FocusEffect(holder);
+            ReportEffectMessage(
+                $"{PreviewSetupMessagePrefix} Effect at measure " +
+                $"{holder.ChartNumber}, position {holder.ChartPos} has no type. " +
+                "Select an Effect Type and click Apply before starting Preview.");
+            return true;
+        }
+
+        return false;
+    }
+
+    private void ResolveSelectionController()
+    {
+        if (!selectionController)
+        {
+            selectionController =
+                FindFirstObjectByType<ChartNoteSelectionController>();
+        }
+    }
+
+    private void FocusEffect(ChartHolder holder)
+    {
+        if (!selectionController ||
+            !holder.TryGetEffectNote(out GameObject[] noteObjects) ||
+            noteObjects == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < noteObjects.Length; i++)
+        {
+            GameObject noteObject = noteObjects[i];
+            if (!noteObject ||
+                !noteObject.TryGetComponent(out ChartNoteSelectable _))
+            {
+                continue;
+            }
+
+            selectionController.SelectNoteObject(noteObject);
+            return;
+        }
+    }
+
+    internal static bool IsPreviewSetupGuidance(string message)
+    {
+        return !string.IsNullOrWhiteSpace(message) &&
+            message.StartsWith(
+                PreviewSetupMessagePrefix,
+                StringComparison.Ordinal);
+    }
+
+    private bool PrepareEffects(double songTimeMs, long sessionId)
+    {
+        if (!DisposeEffects())
+        {
+            return false;
+        }
+        try
+        {
+            effectCamera = new EffectCameraMixer(chartScroll.SetEffectCameraOffset);
+            effectRules = new EffectRuleService(null);
+            // Preview only reports requests; it has no access to scenes/accounts/progress.
+            effectTransitions = new EffectTransitionMailbox((music, difficulty) =>
+                !string.IsNullOrWhiteSpace(music) && !string.IsNullOrWhiteSpace(difficulty));
+            var session = new EffectSessionContext(ChartEffectDocumentState.MusicId,
+                ChartEffectDocumentState.DifficultyId, EffectExecutionMode.Preview, effectCamera,
+                new EffectTestGameState { CurrentHealth = effectPreviewHealth }, effectRules, effectTransitions);
+            effectRunner = new EffectRunner(effectPlan, session, songTimeMs + chartCore.StartCorrectionMs);
+            effectSessionId = sessionId;
+            return true;
+        }
+        catch (Exception exception)
+        {
+            DisposeEffects();
+            ReportEffectMessage(exception.Message);
+            return false;
+        }
+    }
+
+    private bool DisposeEffects()
+    {
+        // Detach the current generation before invoking user/plugin cleanup. A
+        // re-entrant callback cannot observe or dispose a newly created session.
+        EffectRunner runnerToDispose = effectRunner;
+        EffectRuleService rulesToDispose = effectRules;
+        EffectCameraMixer cameraToDispose = effectCamera;
+        EffectTransitionMailbox transitionsToDispose = effectTransitions;
+        effectSessionId = 0L;
+        effectRunner = null;
+        effectRules = null;
+        effectCamera = null;
+        effectTransitions = null;
+
+        var failures = new List<Exception>();
+        EffectExecutionFailure runnerFailureBeforeDispose =
+            runnerToDispose?.Failure;
+        DisposeEffectResource(runnerToDispose, failures);
+        if (runnerToDispose?.Failure != null &&
+            !ReferenceEquals(
+                runnerFailureBeforeDispose,
+                runnerToDispose.Failure))
+        {
+            // EffectRunner records cleanup failures instead of throwing them.
+            // Surface a failure created by this Dispose call together with the
+            // other preview-owned resource cleanup failures.
+            failures.Add(runnerToDispose.Failure.Exception);
+        }
+        DisposeEffectResource(rulesToDispose, failures);
+        DisposeEffectResource(cameraToDispose, failures);
+        DisposeEffectResource(transitionsToDispose, failures);
+
+        if (failures.Count > 0)
+        {
+            var cleanupFailure = new AggregateException(
+                "Effect preview cleanup failed.", failures);
+            LastEffectMessage = cleanupFailure.Message;
+            Debug.LogException(cleanupFailure, this);
+            return false;
+        }
+
+        return true;
+    }
+
+    private static void DisposeEffectResource(
+        IDisposable resource,
+        ICollection<Exception> failures)
+    {
+        if (resource == null) return;
+        try
+        {
+            resource.Dispose();
+        }
+        catch (Exception exception)
+        {
+            failures.Add(exception);
+        }
+    }
+
+    private void ReportEffectMessage(string message)
+    {
+        LastEffectMessage = message;
+        // During a Core-owned start attempt, ChartCore publishes the final
+        // rejection once all validators have rolled back. Avoid logging the same
+        // expected authoring message twice.
+        if (!chartCore || !chartCore.IsTestPlaybackStartInProgress)
+        {
+            Debug.LogWarning("Effect preview: " + message, this);
+        }
+    }
+
+    private void OnGUI()
+    {
+        if (!string.IsNullOrEmpty(LastEffectMessage))
+            GUI.Box(new Rect(20, 20, Math.Min(720, Screen.width - 40), 100), LastEffectMessage);
     }
 
     private void LogCompileIssues(IReadOnlyList<CompileIssue> issues)
@@ -238,10 +524,52 @@ public sealed class ChartTestPlay : MonoBehaviour
         }
     }
 
+    private void ReportCompileFailure(IReadOnlyList<CompileIssue> issues)
+    {
+        string message = "The chart could not be prepared for Preview.";
+        if (issues != null)
+        {
+            for (int i = 0; i < issues.Count; i++)
+            {
+                CompileIssue issue = issues[i];
+                if (issue.Severity != CompileIssueSeverity.Error)
+                {
+                    continue;
+                }
+
+                message = $"Preview blocked ({issue.Code}): {issue.Message}";
+                break;
+            }
+        }
+
+        ReportEffectMessage(message);
+    }
+
     private void BeginTestView()
     {
+        long sessionId = chartCore.ActiveTestPlaybackSessionId;
+        if (sessionId == 0L)
+        {
+            chartCore.EndTestPlay();
+            return;
+        }
+
         if (snapshot == null && !TryCompileSnapshot())
         {
+            return;
+        }
+
+        if (effectRunner != null && effectSessionId != sessionId &&
+            !DisposeEffects())
+        {
+            chartCore.EndTestPlay();
+            return;
+        }
+
+        if (effectRunner == null &&
+            !PrepareEffects(chartCore.TestMs, sessionId))
+        {
+            chartCore.EndTestPlay();
             return;
         }
 
@@ -274,41 +602,77 @@ public sealed class ChartTestPlay : MonoBehaviour
 
         double chartTimeMs =
             songTimeMs + chartCore.StartCorrectionMs;
+        long sessionId = effectSessionId;
+        try
+        {
+            if (chartCore.HasReachedScheduledStart)
+            {
+                bool frameSucceeded = ProcessTestFrame(chartTimeMs);
+                if (!IsCurrentEffectSession(sessionId))
+                {
+                    return;
+                }
+
+                if (!frameSucceeded)
+                {
+                    string message = effectRunner.Failure != null ? effectRunner.Failure.Message :
+                        $"Preview transition requested: {effectTransitions.TargetMusicId}/{effectTransitions.TargetDifficultyId}. No real song/account change was performed.";
+                    chartCore.EndTestPlay();
+                    ReportEffectMessage(message);
+                    return;
+                }
+            }
+            effectCamera?.Apply();
+            if (!IsCurrentEffectSession(sessionId))
+            {
+                return;
+            }
+        }
+        catch (Exception exception)
+        {
+            chartCore.EndTestPlay();
+            ReportEffectMessage(exception.Message);
+            return;
+        }
         ApplyCameraMotion(chartTimeMs);
         ChartPositionY = (float)snapshot.ScrollMap.FloorPositionAtTime(
             chartTimeMs);
         chartScroll.SetExternalChartY(ChartPositionY);
         CameraPositionY = chartScroll.CameraY;
-        ProcessAutoTestNotes(chartTimeMs);
+    }
+
+    private bool IsCurrentEffectSession(long sessionId)
+    {
+        return sessionId != 0L && effectSessionId == sessionId &&
+            chartCore.IsTestPlaying &&
+            chartCore.ActiveTestPlaybackSessionId == sessionId &&
+            snapshot != null;
     }
 
     private void ApplyCameraMotion(double chartTimeMs)
     {
         CameraMotionState cameraState =
             snapshot.CameraMotionMap.EvaluateAtTime(chartTimeMs);
-        float referenceX = 0f;
-
-        if (cameraState.HasReference)
-        {
-            float lineX = previewFloorRenderer
-                ? previewFloorRenderer.EvaluateCenterOffsetX(
-                    (float)cameraState.ReferenceFloorPosition)
-                : 0f;
-            referenceX = lineX +
-                (float)cameraState.ReferenceOffsetX;
-        }
+        float referenceX = previewFloorRenderer
+            ? previewFloorRenderer.EvaluateCameraReferenceX(cameraState)
+            : 0f;
 
         ChartScroll.PreviewCameraRotationReferenceX = referenceX;
         ChartScroll.PreviewCameraSpinDegrees =
             (float)cameraState.SpinDegrees;
+        ChartScroll.PreviewCameraScratchTiltDegrees =
+            (float)snapshot.ScratchCameraTiltMap.EvaluateAtTime(
+                chartTimeMs);
     }
 
     private void ResetTestView()
     {
+        DisposeEffects();
         ChartPositionY = 0f;
         CameraPositionY = 0f;
         ChartScroll.PreviewCameraRotationReferenceX = 0f;
         ChartScroll.PreviewCameraSpinDegrees = 0f;
+        ChartScroll.PreviewCameraScratchTiltDegrees = 0f;
 
         if (hasStoredScrollPosition)
         {
@@ -470,7 +834,12 @@ public sealed class ChartTestPlay : MonoBehaviour
         previousAutoTestTimeMs = chartTimeMs;
     }
 
-    private void ProcessAutoTestNotes(double chartTimeMs)
+    /// <summary>
+    /// Effect와 자동 판정 타깃을 하나의 시간축으로 처리합니다. 지연 프레임에서도
+    /// Effect 시작에는 예약 시각이 아닌 실제 프레임 시각을 전달하고, 같은 시각에는
+    /// Effect를 먼저 실행한 뒤 활성 Effect/Gimmick을 프레임 끝에서 한 번만 갱신합니다.
+    /// </summary>
+    private bool ProcessTestFrame(double chartTimeMs)
     {
         if (chartTimeMs + TargetTimeEpsilonMs < previousAutoTestTimeMs)
         {
@@ -480,35 +849,80 @@ public sealed class ChartTestPlay : MonoBehaviour
 
         previousAutoTestTimeMs = chartTimeMs;
 
-        while (nextAutoTestNoteIndex < autoTestNotes.Count &&
-               autoTestNotes[nextAutoTestNoteIndex].TargetTimeMs <=
-               chartTimeMs + TargetTimeEpsilonMs)
+        while (true)
         {
-            double hitTimeMs =
-                autoTestNotes[nextAutoTestNoteIndex].TargetTimeMs;
-            int hitEffectLaneMask = 0;
+            double nextEffectTimeMs = effectRunner != null
+                ? effectRunner.NextEventTimeMs
+                : double.PositiveInfinity;
+            double nextNoteTimeMs =
+                nextAutoTestNoteIndex < autoTestNotes.Count
+                    ? autoTestNotes[nextAutoTestNoteIndex].TargetTimeMs
+                    : double.PositiveInfinity;
+            bool effectIsDue = nextEffectTimeMs <= chartTimeMs;
+            bool noteIsDue = nextNoteTimeMs <=
+                chartTimeMs + TargetTimeEpsilonMs;
 
-            do
+            if (!effectIsDue && !noteIsDue)
             {
-                AutoTestNote note =
-                    autoTestNotes[nextAutoTestNoteIndex];
-                hitEffectLaneMask |= 1 << note.Lane;
+                break;
+            }
 
-                if (hideProcessedNotes)
+            if (effectIsDue &&
+                (!noteIsDue || nextEffectTimeMs <=
+                    nextNoteTimeMs + TargetTimeEpsilonMs))
+            {
+                if (!effectRunner.TriggerThrough(
+                        nextEffectTimeMs,
+                        chartTimeMs))
                 {
-                    note.SetProcessed();
+                    return false;
                 }
 
-                nextAutoTestNoteIndex++;
+                continue;
             }
-            while (nextAutoTestNoteIndex < autoTestNotes.Count &&
-                   Math.Abs(
-                       autoTestNotes[nextAutoTestNoteIndex].TargetTimeMs -
-                       hitTimeMs) <= TargetTimeEpsilonMs);
 
-            PlayHitSound();
-            PlayHitEffects(hitEffectLaneMask);
+            // Auto-test notes keep their historical epsilon tolerance. If an
+            // Effect shares that tolerated timestamp but is still fractionally
+            // in the future, defer the note so the Effect remains first.
+            if (!effectIsDue &&
+                nextEffectTimeMs <= chartTimeMs + TargetTimeEpsilonMs &&
+                Math.Abs(nextEffectTimeMs - nextNoteTimeMs) <=
+                    TargetTimeEpsilonMs)
+            {
+                break;
+            }
+
+            ProcessNextAutoTestNoteTime();
         }
+
+        return effectRunner == null || effectRunner.AdvanceTo(chartTimeMs);
+    }
+
+    private void ProcessNextAutoTestNoteTime()
+    {
+        double hitTimeMs =
+            autoTestNotes[nextAutoTestNoteIndex].TargetTimeMs;
+        int hitEffectLaneMask = 0;
+
+        do
+        {
+            AutoTestNote note = autoTestNotes[nextAutoTestNoteIndex];
+            hitEffectLaneMask |= 1 << note.Lane;
+
+            if (hideProcessedNotes)
+            {
+                note.SetProcessed();
+            }
+
+            nextAutoTestNoteIndex++;
+        }
+        while (nextAutoTestNoteIndex < autoTestNotes.Count &&
+               Math.Abs(
+                   autoTestNotes[nextAutoTestNoteIndex].TargetTimeMs -
+                   hitTimeMs) <= TargetTimeEpsilonMs);
+
+        PlayHitSound();
+        PlayHitEffects(hitEffectLaneMask);
     }
 
     private void PlayHitSound()

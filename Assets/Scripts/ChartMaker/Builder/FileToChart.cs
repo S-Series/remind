@@ -154,8 +154,16 @@ public sealed class FileToChart : MonoBehaviour
     public ChartFile LoadText(string text)
     {
         ChartFile chartFile = ParseSupportedChart(text);
+        if (chartFile.HasEffectParameterFile)
+            throw new FormatException("This chart needs its paired Effect JSON. Open the .rd file by path.");
+        return ApplyLoadedChart(chartFile);
+    }
+
+    private ChartFile ApplyLoadedChart(ChartFile chartFile)
+    {
         ApplyTimingMetadata(chartFile);
         ChartManager.ReplaceChartData(chartFile.chartDatas);
+        ChartEffectDocumentState.Apply(chartFile);
 
         if (placementController)
         {
@@ -173,9 +181,14 @@ public sealed class FileToChart : MonoBehaviour
 
     private static ChartFile ParseSupportedChart(string text)
     {
+        if (ChartFileCodec.IsCurrentJsonDocument(text))
+        {
+            return ChartFileCodec.Parse(text);
+        }
+
         return TryParseLegacyJson(text, out ChartFile legacyChart)
             ? legacyChart
-            : ChartFileCodec.Parse(text);
+            : ChartFileCodec.ParseLegacyText(text);
     }
 
     /// <summary>구버전 JSON 병렬 배열을 현재 편집기 채보 데이터로 변환합니다.</summary>
@@ -407,6 +420,14 @@ public sealed class FileToChart : MonoBehaviour
     /// <summary>지정한 UTF-8 채보 파일을 읽어 현재 채보에 적용합니다.</summary>
     public ChartFile LoadFromPath(string filePath)
     {
+        ResolveChartCore();
+
+        if (chartCore && chartCore.IsTestPlaying)
+        {
+            throw new InvalidOperationException(
+                "Stop test playback before opening another chart.");
+        }
+
         if (string.IsNullOrWhiteSpace(filePath))
         {
             throw new ArgumentException(
@@ -415,23 +436,123 @@ public sealed class FileToChart : MonoBehaviour
         }
 
         string fullPath = Path.GetFullPath(filePath);
-        string text = File.ReadAllText(
-            fullPath,
-            Encoding.UTF8);
-        bool isLegacyJson = StartsWithJsonObject(text);
-        ChartFile chartFile = LoadText(text);
+
+        if (!ChartToFile.HasChartFileExtension(fullPath))
+        {
+            throw new NotSupportedException(
+                $"Only {ChartToFile.ChartFileExtension} chart files " +
+                "can be opened.");
+        }
+
+        bool currentExists = File.Exists(fullPath);
+        string text = currentExists
+            ? File.ReadAllText(fullPath, Encoding.UTF8)
+            : null;
+        bool isCurrentJson = currentExists &&
+            ChartFileCodec.IsCurrentJsonDocument(text);
+        bool backupIsCurrentJson = IsCurrentJsonFile(fullPath + ".bak");
+        bool loadedFromPairedStore = false;
+        bool recovered = false;
+        ChartFile chartFile;
+        if (isCurrentJson || (!currentExists && backupIsCurrentJson))
+        {
+            chartFile = ChartEffectFileStore.Load(fullPath, out recovered, out _);
+            loadedFromPairedStore = true;
+            ApplyLoadedChart(chartFile);
+        }
+        else if (currentExists)
+        {
+            try
+            {
+                chartFile = LoadText(text);
+            }
+            catch (Exception currentException)
+            {
+                if (!backupIsCurrentJson) throw;
+                try
+                {
+                    chartFile = ChartEffectFileStore.Load(fullPath,
+                        out recovered, out _);
+                    loadedFromPairedStore = true;
+                    ApplyLoadedChart(chartFile);
+                }
+                catch (Exception recoveryException)
+                {
+                    throw new IOException(
+                        "The current chart is invalid and its paired backup could " +
+                        "not be recovered.",
+                        new AggregateException(currentException,
+                            recoveryException));
+                }
+            }
+        }
+        else
+        {
+            throw new FileNotFoundException("The chart and a recoverable backup do not exist.", fullPath);
+        }
+
+        if (recovered)
+            Debug.LogWarning("Loaded a matching backup chart/Effect pair. Save to make this recovered state current.", this);
 
         if (chartToFile)
         {
-            // Legacy JSON is imported into the richer native text format. Clear
-            // its save path so a later Save cannot overwrite the source JSON.
-            chartToFile.SetSavePath(isLegacyJson ? null : fullPath);
+            // 현재 JSON 문서만 같은 .rd 경로에 다시 저장할 수 있습니다.
+            // 이전 포맷을 담은 .rd는 새 저장 경로를 요구합니다.
+            chartToFile.SetSavePath(loadedFromPairedStore ? fullPath : null);
             chartToFile.MarkCurrentStateAsSaved();
+            if (loadedFromPairedStore && recovered)
+                chartToFile.MarkRecoveredStateRequiresSave();
         }
 
         ChartMakerRecentFiles.RememberChartPath(fullPath);
 
         return chartFile;
+    }
+
+    private static bool IsCurrentJsonFile(string path)
+    {
+        if (!File.Exists(path)) return false;
+        try
+        {
+            return ChartFileCodec.IsCurrentJsonDocument(
+                File.ReadAllText(path, Encoding.UTF8));
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    public bool TryReloadEffectParameters(out string error)
+    {
+        try
+        {
+            if (chartCore && chartCore.IsTestPlaying)
+                throw new InvalidOperationException("Stop test playback before reloading Effect parameters.");
+            if (!chartToFile || !chartToFile.HasSavePath)
+                throw new InvalidOperationException("Save/open a .rd file before reloading Effect JSON.");
+            ChartFile edited = ChartFileCodec.Parse(chartToFile.BuildText());
+            string path = ChartEffectFileStore.GetParameterPath(chartToFile.CurrentFilePath,
+                edited.MusicId, edited.DifficultyId);
+            ChartEffectFileStore.ApplyParameters(edited, File.ReadAllText(path, Encoding.UTF8));
+            ChartEffectJsonCodec.BuildParameterMap(edited.chartDatas, edited.GimmickId);
+            var positions = new List<int>();
+            foreach (ChartHolder holder in edited.chartDatas)
+                if (holder.isEffect) positions.Add(holder.AbsoluteChartPosition);
+            var transaction = ChartEditHistory.BeginChange(positions.ToArray());
+            foreach (ChartHolder holder in edited.chartDatas)
+                if (holder.isEffect)
+                    ChartManager.GetHolder(holder.AbsoluteChartPosition).effectParametersJson = holder.effectParametersJson;
+            ChartEditHistory.CommitChange(transaction);
+            ChartManager.NotifyChartChanged();
+            error = null;
+            return true;
+        }
+        catch (Exception exception) { error = exception.Message; return false; }
     }
 
     public bool TryLoadText(

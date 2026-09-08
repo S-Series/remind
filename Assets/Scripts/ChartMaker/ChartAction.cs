@@ -17,7 +17,8 @@ public sealed class ChartAction : MonoBehaviour,
     {
         None = 0,
         Left = 1,
-        Right = 2
+        Right = 2,
+        Special = 3
     }
 
     [SerializeField] private Camera inputCamera;
@@ -28,6 +29,8 @@ public sealed class ChartAction : MonoBehaviour,
 
     public Vector2 LastNormalizedPosition { get; private set; }
     public bool IsHovered { get; private set; }
+    public bool IsSpecialField =>
+        positionCorrectionMode == PositionCorrectionMode.Special;
     public bool? PositionCorrection => positionCorrectionMode switch
     {
         PositionCorrectionMode.Left => false,
@@ -35,13 +38,13 @@ public sealed class ChartAction : MonoBehaviour,
         _ => null
     };
 
-    public event Action PointerEntered;
-    public event Action PointerExited;
-    public event Action<Vector2, bool?> NormalizedPositionChanged;
-    public event Action<Vector2, bool?> PositionClicked;
-    public event Action<Vector2, bool?> DragStarted;
-    public event Action<Vector2, bool?> PositionDragged;
-    public event Action<Vector2, bool?> DragEnded;
+    public event Action<ChartAction> PointerEntered;
+    public event Action<ChartAction> PointerExited;
+    public event Action<ChartAction, Vector2, bool?> NormalizedPositionChanged;
+    public event Action<ChartAction, Vector2, bool?> PositionClicked;
+    public event Action<ChartAction, Vector2, bool?> DragStarted;
+    public event Action<ChartAction, Vector2, bool?> PositionDragged;
+    public event Action<ChartAction, Vector2, bool?> DragEnded;
 
     private void Awake()
     {
@@ -73,13 +76,13 @@ public sealed class ChartAction : MonoBehaviour,
 
         IsHovered = true;
         NotifyPositionChanged();
-        PointerEntered?.Invoke();
+        PointerEntered?.Invoke(this);
     }
 
     public void OnPointerExit(PointerEventData eventData)
     {
         IsHovered = false;
-        PointerExited?.Invoke();
+        PointerExited?.Invoke(this);
     }
 
     public void OnPointerMove(PointerEventData eventData)
@@ -110,7 +113,10 @@ public sealed class ChartAction : MonoBehaviour,
             return;
         }
 
-        DragStarted?.Invoke(LastNormalizedPosition, PositionCorrection);
+        DragStarted?.Invoke(
+            this,
+            LastNormalizedPosition,
+            PositionCorrection);
     }
 
     public void OnDrag(PointerEventData eventData)
@@ -121,7 +127,10 @@ public sealed class ChartAction : MonoBehaviour,
             return;
         }
 
-        PositionDragged?.Invoke(LastNormalizedPosition, PositionCorrection);
+        PositionDragged?.Invoke(
+            this,
+            LastNormalizedPosition,
+            PositionCorrection);
     }
 
     public void OnEndDrag(PointerEventData eventData)
@@ -132,7 +141,10 @@ public sealed class ChartAction : MonoBehaviour,
         }
 
         TryUpdatePosition(eventData.position, false);
-        DragEnded?.Invoke(LastNormalizedPosition, PositionCorrection);
+        DragEnded?.Invoke(
+            this,
+            LastNormalizedPosition,
+            PositionCorrection);
     }
 
     public void OnScroll(PointerEventData eventData)
@@ -149,7 +161,7 @@ public sealed class ChartAction : MonoBehaviour,
         }
 
         IsHovered = false;
-        PointerExited?.Invoke();
+        PointerExited?.Invoke(this);
     }
 
     /// <summary>
@@ -163,6 +175,7 @@ public sealed class ChartAction : MonoBehaviour,
         }
 
         PositionClicked?.Invoke(
+            this,
             LastNormalizedPosition,
             PositionCorrection);
         return true;
@@ -171,6 +184,7 @@ public sealed class ChartAction : MonoBehaviour,
     private void NotifyPositionChanged()
     {
         NormalizedPositionChanged?.Invoke(
+            this,
             LastNormalizedPosition,
             PositionCorrection);
     }

@@ -41,6 +41,7 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
     private VisualElement cameraPanel;
     private FloatField cameraOffsetXField;
     private DropdownField cameraSpinDirectionField;
+    private ChartEffectNoteEditorPanel effectPanel;
     private Label errorLabel;
     private Button closeButton;
     private Button deleteButton;
@@ -106,12 +107,16 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
             return;
         }
 
+        effectPanel = new ChartEffectNoteEditorPanel(
+            SetMessage, HandleCopyEffectRequested, HandleReloadEffectRequested);
+        cameraPanel.parent.Add(effectPanel.Element);
+
         tapLineField.choices = CreateMainLineChoices();
         airLineField.choices = CreateMainLineChoices();
         tapHandField.choices = new List<string> { "Left", "Right" };
         scratchSideField.choices = new List<string> { "Left", "Right" };
         scratchMotionField.choices =
-            new List<string> { "None", "Gradual", "Instant" };
+            new List<string> { "None", "Gradual", "Instant", "Release" };
         scratchPointField.choices =
             new List<string> { "Tap", "Start", "Mid", "End" };
         cameraSpinDirectionField.choices =
@@ -236,9 +241,14 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
             cameraSpinDirectionField.SetValueWithoutNotify(
                 ToCameraSpinText(holder.cameraSpinDirection));
         }
+        else if (noteType == NoteType.Effect)
+        {
+            effectPanel.Populate(holder);
+        }
 
         applyButton.SetEnabled(
-            noteType.IsGameplayNote() || noteType == NoteType.Camera);
+            noteType.IsGameplayNote() || noteType == NoteType.Camera ||
+            noteType == NoteType.Effect);
         editWindow.style.display = DisplayStyle.Flex;
         editWindow.schedule.Execute(ApplyRememberedWindowPosition);
     }
@@ -515,6 +525,11 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
             ? DisplayStyle.Flex
             : DisplayStyle.None;
 
+        effectPanel.Element.style.display = noteType == NoteType.Effect
+            ? DisplayStyle.Flex
+            : DisplayStyle.None;
+        editWindow.style.width = noteType == NoteType.Effect ? 450f : 330f;
+
     }
 
     private void HandleCloseRequested()
@@ -556,6 +571,13 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
             case NoteType.Camera:
                 succeeded = TryApplyCameraEdit(out error);
                 break;
+            case NoteType.Effect:
+                succeeded = placementController.TryEditEffectNote(
+                    selectedNoteObject, measureField.value, positionField.value,
+                    effectPanel.EffectTypeId, effectPanel.CommandId, effectPanel.Order,
+                    effectPanel.ParametersJson, effectPanel.MusicId,
+                    effectPanel.DifficultyId, effectPanel.GimmickId, out error);
+                break;
             default:
                 succeeded = false;
                 error = $"{selectedNoteType} editing is not supported.";
@@ -595,6 +617,7 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
             {
                 "Gradual" => ScratchMotionType.Gradual,
                 "Instant" => ScratchMotionType.Instant,
+                "Release" => ScratchMotionType.Release,
                 _ => ScratchMotionType.None
             };
         ScratchPointType pointType = selectedNoteType == NoteType.Scratch
@@ -624,16 +647,28 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
 
     private void RefreshScratchMotionAvailability()
     {
-        bool ignoresMotion =
-            selectedNoteType == NoteType.LongScratch &&
-            scratchPointField.value == "End";
+        bool isLongScratch = selectedNoteType == NoteType.LongScratch;
+        bool isMid = isLongScratch && scratchPointField.value == "Mid";
+        bool isEnd = isLongScratch && scratchPointField.value == "End";
+        string currentMotion = scratchMotionField.value;
+        scratchMotionField.choices = isEnd
+            ? new List<string> { "None", "Release" }
+            : isMid
+                ? new List<string>
+                {
+                    "None",
+                    "Gradual",
+                    "Instant",
+                    "Release"
+                }
+                : new List<string> { "None", "Gradual", "Instant" };
 
-        if (ignoresMotion)
+        if (!scratchMotionField.choices.Contains(currentMotion))
         {
             scratchMotionField.SetValueWithoutNotify("None");
         }
 
-        scratchMotionField.SetEnabled(!ignoresMotion);
+        scratchMotionField.SetEnabled(true);
     }
 
     private bool TryApplyAirEdit(out string error)
@@ -673,6 +708,11 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
 
     private void SetError(string message)
     {
+        SetMessage(message, true);
+    }
+
+    private void SetMessage(string message, bool isError)
+    {
         if (errorLabel == null)
         {
             return;
@@ -683,7 +723,51 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
         errorLabel.style.display = hasError
             ? DisplayStyle.Flex
             : DisplayStyle.None;
+        errorLabel.EnableInClassList(
+            "note-edit-success",
+            hasError && !isError);
         editWindow?.schedule.Execute(ApplyRememberedWindowPosition);
+    }
+
+    private void HandleCopyEffectRequested()
+    {
+        if (selectedNoteType != NoteType.Effect || !selectedNoteObject)
+        {
+            return;
+        }
+        bool copied = placementController.TryDuplicateEffectNote(
+            selectedNoteObject, measureField.value, positionField.value, out string error);
+        if (copied)
+        {
+            SetMessage(
+                "Copied with a new effectId. Undo restores the previous chart.",
+                false);
+        }
+        else
+        {
+            SetError(error);
+        }
+    }
+
+    private void HandleReloadEffectRequested()
+    {
+        FileToChart loader = FindFirstObjectByType<FileToChart>();
+        if (!loader)
+        {
+            SetError("Chart file loader is unavailable.");
+            return;
+        }
+
+        if (!loader.TryReloadEffectParameters(out string error))
+        {
+            SetError(error);
+            return;
+        }
+
+        HandleSelectionChanged(selectionController.SelectedNoteObjects);
+        SetMessage(
+            "Saved parameter JSON reloaded. Undo restores the previous settings.",
+            false);
     }
 
     private void Hide()
@@ -769,6 +853,8 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
             NoteType.LongScratch => "Long Scratch Note",
             NoteType.Air => "Air Note",
             NoteType.Camera => "Camera Note",
+            NoteType.Effect => "Effect Note",
+            NoteType.Marker => "Marker",
             _ => "Note"
         };
     }

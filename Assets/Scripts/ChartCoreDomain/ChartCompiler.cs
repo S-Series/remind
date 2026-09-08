@@ -47,7 +47,9 @@ namespace REmind.Charting
     public static class ChartCompiler
     {
         public const double CameraSpinDurationAt120BpmMs = 175d;
+        public const double ScratchCameraTiltDurationAt120BpmMs = 200d;
         private const double CameraSpinReferenceBpm = 120d;
+        private const double ScratchCameraTiltReferenceBpm = 120d;
 
         public static ChartCompileResult Compile(
             ChartDocument document,
@@ -131,6 +133,17 @@ namespace REmind.Charting
                 return Failed(issues);
             }
 
+            ScratchCameraTiltMap scratchCameraTiltMap =
+                CompileScratchCameraTiltMap(
+                    document,
+                    timingMap,
+                    issues);
+
+            if (scratchCameraTiltMap == null || HasErrors(issues))
+            {
+                return Failed(issues);
+            }
+
             CompileNotes(
                 document,
                 timingMap,
@@ -138,6 +151,8 @@ namespace REmind.Charting
                 issues,
                 out List<PlayableNoteSnapshot> playableNotes,
                 out List<JudgementTarget> judgementTargets);
+
+            List<PlayableEffectEvent> effects = CompileEffects(document, timingMap, issues);
 
             if (HasErrors(issues))
             {
@@ -151,9 +166,54 @@ namespace REmind.Charting
                 timingMap,
                 scrollMap,
                 cameraMotionMap,
+                scratchCameraTiltMap,
                 playableNotes.ToArray(),
-                judgementTargets.ToArray());
+                judgementTargets.ToArray(),
+                effects.ToArray());
             return new ChartCompileResult(snapshot, issues.ToArray());
+        }
+
+        private static List<PlayableEffectEvent> CompileEffects(
+            ChartDocument document, TimingMap timingMap, List<CompileIssue> issues)
+        {
+            var result = new List<PlayableEffectEvent>();
+            var ids = new HashSet<string>(StringComparer.Ordinal);
+            var orders = new HashSet<string>(StringComparer.Ordinal);
+            for (int i = 0; i < document.EffectEvents.Count; i++)
+            {
+                ChartEffectEvent effect = document.EffectEvents[i];
+                if (effect == null)
+                {
+                    issues.Add(new CompileIssue("EFFECT_NULL", $"Effect {i} is missing."));
+                    continue;
+                }
+                bool valid = true;
+                if (string.IsNullOrWhiteSpace(effect.EffectId) || !ids.Add(effect.EffectId))
+                {
+                    issues.Add(new CompileIssue("EFFECT_ID", $"Effect {i} has a missing or duplicate ID."));
+                    valid = false;
+                }
+                if (string.IsNullOrWhiteSpace(effect.EffectTypeId))
+                {
+                    issues.Add(new CompileIssue("EFFECT_TYPE", $"Effect '{effect.EffectId}' has no type."));
+                    valid = false;
+                }
+                if (effect.Position < 0 || effect.Order < 0)
+                {
+                    issues.Add(new CompileIssue("EFFECT_POSITION_ORDER", $"Effect '{effect.EffectId}' position and order must be nonnegative."));
+                    valid = false;
+                }
+                if (!orders.Add(effect.Position + ":" + effect.Order))
+                {
+                    issues.Add(new CompileIssue("EFFECT_ORDER_DUPLICATE", $"Effects at position {effect.Position} require distinct explicit orders."));
+                    valid = false;
+                }
+                if (valid)
+                    result.Add(new PlayableEffectEvent(effect, timingMap.TimeAtPosition(effect.Position)));
+            }
+            result.Sort((a, b) => a.TimeMs != b.TimeMs
+                ? a.TimeMs.CompareTo(b.TimeMs) : a.Order.CompareTo(b.Order));
+            return result;
         }
 
         private static TimingMap CompileTimingMap(
@@ -482,6 +542,231 @@ namespace REmind.Charting
             }
 
             return new CameraMotionMap(points);
+        }
+
+        private static ScratchCameraTiltMap CompileScratchCameraTiltMap(
+            ChartDocument document,
+            TimingMap timingMap,
+            List<CompileIssue> issues)
+        {
+            List<ChartScratchCameraTiltEvent> scratchEvents =
+                new List<ChartScratchCameraTiltEvent>(
+                    document.ScratchCameraTiltEvents.Count);
+
+            for (int i = 0;
+                 i < document.ScratchCameraTiltEvents.Count;
+                 i++)
+            {
+                ChartScratchCameraTiltEvent scratchEvent =
+                    document.ScratchCameraTiltEvents[i];
+
+                if (scratchEvent == null)
+                {
+                    issues.Add(new CompileIssue(
+                        "SCRATCH_CAMERA_EVENT_NULL",
+                        $"Scratch camera event {i} is missing."));
+                    continue;
+                }
+
+                if (scratchEvent.Position < 0)
+                {
+                    issues.Add(new CompileIssue(
+                        "SCRATCH_CAMERA_EVENT_POSITION",
+                        $"Scratch camera event {i} has a negative " +
+                        "position."));
+                }
+
+                if (scratchEvent.Lane != ChartLane.GroundLeft &&
+                    scratchEvent.Lane != ChartLane.GroundRight)
+                {
+                    issues.Add(new CompileIssue(
+                        "SCRATCH_CAMERA_EVENT_LANE",
+                        $"Scratch camera event {i} must use GroundLeft " +
+                        "or GroundRight."));
+                }
+
+                if (!Enum.IsDefined(
+                        typeof(ChartScratchCameraTiltEventType),
+                        scratchEvent.EventType))
+                {
+                    issues.Add(new CompileIssue(
+                        "SCRATCH_CAMERA_EVENT_TYPE",
+                        $"Scratch camera event {i} has an unsupported " +
+                        $"type: {scratchEvent.EventType}."));
+                }
+
+                scratchEvents.Add(scratchEvent);
+            }
+
+            if (HasErrors(issues))
+            {
+                return null;
+            }
+
+            scratchEvents.Sort((left, right) =>
+            {
+                int positionComparison = left.Position.CompareTo(
+                    right.Position);
+                return positionComparison != 0
+                    ? positionComparison
+                    : left.Lane.CompareTo(right.Lane);
+            });
+
+            for (int i = 1; i < scratchEvents.Count; i++)
+            {
+                if (scratchEvents[i - 1].Position ==
+                        scratchEvents[i].Position &&
+                    scratchEvents[i - 1].Lane == scratchEvents[i].Lane)
+                {
+                    issues.Add(new CompileIssue(
+                        "SCRATCH_CAMERA_EVENT_DUPLICATE",
+                        $"Multiple Scratch camera events exist in " +
+                        $"lane {scratchEvents[i].Lane} at position " +
+                        $"{scratchEvents[i].Position}."));
+                }
+            }
+
+            if (HasErrors(issues))
+            {
+                return null;
+            }
+
+            List<ScratchCameraTiltPoint> points =
+                new List<ScratchCameraTiltPoint>(scratchEvents.Count);
+
+            for (int i = 0; i < scratchEvents.Count; i++)
+            {
+                ChartScratchCameraTiltEvent scratchEvent = scratchEvents[i];
+
+                if (scratchEvent.EventType !=
+                        ChartScratchCameraTiltEventType.Instant &&
+                    scratchEvent.EventType !=
+                        ChartScratchCameraTiltEventType.ReverseInstant)
+                {
+                    continue;
+                }
+
+                double timeMs = timingMap.TimeAtPosition(
+                    scratchEvent.Position);
+                double bpm = timingMap
+                    .GetPointAtPosition(scratchEvent.Position)
+                    .Bpm;
+                double durationMs =
+                    ScratchCameraTiltDurationAt120BpmMs *
+                    ScratchCameraTiltReferenceBpm /
+                    bpm;
+                double targetDegrees =
+                    GetScratchCameraTargetDegrees(scratchEvent.Lane);
+
+                if (scratchEvent.EventType ==
+                    ChartScratchCameraTiltEventType.ReverseInstant)
+                {
+                    targetDegrees = -targetDegrees;
+                }
+
+                points.Add(new ScratchCameraTiltPoint(
+                    scratchEvent.Position,
+                    timeMs,
+                    targetDegrees,
+                    durationMs));
+            }
+
+            List<ScratchCameraTiltHoldPoint> holdPoints =
+                new List<ScratchCameraTiltHoldPoint>();
+
+            CompileGradualScratchCameraTiltPoints(
+                scratchEvents,
+                ChartLane.GroundLeft,
+                timingMap,
+                holdPoints,
+                issues);
+            CompileGradualScratchCameraTiltPoints(
+                scratchEvents,
+                ChartLane.GroundRight,
+                timingMap,
+                holdPoints,
+                issues);
+
+            if (HasErrors(issues))
+            {
+                return null;
+            }
+
+            holdPoints.Sort((left, right) =>
+            {
+                int timeComparison = left.StartTimeMs.CompareTo(
+                    right.StartTimeMs);
+                return timeComparison != 0
+                    ? timeComparison
+                    : left.StartPosition.CompareTo(right.StartPosition);
+            });
+            return new ScratchCameraTiltMap(points, holdPoints);
+        }
+
+        private static void CompileGradualScratchCameraTiltPoints(
+            IReadOnlyList<ChartScratchCameraTiltEvent> scratchEvents,
+            ChartLane lane,
+            TimingMap timingMap,
+            List<ScratchCameraTiltHoldPoint> holdPoints,
+            List<CompileIssue> issues)
+        {
+            ChartScratchCameraTiltEvent activeGradual = null;
+
+            for (int i = 0; i < scratchEvents.Count; i++)
+            {
+                ChartScratchCameraTiltEvent scratchEvent = scratchEvents[i];
+
+                if (scratchEvent.Lane != lane)
+                {
+                    continue;
+                }
+
+                if (activeGradual != null &&
+                    scratchEvent.EventType !=
+                    ChartScratchCameraTiltEventType.Gradual)
+                {
+                    holdPoints.Add(new ScratchCameraTiltHoldPoint(
+                        activeGradual.Position,
+                        scratchEvent.Position,
+                        timingMap.TimeAtPosition(activeGradual.Position),
+                        timingMap.TimeAtPosition(scratchEvent.Position),
+                        GetGradualScratchCameraTargetDegrees(lane),
+                        ScratchCameraTiltMap.GradualAttackDurationMs,
+                        ScratchCameraTiltMap.GradualReleaseDurationMs));
+                    activeGradual = null;
+                }
+
+                if (activeGradual == null &&
+                    scratchEvent.EventType ==
+                    ChartScratchCameraTiltEventType.Gradual)
+                {
+                    activeGradual = scratchEvent;
+                }
+            }
+
+            if (activeGradual != null)
+            {
+                issues.Add(new CompileIssue(
+                    "SCRATCH_CAMERA_GRADUAL_UNCLOSED",
+                    $"Gradual Scratch camera tilt in lane {lane} at " +
+                    $"position {activeGradual.Position} has no release " +
+                    "point."));
+            }
+        }
+
+        private static double GetScratchCameraTargetDegrees(ChartLane lane)
+        {
+            return lane == ChartLane.GroundLeft
+                ? ScratchCameraTiltMap.PeakTiltDegrees
+                : -ScratchCameraTiltMap.PeakTiltDegrees;
+        }
+
+        private static double GetGradualScratchCameraTargetDegrees(
+            ChartLane lane)
+        {
+            return lane == ChartLane.GroundLeft
+                ? ScratchCameraTiltMap.GradualPeakTiltDegrees
+                : -ScratchCameraTiltMap.GradualPeakTiltDegrees;
         }
 
         private static void CompileNotes(

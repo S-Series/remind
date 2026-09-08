@@ -6,7 +6,7 @@ using UnityEngine;
 [DisallowMultipleComponent]
 public sealed class ChartNoteSelectionController : MonoBehaviour
 {
-    private const int SelectionCategoryCount = 4;
+    private const int SelectionCategoryCount = 8;
     private const int MeasureCount = ChartHolder.MeasureCount;
 
     [SerializeField] private ChartMakerInputRouter inputRouter;
@@ -14,6 +14,7 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
     [SerializeField] private Transform leftNoteField;
     [SerializeField] private Transform middleNoteField;
     [SerializeField] private Transform rightNoteField;
+    [SerializeField] private Transform specialNoteField;
     [SerializeField] private LayerMask noteLayerMask = ~0;
 
     private readonly List<GameObject> selectedNoteObjects =
@@ -38,10 +39,13 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
             placementController = GetComponent<ChartPlacementController>();
         }
 
-        if (!leftNoteField || !middleNoteField || !rightNoteField)
+        if (!leftNoteField ||
+            !middleNoteField ||
+            !rightNoteField ||
+            !specialNoteField)
         {
             Debug.LogError(
-                "ChartNoteSelectionController requires all three Note Fields.",
+                "ChartNoteSelectionController requires all four Note Fields.",
                 this);
             enabled = false;
         }
@@ -53,7 +57,7 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
         {
             inputRouter.CancelRequested += ClearSelection;
             inputRouter.DeleteRequested += DeleteSelection;
-            inputRouter.EditSelectedTapRequested += EditSelectedTap;
+            inputRouter.EditSelectedNoteRequested += EditSelectedNote;
             inputRouter.MoveSelectionRequested += MoveSelection;
         }
     }
@@ -64,7 +68,7 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
         {
             inputRouter.CancelRequested -= ClearSelection;
             inputRouter.DeleteRequested -= DeleteSelection;
-            inputRouter.EditSelectedTapRequested -= EditSelectedTap;
+            inputRouter.EditSelectedNoteRequested -= EditSelectedNote;
             inputRouter.MoveSelectionRequested -= MoveSelection;
         }
 
@@ -76,14 +80,17 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
     /// </summary>
     public bool TrySelectAt(
         Vector2 normalizedPosition,
-        bool? positionCorrection)
+        bool? positionCorrection,
+        bool useSpecialField = false)
     {
-        if (!enabled)
+        if (!enabled || !CanEditChart)
         {
             return false;
         }
 
-        Transform noteField = GetNoteField(positionCorrection);
+        Transform noteField = useSpecialField
+            ? specialNoteField
+            : GetNoteField(positionCorrection);
         Vector2 localPosition =
             ChartPlacementController.NormalizedToNoteFieldPosition(
                 normalizedPosition);
@@ -300,6 +307,10 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
             NoteType.LongTap => 2,
             NoteType.Scratch => 3,
             NoteType.LongScratch => 3,
+            NoteType.Speed => 4,
+            NoteType.Effect => 5,
+            NoteType.Camera => 6,
+            NoteType.Marker => 7,
             _ => -1
         };
     }
@@ -307,7 +318,7 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
     /// <summary>클릭된 노트 뷰를 받아 연결된 중앙·손 필드 노트를 함께 선택합니다.</summary>
     public bool OnNoteClicked(NoteView clickedNote)
     {
-        if (!clickedNote ||
+        if (!CanEditChart || !clickedNote ||
             !clickedNote.TryGetComponent(
                 out ChartNoteSelectable selectable))
         {
@@ -335,12 +346,12 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
     }
 
     /// <summary>
-    /// Tab은 선택된 Tap 계열의 손 방향을, Shift+Tab은 Tap/Long Tap 종류를
-    /// 전환합니다.
+    /// Tab은 Tap의 손 방향 또는 Scratch의 Powered 상태를 전환합니다.
+    /// Shift+Tab은 일반/Long 종류를 전환합니다.
     /// </summary>
-    public void EditSelectedTap(bool toggleLongType)
+    public void EditSelectedNote(bool toggleLongType)
     {
-        if (!placementController ||
+        if (!CanEditChart || !placementController ||
             selectedNoteObjects.Count == 0 ||
             !selectedNoteObjects[0])
         {
@@ -356,7 +367,10 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
                 out NoteType noteType,
                 out NoteHandleType handleType,
                 out _) ||
-            (noteType != NoteType.Tap && noteType != NoteType.LongTap))
+            (noteType != NoteType.Tap &&
+             noteType != NoteType.LongTap &&
+             noteType != NoteType.Scratch &&
+             noteType != NoteType.LongScratch))
         {
             return;
         }
@@ -364,7 +378,18 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
         bool succeeded;
         string error;
 
-        if (toggleLongType)
+        if (noteType == NoteType.Scratch ||
+            noteType == NoteType.LongScratch)
+        {
+            succeeded = toggleLongType
+                ? placementController.TryToggleScratchLongNote(
+                    selectedObject,
+                    out error)
+                : placementController.TryToggleScratchPowered(
+                    selectedObject,
+                    out error);
+        }
+        else if (toggleLongType)
         {
             succeeded = placementController.TryToggleTapLongNote(
                 selectedObject,
@@ -396,7 +421,7 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
     /// </summary>
     public void MoveSelection(Vector2Int direction, bool moveByPage)
     {
-        if (!placementController ||
+        if (!CanEditChart || !placementController ||
             selectedNoteObjects.Count == 0 ||
             !selectedNoteObjects[0] ||
             Mathf.Abs(direction.x) + Mathf.Abs(direction.y) != 1)
@@ -592,7 +617,7 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
     /// <summary>선택된 중앙·손 필드 노트 묶음을 채보 데이터와 함께 삭제합니다.</summary>
     public void DeleteSelection()
     {
-        if (selectedNoteObjects.Count == 0)
+        if (!CanEditChart || selectedNoteObjects.Count == 0)
         {
             return;
         }
@@ -644,6 +669,9 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
         selectedNoteObjects.Clear();
         return true;
     }
+
+    private bool CanEditChart =>
+        !placementController || placementController.CanEditChart;
 
     private void Select(ChartNoteSelectable clickedTarget)
     {

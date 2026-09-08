@@ -6,3 +6,10 @@ public enum PlaybackState
     Paused = 3,
     Finished = 4,
 }
+
+public enum PlaybackStartReason
+{
+    Play = 0,
+    Resume = 1,
+    Restart = 2,
+}

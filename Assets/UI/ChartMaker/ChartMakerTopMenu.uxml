@@ -10,6 +10,7 @@
             <ui:Button name="view-menu-button" text="View" class="top-menu-button" />
             <ui:Button name="playback-menu-button" text="Playback" class="top-menu-button playback-menu-button" />
             <ui:VisualElement class="top-menu-spacer" />
+            <ui:Label name="document-status-label" text="Ready" class="document-status-label" />
         </ui:VisualElement>
 
         <ui:VisualElement name="note-edit-window" class="note-edit-window" picking-mode="Position">

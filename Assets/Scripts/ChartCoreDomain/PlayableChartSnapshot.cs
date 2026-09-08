@@ -83,8 +83,10 @@ namespace REmind.Charting
             TimingMap timingMap,
             ScrollMap scrollMap,
             CameraMotionMap cameraMotionMap,
+            ScratchCameraTiltMap scratchCameraTiltMap,
             PlayableNoteSnapshot[] notes,
-            JudgementTarget[] judgementTargets)
+            JudgementTarget[] judgementTargets,
+            PlayableEffectEvent[] effectEvents = null)
         {
             TimingMap = timingMap ??
                 throw new ArgumentNullException(nameof(timingMap));
@@ -92,6 +94,9 @@ namespace REmind.Charting
                 throw new ArgumentNullException(nameof(scrollMap));
             CameraMotionMap = cameraMotionMap ??
                 throw new ArgumentNullException(nameof(cameraMotionMap));
+            ScratchCameraTiltMap = scratchCameraTiltMap ??
+                throw new ArgumentNullException(
+                    nameof(scratchCameraTiltMap));
             Notes = Array.AsReadOnly(
                 notes != null
                     ? (PlayableNoteSnapshot[])notes.Clone()
@@ -100,12 +105,37 @@ namespace REmind.Charting
                 judgementTargets != null
                     ? (JudgementTarget[])judgementTargets.Clone()
                     : Array.Empty<JudgementTarget>());
+            EffectEvents = Array.AsReadOnly(effectEvents != null
+                ? (PlayableEffectEvent[])effectEvents.Clone()
+                : Array.Empty<PlayableEffectEvent>());
         }
 
         public TimingMap TimingMap { get; }
         public ScrollMap ScrollMap { get; }
         public CameraMotionMap CameraMotionMap { get; }
+        public ScratchCameraTiltMap ScratchCameraTiltMap { get; }
         public IReadOnlyList<PlayableNoteSnapshot> Notes { get; }
         public IReadOnlyList<JudgementTarget> JudgementTargets { get; }
+        public IReadOnlyList<PlayableEffectEvent> EffectEvents { get; }
+    }
+
+    public sealed class PlayableEffectEvent
+    {
+        internal PlayableEffectEvent(ChartEffectEvent source, double timeMs)
+        {
+            Position = source.Position;
+            EffectId = source.EffectId;
+            EffectTypeId = source.EffectTypeId;
+            CommandId = source.CommandId ?? string.Empty;
+            Order = source.Order;
+            TimeMs = timeMs;
+        }
+
+        public int Position { get; }
+        public string EffectId { get; }
+        public string EffectTypeId { get; }
+        public string CommandId { get; }
+        public int Order { get; }
+        public double TimeMs { get; }
     }
 }

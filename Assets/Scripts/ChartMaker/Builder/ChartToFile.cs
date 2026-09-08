@@ -6,15 +6,20 @@ using UnityEngine;
 [DisallowMultipleComponent]
 public sealed class ChartToFile : MonoBehaviour
 {
-    private const string DefaultDirectoryName = "Charts";
-    private const string FallbackFileName = "chart.txt";
+    public const string ChartFileExtension = ".rd";
+    public const string ChartFileExtensionWithoutDot = "rd";
+    public const string DefaultChartFileName = "chart.rd";
 
-    [SerializeField] private string defaultFileName = FallbackFileName;
+    private const string DefaultDirectoryName = "Charts";
+
+    [SerializeField] private string defaultFileName = DefaultChartFileName;
     [SerializeField] private string currentFilePath;
     [SerializeField] private ChartCore chartCore;
     [SerializeField] private ChartPlacementController placementController;
 
     private string savedChartText = string.Empty;
+    private string savedParameterText = string.Empty;
+    private bool recoveredStateRequiresSave;
 
     public string CurrentFilePath => currentFilePath;
     public bool HasSavePath => !string.IsNullOrWhiteSpace(currentFilePath);
@@ -22,12 +27,18 @@ public sealed class ChartToFile : MonoBehaviour
     {
         get
         {
+            if (recoveredStateRequiresSave)
+            {
+                return true;
+            }
+
             try
             {
                 return !string.Equals(
                     BuildText(),
                     savedChartText,
-                    StringComparison.Ordinal);
+                    StringComparison.Ordinal) || !string.Equals(
+                        BuildParameterText(), savedParameterText, StringComparison.Ordinal);
             }
             catch
             {
@@ -40,6 +51,14 @@ public sealed class ChartToFile : MonoBehaviour
 
     private void Awake()
     {
+        NormalizeDefaultFileName();
+
+        if (!string.IsNullOrWhiteSpace(currentFilePath) &&
+            !HasChartFileExtension(currentFilePath))
+        {
+            currentFilePath = null;
+        }
+
         ResolveChartCore();
         ResolvePlacementController();
         MarkCurrentStateAsSaved();
@@ -47,13 +66,10 @@ public sealed class ChartToFile : MonoBehaviour
 
     private void OnValidate()
     {
-        if (string.IsNullOrWhiteSpace(defaultFileName))
-        {
-            defaultFileName = FallbackFileName;
-        }
+        NormalizeDefaultFileName();
     }
 
-    /// <summary>현재 채보 데이터와 편집용 타이밍 설정을 파일 포맷 문자열로 만듭니다.</summary>
+    /// <summary>현재 채보 데이터와 편집용 타이밍 설정을 JSON 문자열로 만듭니다.</summary>
     public string BuildText()
     {
         ResolveChartCore();
@@ -67,12 +83,24 @@ public sealed class ChartToFile : MonoBehaviour
         return ChartFileCodec.Serialize(
             ChartManager.ChartHolders,
             chartCore.Bpm,
-            chartCore.StartCorrectionMs);
+            chartCore.StartCorrectionMs,
+            ChartEffectDocumentState.Capture());
     }
+
+    private static string BuildParameterText() => ChartEffectFileStore.SerializeParameters(
+        ChartManager.ChartHolders, ChartEffectDocumentState.Capture());
 
     /// <summary>현재 채보를 지정한 경로에 UTF-8(BOM 없음)로 저장합니다.</summary>
     public void SaveToPath(string filePath)
     {
+        ResolveChartCore();
+
+        if (chartCore && chartCore.IsTestPlaying)
+        {
+            throw new InvalidOperationException(
+                "Stop test playback before saving the chart.");
+        }
+
         if (string.IsNullOrWhiteSpace(filePath))
         {
             throw new ArgumentException(
@@ -81,6 +109,15 @@ public sealed class ChartToFile : MonoBehaviour
         }
 
         string fullPath = Path.GetFullPath(filePath);
+
+        if (!HasChartFileExtension(fullPath))
+        {
+            throw new ArgumentException(
+                $"Chart files can only be saved with the " +
+                $"{ChartFileExtension} extension.",
+                nameof(filePath));
+        }
+
         string directory = Path.GetDirectoryName(fullPath);
 
         if (!string.IsNullOrEmpty(directory))
@@ -96,15 +133,24 @@ public sealed class ChartToFile : MonoBehaviour
                 ? ChartEditHistory.BeginChange(
                     normalizationPlan.AffectedPositions)
                 : default;
-        string chartText = BuildText();
-
-        WriteAtomically(fullPath, chartText);
+        if (!chartCore) throw new InvalidOperationException("ChartCore is required for saving.");
+        var metadata = new ChartEffectDocumentState.Metadata(
+            ChartEffectDocumentState.MusicId, ChartEffectDocumentState.DifficultyId,
+            ChartEffectDocumentState.GimmickId, Guid.NewGuid().ToString("N"));
+        string chartText = ChartFileCodec.Serialize(ChartManager.ChartHolders,
+            chartCore.Bpm, chartCore.StartCorrectionMs, metadata);
+        string parameterText = ChartEffectFileStore.SerializeParameters(ChartManager.ChartHolders, metadata);
+        ChartEffectFileStore.Save(fullPath, chartText, parameterText);
+        ChartEffectDocumentState.Restore(metadata);
         ApplySaveNormalization(
             normalizationPlan,
             editTransaction);
 
         currentFilePath = fullPath;
         savedChartText = chartText;
+        savedParameterText = parameterText;
+        recoveredStateRequiresSave = false;
+        ChartMakerRecentFiles.RememberChartPath(currentFilePath);
         ChartSaved?.Invoke(currentFilePath);
     }
 
@@ -123,6 +169,11 @@ public sealed class ChartToFile : MonoBehaviour
         }
 
         currentFilePath = Path.GetFullPath(filePath);
+
+        if (!HasChartFileExtension(currentFilePath))
+        {
+            currentFilePath = null;
+        }
     }
 
     /// <summary>새 문서 상태로 전환하고 현재 빈 채보를 저장 기준으로 기록합니다.</summary>
@@ -136,6 +187,17 @@ public sealed class ChartToFile : MonoBehaviour
     public void MarkCurrentStateAsSaved()
     {
         savedChartText = BuildText();
+        savedParameterText = BuildParameterText();
+        recoveredStateRequiresSave = false;
+    }
+
+    /// <summary>
+    /// A matching backup pair is valid in memory, but it is not the current pair on
+    /// disk until the user saves it. Keep close/dirty prompts active until then.
+    /// </summary>
+    public void MarkRecoveredStateRequiresSave()
+    {
+        recoveredStateRequiresSave = true;
     }
 
     public bool TrySaveToPath(string filePath, out string error)
@@ -164,6 +226,23 @@ public sealed class ChartToFile : MonoBehaviour
             Application.persistentDataPath,
             DefaultDirectoryName,
             defaultFileName);
+    }
+
+    private void NormalizeDefaultFileName()
+    {
+        defaultFileName = string.IsNullOrWhiteSpace(defaultFileName)
+            ? DefaultChartFileName
+            : Path.ChangeExtension(
+                Path.GetFileName(defaultFileName),
+                ChartFileExtension);
+    }
+
+    public static bool HasChartFileExtension(string filePath)
+    {
+        return string.Equals(
+            Path.GetExtension(filePath),
+            ChartFileExtension,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     private void ResolveChartCore()

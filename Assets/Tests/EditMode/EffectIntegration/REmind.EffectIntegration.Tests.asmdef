@@ -1,0 +1,9 @@
+{
+  "name": "REmind.EffectIntegration.Tests",
+  "references": [],
+  "includePlatforms": ["Editor"],
+  "autoReferenced": false,
+  "defineConstraints": ["UNITY_INCLUDE_TESTS"],
+  "optionalUnityReferences": ["TestAssemblies"],
+  "noEngineReferences": true
+}

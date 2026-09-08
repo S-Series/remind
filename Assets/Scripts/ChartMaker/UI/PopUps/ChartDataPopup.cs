@@ -113,6 +113,7 @@ public sealed class ChartDataPopup : PopupContext
         chartCore.BpmChanged += HandleBpmChanged;
         chartCore.StartCorrectionMsChanged += HandleStartCorrectionChanged;
         chartCore.AudioClipChanged += HandleAudioClipChanged;
+        chartCore.AudioLoadFailed += HandleAudioLoadFailed;
 
         if (topMenuController)
         {
@@ -135,6 +136,7 @@ public sealed class ChartDataPopup : PopupContext
             chartCore.BpmChanged -= HandleBpmChanged;
             chartCore.StartCorrectionMsChanged -= HandleStartCorrectionChanged;
             chartCore.AudioClipChanged -= HandleAudioClipChanged;
+            chartCore.AudioLoadFailed -= HandleAudioLoadFailed;
         }
 
         if (topMenuController)
@@ -197,6 +199,14 @@ public sealed class ChartDataPopup : PopupContext
         }
     }
 
+    private void HandleAudioLoadFailed(string message)
+    {
+        if (IsOpen)
+        {
+            SetError(message);
+        }
+    }
+
     private void HandleChartOpened()
     {
         if (!IsOpen)
@@ -216,6 +226,13 @@ public sealed class ChartDataPopup : PopupContext
 
     private bool ApplyValues(bool closeAfterApply)
     {
+        if (chartCore.IsTestPlaying ||
+            chartCore.IsTestPlaybackStartInProgress)
+        {
+            SetError("Stop Preview before changing BPM or music correction.");
+            return false;
+        }
+
         if (!TryParseFinite(bpmInput.text, out double bpm) || bpm <= 0d)
         {
             SetError("BPM must be greater than zero.");

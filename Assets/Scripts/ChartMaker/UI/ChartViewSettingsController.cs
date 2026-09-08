@@ -6,7 +6,10 @@ using UnityEngine;
 [DisallowMultipleComponent]
 public sealed class ChartViewSettingsController : MonoBehaviour
 {
-    public const float DefaultHiSpeed = 2.5f;
+    public const float DefaultHiSpeed = 5f;
+    private const float ReferenceHiSpeed = 5f;
+    private const string HiSpeedPreferenceKey =
+        "REmind.ChartMaker.PreviewHiSpeed";
 
     [SerializeField] private ChartScroll chartScroll;
     [SerializeField] private TMP_InputField viewPageInput;
@@ -42,7 +45,10 @@ public sealed class ChartViewSettingsController : MonoBehaviour
         previewNoteFieldBaseScale = chartPreviewNoteField.localScale;
         viewPageInput.contentType = TMP_InputField.ContentType.IntegerNumber;
         hiSpeedInput.contentType = TMP_InputField.ContentType.DecimalNumber;
-        ApplyHiSpeed(DefaultHiSpeed);
+        ApplyHiSpeed(PlayerPrefs.GetFloat(
+            HiSpeedPreferenceKey,
+            DefaultHiSpeed));
+        SaveHiSpeedPreference();
         initialized = true;
     }
 
@@ -123,6 +129,7 @@ public sealed class ChartViewSettingsController : MonoBehaviour
         }
 
         ApplyHiSpeed(requestedHiSpeed);
+        SaveHiSpeedPreference();
     }
 
     private void RefreshViewPage(float scrollY)
@@ -160,10 +167,8 @@ public sealed class ChartViewSettingsController : MonoBehaviour
             Mathf.Round(value * 100f) / 100f,
             minimumHiSpeed,
             maximumHiSpeed);
-        float speedScale = hiSpeed / DefaultHiSpeed;
-        Vector3 noteFieldScale = previewNoteFieldBaseScale;
-        noteFieldScale.y *= speedScale;
-        chartPreviewNoteField.localScale = noteFieldScale;
+        float speedScale = hiSpeed / ReferenceHiSpeed;
+        chartPreviewNoteField.localScale = previewNoteFieldBaseScale;
         chartScroll.SetPreviewHighSpeedScale(speedScale);
         RefreshHiSpeedText();
     }
@@ -172,6 +177,12 @@ public sealed class ChartViewSettingsController : MonoBehaviour
     {
         hiSpeedInput.SetTextWithoutNotify(
             hiSpeed.ToString("0.00", CultureInfo.InvariantCulture));
+    }
+
+    private void SaveHiSpeedPreference()
+    {
+        PlayerPrefs.SetFloat(HiSpeedPreferenceKey, hiSpeed);
+        PlayerPrefs.Save();
     }
 
     private static bool TryParseFloat(string value, out float result)
