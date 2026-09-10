@@ -419,7 +419,7 @@ JSON Text
 - BPM 이벤트의 에디터 내부 tick 표현
 - JSON Schema 파일의 위치와 자동 생성 방식
 
-## 18. ChartMaker Editor JSON v7
+## 18. ChartMaker Editor JSON v8
 
 ChartMaker의 기본 저장 형식은 UTF-8 JSON이며 전용 확장자는 `.rd`이다. 편집 원본은
 `measure`와 `position`을 유지하고, 테스트 플레이와 Gameplay에 전달하기 전에 공용
@@ -429,12 +429,26 @@ ChartMaker의 기본 저장 형식은 UTF-8 JSON이며 전용 확장자는 `.rd`
 ```json
 {
   "format": "REmindChart",
-  "formatVersion": 7,
+  "formatVersion": 8,
   "baseBpm": 120.0,
   "musicStartCorrectionMs": 0.0,
   "events": [
     "000|0000|LF------|--------|00000000|-1|-|F|-",
-    "000|1200|--------|----NS16|00010000|240|0.5|F|N:-5*"
+    "000|1200|--------|----NS16|00010000|240|0.5|T|N:-5*"
+  ],
+  "musicId": "demo_song",
+  "difficultyId": "normal",
+  "gimmickId": "",
+  "revision": "example_revision",
+  "hasEffectParameters": true,
+  "effectDefinitions": [
+    {
+      "position": 1200,
+      "effectId": "fx_example",
+      "effectTypeId": "camera.offset",
+      "commandId": "",
+      "order": 0
+    }
   ]
 }
 ```
@@ -456,6 +470,24 @@ ChartMaker의 기본 저장 형식은 UTF-8 JSON이며 전용 확장자는 `.rd`
 - Camera는 `spin:offsetX`이며 spin은 `L`, `N`, `R` 중 하나다.
 - Marker가 있는 행은 별도 열을 추가하지 않고 Camera 열 뒤, 즉 문자열 마지막에
   `*`를 하나 붙인다. Marker는 판정·스크롤·카메라에 영향을 주지 않는 위치 표식이다.
+
+v8은 실행 가능한 Effect의 정체성을 행 문자열과 분리해 `effectDefinitions`에 저장한다.
+
+- `musicId`, `difficultyId`: 채보와 난이도의 저장 소유자. Effect가 있으면 sidecar의
+  같은 필드와 일치해야 한다.
+- `gimmickId`: `music.call`이 사용할 곡별 C# MusicGimmick 등록 ID. 없으면 빈 문자열이다.
+- `revision`: 함께 저장된 `.rd`와 sidecar pair를 식별하는 값이다.
+- `hasEffectParameters`: 이 채보가 matching sidecar를 요구하는지 나타낸다.
+- `effectDefinitions`: Effect가 `T`인 각 행과 정확히 하나씩 대응한다.
+- `position`: `measure * 4800 + position`으로 계산한 절대 chart position이다.
+- `effectId`: sidecar 수치와 연결하는 비어 있지 않은 stable ID이며 문서 안에서 고유하다.
+- `effectTypeId`: 등록된 공용 Effect 종류다. `music.call`은 곡 기믹 명령 호출을 뜻한다.
+- `commandId`: 일반 Effect는 빈 문자열, `music.call`은 등록된 명령 ID다.
+- `order`: 같은 시각 Effect끼리의 0 이상 실행 순서이며 같은 시각에는 고유해야 한다.
+
+Effect를 이동·정렬할 때 `effectId`를 유지하고, 복사할 때는 새 ID를 만든다. v7의
+의미가 지정되지 않은 Effect는 로드 시 ID만 만들어 보존하며 종류를 추정하지 않는다.
+종류가 지정되기 전까지 편집/재저장은 가능하지만 컴파일과 재생 준비는 실패한다.
 
 Line Speed는 표시 이동량만 변경하고 판정 시각은 바꾸지 않는다. 예를 들어
 `multiplier: 0.5`는 그 지점부터 같은 BPM의 기본 표시 이동량을 절반으로 만든다.
@@ -545,7 +577,8 @@ Test Play를 시작해도 저장 파일과 동일한 결과를 사용한다.
 
 ChartMaker의 파일 열기와 최근 파일 복원은 `.rd` 확장자만 허용한다. `.json`과 `.txt`는
 선택창에 표시하지 않으며 경로가 직접 전달되어도 로드 전에 차단한다. 포맷 변환을 위한
-기존 JSON 객체형 v6, Native v1~v6, 구버전 병렬 배열 파서는 내부 호환 코드로만 유지한다.
+기존 compact JSON v7, JSON 객체형 v6, Native v1~v6, 구버전 병렬 배열 파서는 내부
+호환 코드로만 유지한다.
 
 ```text
 #REmindChart|6
@@ -577,3 +610,43 @@ native v1, v2와 버전 헤더가 없는 파일은 기존 `1600 units/measure`�
 
 레거시 `TempChartData` JSON의 `NotePos`도 기존 1600 단위로 해석한다. 이 경로는
 불러오기 호환용이며 저장할 때는 현재 ChartMaker Editor JSON으로 변환한다.
+
+## 19. Effect parameter sidecar v1
+
+Effect가 있는 난이도는 `.rd`와 같은 폴더의
+`effect.{musicId}.{difficultyId}.json` 하나에 조정 수치를 저장한다.
+
+```json
+{
+  "version": 1,
+  "musicId": "demo_song",
+  "difficultyId": "normal",
+  "revision": "example_revision",
+  "parameters": [
+    {
+      "effectId": "fx_example",
+      "data": {
+        "durationMs": 400,
+        "offsetX": 0,
+        "offsetY": 0,
+        "rollDegrees": 0,
+        "attackMs": 100,
+        "releaseMs": 100
+      }
+    }
+  ]
+}
+```
+
+- sidecar의 `musicId`, `difficultyId`, `revision`은 `.rd`와 모두 일치해야 한다.
+- `parameters[].effectId`는 `.rd` 정의의 stable ID를 참조한다. 배열 번호는 연결 키가
+  아니다.
+- 설정이 필요한 Effect만 parameter 항목을 가진다. 설정이 없는 명령에는 빈 항목을
+  강제하지 않는다.
+- 저장은 두 파일의 전체 직렬화/검증 뒤 임시 파일과 backup pair를 사용한다. 한쪽만
+  저장됐거나 owner/revision이 다르면 정상 pair로 취급하지 않는다.
+- `camera.offset`의 `attackMs`/`releaseMs`가 없는 기존 JSON은 호환을 위해 0ms 즉시형으로
+  읽고, 새 설정은 각각 100ms를 기본으로 쓴다.
+
+Effect별 필드, 범위, ChartMaker 작업 순서, 실행·정리·Preview 제한은
+`EffectGimmickGuide.md`를 따른다.

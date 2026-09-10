@@ -132,7 +132,7 @@ namespace REmind.Charting
 
                 double progress = elapsedMs / point.SpinDurationMs;
                 double easedProgress =
-                    progress * progress * (3d - 2d * progress);
+                    ChartEasing.SmoothStep01(progress);
                 double direction = point.SpinDirection ==
                     ChartCameraSpinDirection.Left
                         ? 1d
@@ -411,8 +411,8 @@ namespace REmind.Charting
                 return 0d;
             }
 
-            double easedRelease = releaseProgress * releaseProgress *
-                (3d - 2d * releaseProgress);
+            double easedRelease =
+                ChartEasing.SmoothStep01(releaseProgress);
             return endEnvelope * (1d - easedRelease);
         }
 
@@ -424,6 +424,28 @@ namespace REmind.Charting
         private static bool IsFinite(double value)
         {
             return !double.IsNaN(value) && !double.IsInfinity(value);
+        }
+    }
+
+    /// <summary>
+    /// Shared deterministic easing for chart-time camera motion.  Presenters
+    /// consume the evaluated pose; they do not run their own frame-based tween.
+    /// </summary>
+    internal static class ChartEasing
+    {
+        public static double SmoothStep01(double progress)
+        {
+            if (progress <= 0d)
+            {
+                return 0d;
+            }
+
+            if (progress >= 1d)
+            {
+                return 1d;
+            }
+
+            return progress * progress * (3d - 2d * progress);
         }
     }
 }

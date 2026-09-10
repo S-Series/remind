@@ -5,14 +5,38 @@ namespace REmind.Charting
     public sealed class CameraEffectParameters
     {
         public CameraEffectParameters(double durationMs, double offsetX, double offsetY, double rollDegrees)
-        { DurationMs = durationMs; OffsetX = offsetX; OffsetY = offsetY; RollDegrees = rollDegrees; }
+            : this(durationMs, offsetX, offsetY, rollDegrees, 0d, 0d)
+        {
+        }
+
+        public CameraEffectParameters(
+            double durationMs,
+            double offsetX,
+            double offsetY,
+            double rollDegrees,
+            double attackMs,
+            double releaseMs)
+        {
+            DurationMs = durationMs;
+            OffsetX = offsetX;
+            OffsetY = offsetY;
+            RollDegrees = rollDegrees;
+            AttackMs = attackMs;
+            ReleaseMs = releaseMs;
+        }
+
         public double DurationMs { get; }
         public double OffsetX { get; }
         public double OffsetY { get; }
         public double RollDegrees { get; }
+        public double AttackMs { get; }
+        public double ReleaseMs { get; }
     }
 
-    /// <summary>A temporary constant additive pose, evaluated against absolute chart time.</summary>
+    /// <summary>
+    /// A temporary additive pose evaluated from absolute chart time.  Optional
+    /// attack/release use the same smooth-step curve in Preview and gameplay.
+    /// </summary>
     public sealed class CameraEffect : Effect
     {
         public const string TypeId = "camera.offset";
@@ -26,19 +50,49 @@ namespace REmind.Charting
         protected override void OnUpdate(EffectExecutionContext context)
         {
             if (context.ElapsedTimeMs >= parameters.DurationMs) { Complete(); return; }
-            offset.Set(parameters.OffsetX, parameters.OffsetY, parameters.RollDegrees);
+            double weight = EvaluateEnvelope(context.ElapsedTimeMs);
+            offset.Set(
+                parameters.OffsetX * weight,
+                parameters.OffsetY * weight,
+                parameters.RollDegrees * weight);
         }
         protected override void OnStop(bool cancelled) { offset?.Dispose(); }
+
+        private double EvaluateEnvelope(double elapsedTimeMs)
+        {
+            if (parameters.AttackMs > 0d &&
+                elapsedTimeMs < parameters.AttackMs)
+            {
+                return ChartEasing.SmoothStep01(
+                    elapsedTimeMs / parameters.AttackMs);
+            }
+
+            double releaseStartMs =
+                parameters.DurationMs - parameters.ReleaseMs;
+            if (parameters.ReleaseMs > 0d &&
+                elapsedTimeMs > releaseStartMs)
+            {
+                return ChartEasing.SmoothStep01(
+                    (parameters.DurationMs - elapsedTimeMs) /
+                    parameters.ReleaseMs);
+            }
+
+            return 1d;
+        }
+
         public static EffectRegistration Registration() => new EffectRegistration(
             TypeId, "Camera offset (temporary)", typeof(CameraEffectParameters), true,
-            () => new CameraEffectParameters(400, 0, 0, 0), value =>
+            () => new CameraEffectParameters(400, 0, 0, 0, 100, 100), value =>
             {
                 var p = (CameraEffectParameters)value;
                 return !EffectParameterValidation.Finite(p.DurationMs) || p.DurationMs < 0 ||
                     !EffectParameterValidation.Finite(p.OffsetX) || Math.Abs(p.OffsetX) > 10000 ||
                     !EffectParameterValidation.Finite(p.OffsetY) || Math.Abs(p.OffsetY) > 10000 ||
-                    !EffectParameterValidation.Finite(p.RollDegrees) || Math.Abs(p.RollDegrees) > 36000
-                    ? "durationMs must be finite/nonnegative; offsets must be within +/-10000, rollDegrees within +/-36000." : null;
+                    !EffectParameterValidation.Finite(p.RollDegrees) || Math.Abs(p.RollDegrees) > 36000 ||
+                    !EffectParameterValidation.Finite(p.AttackMs) || p.AttackMs < 0 ||
+                    !EffectParameterValidation.Finite(p.ReleaseMs) || p.ReleaseMs < 0 ||
+                    p.AttackMs > p.DurationMs - p.ReleaseMs
+                    ? "durationMs, attackMs and releaseMs must be finite/nonnegative; attackMs + releaseMs must not exceed durationMs; offsets must be within +/-10000, rollDegrees within +/-36000." : null;
             }, value => new CameraEffect((CameraEffectParameters)value), (session, _) =>
             {
                 if (!session.HasCamera) throw new InvalidOperationException("Camera offset presenter is required.");

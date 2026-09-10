@@ -185,6 +185,142 @@ namespace REmind.Charting.Tests
             Assert.That(session.CancellationToken.IsCancellationRequested, Is.True);
             Assert.Throws<ObjectDisposedException>(() => handle.Set(1, 0, 0));
         }
+
+        [Test]
+        public void Camera_AttackHoldRelease_UsesAbsoluteSharedSmoothStep()
+        {
+            var plan = EffectPreparation.Prepare(
+                Snapshot(new ChartEffectEvent(
+                    0,
+                    "camera",
+                    "camera.offset",
+                    "",
+                    0)).EffectEvents,
+                new Dictionary<string, object>
+                {
+                    ["camera"] = new CameraEffectParameters(
+                        2000,
+                        10,
+                        -4,
+                        20,
+                        500,
+                        500)
+                },
+                EffectRegistry.CreateDefault()).Plan;
+            var services = new TestServices();
+            using var runner = new EffectRunner(
+                plan,
+                new EffectSessionContext(
+                    "a",
+                    "b",
+                    EffectExecutionMode.Preview,
+                    services));
+
+            Assert.That(runner.AdvanceTo(0), Is.True);
+            Assert.That(services.X, Is.EqualTo(0d).Within(0.000001d));
+            runner.AdvanceTo(125);
+            Assert.That(services.X,
+                Is.EqualTo(1.5625d).Within(0.000001d));
+            Assert.That(services.Y,
+                Is.EqualTo(-0.625d).Within(0.000001d));
+            Assert.That(services.Roll,
+                Is.EqualTo(3.125d).Within(0.000001d));
+            runner.AdvanceTo(250);
+            Assert.That(services.X, Is.EqualTo(5d).Within(0.000001d));
+            runner.AdvanceTo(500);
+            Assert.That(services.X, Is.EqualTo(10d).Within(0.000001d));
+            runner.AdvanceTo(1500);
+            Assert.That(services.X, Is.EqualTo(10d).Within(0.000001d));
+            runner.AdvanceTo(1625);
+            Assert.That(services.X,
+                Is.EqualTo(8.4375d).Within(0.000001d));
+            Assert.That(services.Y,
+                Is.EqualTo(-3.375d).Within(0.000001d));
+            Assert.That(services.Roll,
+                Is.EqualTo(16.875d).Within(0.000001d));
+            runner.AdvanceTo(1750);
+            Assert.That(services.X, Is.EqualTo(5d).Within(0.000001d));
+            runner.AdvanceTo(2000);
+            Assert.That(services.X, Is.EqualTo(0d).Within(0.000001d));
+
+            var delayedServices = new TestServices();
+            using var delayedRunner = new EffectRunner(
+                plan,
+                new EffectSessionContext(
+                    "a",
+                    "b",
+                    EffectExecutionMode.Gameplay,
+                    delayedServices),
+                250);
+            Assert.That(delayedRunner.TriggerThrough(0, 250), Is.True);
+            Assert.That(delayedRunner.AdvanceTo(250), Is.True);
+            Assert.That(delayedServices.X,
+                Is.EqualTo(5d).Within(0.000001d));
+
+            var skippedServices = new TestServices();
+            using var skippedRunner = new EffectRunner(
+                plan,
+                new EffectSessionContext(
+                    "a",
+                    "b",
+                    EffectExecutionMode.Gameplay,
+                    skippedServices),
+                2100);
+            Assert.That(skippedRunner.TriggerThrough(0, 2100), Is.True);
+            Assert.That(skippedRunner.AdvanceTo(2100), Is.True);
+            Assert.That(skippedServices.SetCount, Is.Zero);
+            Assert.That(skippedServices.X, Is.Zero);
+
+            var cancelledServices = new TestServices();
+            var cancelledRunner = new EffectRunner(
+                plan,
+                new EffectSessionContext(
+                    "a",
+                    "b",
+                    EffectExecutionMode.Preview,
+                    cancelledServices));
+            cancelledRunner.AdvanceTo(125);
+            Assert.That(cancelledServices.X, Is.Not.Zero);
+            cancelledRunner.Dispose();
+            Assert.That(cancelledServices.X, Is.Zero);
+            Assert.That(cancelledServices.Y, Is.Zero);
+            Assert.That(cancelledServices.Roll, Is.Zero);
+        }
+
+        [Test]
+        public void CameraMixer_AddsOverlapsAndReleasesOnlyOwnedOffset()
+        {
+            double x = double.NaN;
+            double y = double.NaN;
+            double roll = double.NaN;
+            using var mixer = new EffectCameraMixer((nextX, nextY, nextRoll) =>
+            {
+                x = nextX;
+                y = nextY;
+                roll = nextRoll;
+            });
+            IEffectCameraOffset first = mixer.CreateOffset("first");
+            IEffectCameraOffset second = mixer.CreateOffset("second");
+            first.Set(3d, -1d, 5d);
+            second.Set(-0.5d, 4d, -2d);
+
+            mixer.Apply();
+            Assert.That(x, Is.EqualTo(2.5d));
+            Assert.That(y, Is.EqualTo(3d));
+            Assert.That(roll, Is.EqualTo(3d));
+
+            first.Dispose();
+            mixer.Apply();
+            Assert.That(x, Is.EqualTo(-0.5d));
+            Assert.That(y, Is.EqualTo(4d));
+            Assert.That(roll, Is.EqualTo(-2d));
+
+            second.Dispose();
+            mixer.Apply();
+            Assert.That(x, Is.Zero);
+            Assert.That(y, Is.Zero);
+            Assert.That(roll, Is.Zero);
+        }
         [Test]
         public void Failure_IsConsumedOnceAndCleansPartialSideEffects()
         {
@@ -425,6 +561,8 @@ namespace REmind.Charting.Tests
         {
             public double CurrentHealth { get; set; } = 100;
             public double X;
+            public double Y;
+            public double Roll;
             public int SetCount;
             public int RequestCount;
             public IEffectCameraOffset CreateOffset(string owner) => new Handle(this);
@@ -435,9 +573,20 @@ namespace REmind.Charting.Tests
             {
                 private readonly TestServices services;
                 public Handle(TestServices services) { this.services = services; }
-                public void Set(double x, double y, double roll) { services.SetCount++; services.X = x; }
+                public void Set(double x, double y, double roll)
+                {
+                    services.SetCount++;
+                    services.X = x;
+                    services.Y = y;
+                    services.Roll = roll;
+                }
                 public void ReleaseAt(double time) { }
-                public void Dispose() { services.X = 0; }
+                public void Dispose()
+                {
+                    services.X = 0;
+                    services.Y = 0;
+                    services.Roll = 0;
+                }
             }
         }
     }

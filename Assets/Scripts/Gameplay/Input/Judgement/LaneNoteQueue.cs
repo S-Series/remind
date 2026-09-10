@@ -77,7 +77,8 @@ namespace REmind.Gameplay.Input.Judgement
 
         private static int CompareNotes(NoteData left, NoteData right)
         {
-            int timeComparison = left.TimeMs.CompareTo(right.TimeMs);
+            int timeComparison = left.TimelineTimeMs.CompareTo(
+                right.TimelineTimeMs);
             return timeComparison != 0
                 ? timeComparison
                 : string.CompareOrdinal(left.Id, right.Id);

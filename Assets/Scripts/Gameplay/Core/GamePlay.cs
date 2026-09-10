@@ -147,23 +147,23 @@ public sealed class GamePlay : MonoBehaviour
             return false;
         }
 
-        audioSource.Stop();
-        audioSource.clip = song;
-        audioSource.volume = Mathf.Clamp01(volume);
-
         if (song.loadState == AudioDataLoadState.Failed)
         {
             Debug.LogError($"Audio data failed to load: {song.name}", this);
-            SetState(PlaybackState.Empty);
             return false;
         }
 
         if (song.loadState == AudioDataLoadState.Unloaded && !song.LoadAudioData())
         {
             Debug.LogError($"Could not start loading audio data: {song.name}", this);
-            SetState(PlaybackState.Empty);
             return false;
         }
+
+        // Do not disturb the currently prepared song until the replacement has
+        // passed every synchronous load check.
+        audioSource.Stop();
+        audioSource.clip = song;
+        audioSource.volume = Mathf.Clamp01(volume);
 
         heldSongTimeMs = 0d;
         scheduledSongTimeMs = 0d;

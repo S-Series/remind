@@ -1,6 +1,6 @@
 # Effect / MusicGimmick 장기 작업 기록
 
-최종 갱신: 2026-09-08 (한국 시간)
+최종 갱신: 2026-09-09 (한국 시간)
 
 이 문서는 장기 작업 중 **완료한 범위, 현재 수정 중인 지점, 검증 결과, 다음 재개 지점**을 계속 기록한다. 설계의 원본은 `C:\Users\inwea\Downloads\REmind_Effect_Gimmick_Codex_Instructions.md`이며, 상세 재개 지침은 `Assets/Docs/EffectGimmickHandoff.md`에 있다.
 
@@ -13,8 +13,8 @@
 | 3 | 에디터와 재생 준비의 설정 검증 통합 | 완료 |
 | 4 | 실행 시각, 동일 시각 순서, 세션 수명과 정리 | 완료 |
 | 5 | ChartMaker 배치→설정→저장→재열기→Preview 전체 흐름 | 완료 |
-| 6 | 실제 Gameplay 씬과 게임 상태·규칙·카메라 연결 | 대기 |
-| 7 | 문서·샘플·최종 회귀 검사 | 대기 |
+| 6 | `DemoPlay` 통합 하네스에서 Snapshot·판정·규칙·카메라 연결 | 완료 |
+| 7 | 문서·샘플·최종 회귀 검사 | 완료 |
 
 ## 완료된 핵심 작업
 
@@ -46,33 +46,109 @@
 - Effect JSON 검증·복사·재로드의 성공 안내는 오류와 다른 색으로 표시한다.
 - 실제 `ChartMaker.unity`의 Effect 프리팹, 선택기, 저장/로드, TopMenu, Preview, UXML 필드와 호출 순서를 독립 씬 수용 검사 3개로 고정했다.
 
-## 현재 진행 중인 작업
+### 6단계 — `DemoPlay` 통합 하네스 자동 연결 및 수용 검증 완료
 
-사용자가 Unity에서 5단계 흐름을 실제로 수행해 정상 작동과 파일 생성을 확인했다. 생성된 `.rd`와 Effect JSON은 같은 문서 소유 정보와 revision을 가지며, 원본 `.rd`도 `.bak`으로 보존됐다. 발견된 문제는 저장 유실이 아니라 **종류를 지정하기 전 Preview를 시도했을 때 의도된 차단이 빨간 Console 오류와 스택으로 남는 UX**였다.
+- 과도기 `GameplayChartPreparation`이 `.rd`와 matching Effect JSON을 같은 소유 정보·revision으로 검사하고, ChartMaker와 같은 `ChartDocument → PlayableChartSnapshot` 경로를 사용한다. 최종 Game loader가 아니라 번들 샘플용 호환 adapter다.
+- Snapshot의 노트를 기존 `NoteJudgementSystem` 입력으로 변환하고, ChartMaker의 음악 시작 보정을 동일한 부호 규칙으로 적용한다. 실행 중에는 파일이나 JSON을 다시 읽지 않는다.
+- `GameplayChartSessionController`가 완전히 검증된 Snapshot·노트·설정을 기존 판정, 세션 상태, Effect 컨트롤러에 함께 전달한다. 번들 샘플은 chart `musicId`와 실제 `AudioClip`도 명시적으로 묶어 잘못된 음원 조합을 막는다.
+- 재생 시작 guard는 채보 존재뿐 아니라 `GameManager`, `GamePlay`, 판정, 실제 세션 상태, Effect 컨트롤러가 모두 활성·준비됐는지 확인한다. 어느 하나가 비활성화되거나 준비가 해제되면 불완전한 세션을 시작하지 않는다.
+- `GameplaySessionState`가 실제 `GameRule`을 사용해 체력·콤보·점수·실패·클리어를 갱신하고 `IEffectGameState`로 곡 기믹에 현재 체력을 제공한다. Resume은 상태를 유지하고 새 Play/Restart는 성공한 시작 경계에서 초기화한다.
+- Snapshot의 소수 밀리초 노트 시각을 `NoteData`에 그대로 보존하고 판정 큐가 그 값을 사용한다. 같은 chart 위치의 Effect와 노트가 정수 반올림으로 갈라지지 않으며 동일 시각 Effect 우선 계약을 유지한다.
+- 판정 이벤트에 실제 평가 시각을 전달해 지연 입력·자동 Miss의 체력/점수 계산에도 그 시각의 Rule Modifier가 적용된다.
+- `DemoPlay.unity`의 카메라를 `Camera Base Motion → Camera Effect Pivot → Main Camera`로 분리했다. 기본 채보 이동과 Effect 카메라 출력이 서로의 Transform을 덮어쓰지 않는다.
+- 개발 샘플 `EffectGameplaySample.rd`와 `effect.effect_gameplay_sample.demo.json`을 연결했다. 공용 Camera Effect 하나와 같은 세션 상태를 공유하는 sample MusicGimmick 명령 3개를 포함한다.
+- `.rd`를 복제 파일 없이 Player 직렬화 가능한 `TextAsset`으로 가져오는 전용 importer와, 씬 연결을 재현하는 Editor 메뉴를 추가했다. 메뉴는 다른 열린 씬의 미저장 변경을 먼저 확인하고 생성/참조 변경을 Undo로 되돌릴 수 있게 한다.
+- Effect 카메라의 Attack/Hold/Release를 공용 절대 chart time smooth-step으로 계산한다. 카메라 합성, Preview 테스트 상태/규칙 handle, 전환 mailbox도 Unity 비의존 Shared Core로 이동했고 ChartMaker와 Demo 하네스는 표시 adapter만 가진다.
+- `GameplayChartEffectController`는 이제 `PreparedEffectPlan`과 식별자만 받는다. 다만 최종 독립성은 아직 아니며, 번들 파일 준비 adapter의 Game→ChartMaker 저장 의존과 `ChartTestPlay`의 `LaneHitEffectPlayer` 표현 의존이 남아 있다.
 
-미지정 Effect를 컴파일러에 보내기 전에 찾고, 해당 Effect를 선택한 뒤 `Effect Type` 선택과 `Apply`를 안내하도록 보완했다. 편집·저장은 계속 허용하고 타입 지정 전 재생만 막는 기존 규칙은 유지한다. 상단 안내는 빨간 오류 스타일을 쓰지 않으며, Core가 남기는 일반 경고 한 번으로 중복 로그도 줄였다. 추가 회귀를 포함한 Unity EditMode 68개가 모두 통과해 **5단계는 완료**했다.
+## 현재 완료 상태
 
-다음 재개 지점은 6단계 실제 Gameplay 연결이다. 기존 `GameplayChartEffectController`와 실제 Gameplay 씬의 게임 상태·판정 규칙·카메라·재생 시작/종료 경계를 먼저 대조한다. 곡 선택·로딩·씬 전환 같은 큰 시스템 신설이 필요하면 Effect 연결 범위와 분리해 사용자에게 확인한다.
+첫 사용자 수동 확인에서 `DemoPlay` 카메라의 트리거·이동·복귀는 작동했지만 움직임이 순간적으로 바뀌는 결함이 발견됐다. 원인은 공용 `CameraEffect`가 지속시간 내내 고정 pose를 즉시 적용/해제하던 것이며, Shared absolute-time smooth-step Attack/Hold/Release로 수정했다.
+
+수정 뒤 사용자가 Preview/DemoPlay 실행을 다시 확인했다. 초기 안전 구간, 노트 처리, 부드러운 카메라 이동·회전·복귀, Pause/Resume, Reset/Restart가 모두 정상이고 Console에도 별도 오류가 없음을 확인했다. 샘플 pair는 revision `stage6_demo_004`이며 Camera는 2000ms 중 Attack 500ms, Hold 1000ms, Release 500ms다. 7단계 사용/확장/JSON/구조 문서, 최신 전체 Unity EditMode **75/75**, 솔루션 빌드 경고 0·오류 0, 정적 sample pair 검증도 완료했다.
+
+`DemoPlay`는 Build Settings/Home에서 들어가는 최종 Player Gameplay가 아니다. 최종 씬, 곡 선택·로딩·씬 전환과 독립 Game/ChartMaker build는 후속 범위로 남기며 이번 Effect 7단계 완료를 그 범위의 완료로 과장하지 않는다.
 
 ## 마지막 확인 결과
 
-- 최종 실행: Unity 6000.3.15f1 EditMode **68/68 성공**, 실패 0, 건너뜀 0.
-- 결과: `Logs/EffectBaselineResults/20260908-191253-250a100a/results.xml`
-- 로그: `Logs/EffectBaselineResults/20260908-191253-250a100a/unity.log`
-- 실행 직전 `dotnet restore` 및 `dotnet build remind.slnx --no-restore`: 경고 0, 오류 0.
+- 최신 전체 실행: Unity 6000.3.15f1 EditMode **75/75 성공**, 실패 0, 건너뜀 0.
+- 결과: `Logs/EffectBaselineResults/20260909-190759-5157b189/results.xml`
+- 로그: `Logs/EffectBaselineResults/20260909-190759-5157b189/unity.log`
+- 최신 Camera/Shared 분리 직후 Core EditMode **36/36 성공**: `Logs/EffectBaselineResults/20260909-184650-7ba5a584/results.xml`. 이후 Camera mixer 중첩 검사 하나를 더해 전체 실행의 Core 대상은 37개다.
+- 최신 `dotnet build remind.slnx`: 경고 0, 오류 0. `.rd`/정의 위치·revision `stage6_demo_004`·1000ms 초과와 Camera 500/1000/500ms envelope 정적 검증도 통과했다.
 - Unity 로그에서 C# 컴파일 오류, 실패 테스트, 처리되지 않은 예외가 발견되지 않았다.
 - 2026-09-08 수동 확인 산출물 `Assets/Chart/chart.rd`와 `Assets/Chart/effect.untitled.default.json`은 musicId=`untitled`, difficultyId=`default`, revision=`e11177f93356444e9647c06aaa8ff3cb`로 일치한다.
 - 최종 저장 Effect는 `camera.offset`이며 JSON 설정도 유효하다. 수동 테스트 중 먼저 발생한 `EFFECT_TYPE` 로그는 타입 적용·저장 전 Preview 시도의 기록이고 최종 파일의 타입 유실이 아니다.
 - no-type 안내 보완 후 솔루션 빌드와 원본 프로젝트 전체 Unity 회귀가 모두 통과했다. 앞서 실패한 임시 프로젝트 검사는 라이선스 채널 충돌 때문이었고 임시 복제본은 정리했다.
 
-## 다음 체크포인트
+## 후속 작업 시작 지점
 
-1. 6단계 시작 시 실제 Gameplay 씬과 `GameplayChartEffectController`의 현재 연결 상태를 읽기 전용으로 감사한다.
-2. Preview와 같은 Snapshot·설정이 Gameplay 준비 단계에도 전달되는지 확인한다.
-3. 실제 게임 상태·규칙·카메라 서비스를 기존 구성 요소에 연결하고, 시작/재시작/중단 정리를 수용 검사로 고정한다.
-4. 곡 선택·로딩·씬 전환 시스템 신설이 필요하면 Effect 범위와 분리해 사용자에게 확인한다.
+Effect 작업 1~7단계는 완료됐다. 다음 작업은 현재 범위를 자동으로 확대하지 않는다.
+
+1. 최종 Game scene/composition root와 곡 선택·로딩·씬 전환 범위를 결정한다.
+2. Shared Runtime Package 입력 경계로 과도기 `GameplayChartPreparation` 의존을 제거한다.
+3. `LaneHitEffectPlayer`의 공용 표시와 Gameplay 판정 구독 책임을 분리한다.
+4. 현행 Long/Scratch를 보존하면서 판정과 Note 데이터의 장기 Shared 경계를 정한다.
+5. Game/ChartMaker 별도 assembly와 Build Profile로 독립 빌드를 검증한다.
 
 ## 진행 로그
+
+### 2026-09-09 20:42 KST — 6·7단계 최종 수동 수용 완료
+
+- 사용자가 요청된 수동 항목 전체가 정상 작동하고 Console에도 별도 오류가 없음을 확인했다.
+- 초기 1초 안전 구간, 두 Tap, 500/1000/500ms smooth camera, Pause/Resume, Reset/Restart와 세션 정리를 수동 수용 완료로 기록했다.
+- 자동 Unity EditMode 75/75, 빌드 경고 0·오류 0, sample pair 정적 검증과 문서화를 합쳐 Effect 작업 1~7단계를 최종 완료 처리했다.
+- `DemoPlay`는 계속 과도기 통합 하네스이며, 최종 Game 씬/Player 흐름과 독립 빌드는 별도 후속 migration이다.
+
+### 2026-09-09 18:47 KST — 공용 카메라 보간·세션 경계 및 7단계 문서 보완
+
+- 사용자 수동 결과를 “카메라 트리거·좌측 이동·종료 복귀 확인, 부드러움 실패”로 기록했다. 확인하지 않은 오디오·두 Tap·Pause/Resume·Reset/Restart·Console 상태를 통과로 추정하지 않는다.
+- `CameraEffectParameters`에 `attackMs`와 `releaseMs`를 추가하고 공용 absolute-time smooth-step envelope를 적용했다. 구 JSON은 두 값이 없으면 0/0 즉시형으로 보존하고 새 Camera 설정은 100/100ms를 기본으로 쓴다.
+- 샘플은 duration 2000ms, attack/release 각 500ms와 revision `stage6_demo_004`로 갱신했다.
+- 카메라 합성, Preview rule handle, 테스트 상태, transition mailbox를 `REmind.ChartCore`로 이동했다. ChartMaker와 Demo 하네스가 같은 계산을 소비하고 Transform 적용만 각각 담당한다.
+- `GameplayChartEffectController`에서 ChartMaker holder/model 입력을 제거하고 검증된 `PreparedEffectPlan`만 받게 했다. 남은 직접 의존과 제거 조건은 `MIGRATION.md`에 기록했다.
+- `EffectGimmickGuide.md`를 추가하고 `ARCHITECTURE.md`, `MIGRATION.md`, `ROADMAP.md`, `TASKS.md`, `ChartFormat.md`를 실제 v8/sidecar/세션 경계에 맞게 갱신했다.
+- 공용 Camera 곡선의 비선형 1/4 지점, X/Y/roll, 지연 프레임 종료, 중도 취소, 중첩 합성과 JSON 구버전/경계/default 검사를 보강했다.
+- 첫 전체 실행은 의도적 null 준비 실패 로그의 줄바꿈을 예상식이 끝까지 매칭하지 못해 74/75였다. 제품 오류가 아니었으며 검증을 약화하지 않고 첫 오류 문장에 안정적으로 맞춘 뒤 재실행했다.
+- 최종 전체 Unity EditMode는 **75/75 성공**(`Logs/EffectBaselineResults/20260909-190759-5157b189/results.xml`), 빌드는 경고 0·오류 0, 정적 sample pair 검사도 통과했다.
+- Unity 배치 종료가 `Temp`의 생성된 NuGet assets를 정리해 직후 `--no-restore` 확인만 실패했으나, 일반 restore 포함 빌드를 다시 실행해 경고 0·오류 0을 최종 확인했다.
+
+### 2026-09-09 13:32 KST — 최초 로드용 1초 안전 구간 확보
+
+- 최초 로드 직후의 준비 지연과 샘플 이벤트가 겹치지 않도록 모든 샘플 노트와 Effect를 `+6000` chart unit(225 BPM에서 약 1333.333ms)만큼 함께 이동했다.
+- 가장 이른 노트는 약 1333.333ms, 가장 이른 Effect는 1600ms이며 Camera Effect는 약 1733.333ms부터 2초 동안 유지된다. 상대적인 순서와 간격은 그대로다.
+- `.rd` Effect 행과 정의 위치를 각각 `7200, 7800, 8400, 9600`으로 맞추고 당시 pair revision을 `stage6_demo_003`으로 함께 갱신했다. 현재 smooth camera 샘플은 `stage6_demo_004`다.
+- 씬 수용 검사에 모든 샘플 노트와 Effect가 1000ms를 초과한다는 조건을 추가했다. 같은 위치 Effect→노트 소수 시각 회귀 검사도 새 1866.667ms 위치를 사용한다.
+- 정적 pair 검증에서 행 위치, Effect 정의 대응, 고유 ID, order, 양쪽 revision, 모든 실행 시각의 1000ms 초과를 확인했다. 솔루션 빌드는 경고 0·오류 0이며 전체 Unity 73개 재실행은 열린 Editor 종료 후 진행한다.
+
+### 2026-09-09 13:23 KST — Play Mode 구형 로더 오류와 카메라 수동 확인 보완
+
+- 사용자 Play Mode 로그를 확인해 비활성 `TempLoader`도 `Awake`가 호출되고, 삭제된 구형 TextAsset 참조가 null로 풀려 빨간 오류를 만든다는 원인을 확정했다.
+- `DemoPlay`에서 더 이상 쓰지 않는 `Chart Provider/TempLoader`를 완전히 제거했다. 씬 재연결 메뉴도 남아 있는 구형 로더를 Undo 가능한 방식으로 제거하며, legacy loader의 초기 로드는 `Awake`가 아니라 활성 상태에서만 호출되는 `Start`에서 수행한다.
+- Console의 Error Pause가 이 오류에서 멈추면 `DemoPlayController.Start`와 Effect 세션이 시작되지 않아 카메라도 움직이지 않는다. 실제 로그에는 그 외 Gameplay/Effect 오류가 없었고 카메라 계층과 참조는 정상이다.
+- 수동 확인 중 놓치지 않도록 샘플 Camera Effect를 곡 시각 약 0.4초에 시작해 2초 유지하고 offset/roll도 더 분명하게 조정했다. 씬 수용 검사는 구형 로더 0개와 관찰 가능한 샘플 시작/지속 시간을 고정한다.
+- 첫 타이밍 수정에서 Camera 정의만 옮겨 발생한 `no matching Effect row`를 즉시 바로잡아, 0 위치의 첫 Tap은 일반 행으로 남기고 1800 위치에 전용 Effect 행을 추가했다. 현재 Effect 행과 정의 위치는 `1200, 1800, 2400, 3600`, ID는 4/4 고유하고 pair revision은 `stage6_demo_002`로 일치한다.
+- 보완 후 솔루션 빌드는 경고 0·오류 0이다. Unity Editor가 열려 있어 전체 73개 회귀 재실행은 Editor 종료 후 수행한다.
+
+### 2026-09-09 13:08 KST — 불완전한 Gameplay 구성 시작 차단
+
+- 마지막 수명주기 교차 검토에서 Effect·판정·세션 상태 구성 요소가 비활성화돼도 chart만 남아 있으면 시작 guard가 통과할 수 있는 틈을 찾았다.
+- Effect의 실제 준비 상태와 세션 상태의 이벤트 연결 상태를 공개하고, chart 시작 guard가 전체 구성 요소의 활성·초기화·준비 상태를 함께 확인하도록 보완했다.
+- 판정, 실제 상태, Effect 중 하나라도 비활성화되면 시작을 거부하는 `GameplayChartSession_DisabledServiceRejectsStart` 수용 검사를 추가했다.
+- 솔루션 빌드는 경고 0·오류 0, Unity 6000.3.15f1 EditMode는 **73/73 통과**했다. 결과는 `Logs/EffectBaselineResults/20260909-130845-c274a8b8/`에 보존했다.
+
+### 2026-09-09 08:07 KST — 6단계 `DemoPlay` 통합 하네스 자동 연결·검증
+
+- `.rd`/sidecar를 공용 Snapshot으로 준비해 기존 판정 큐와 `GameplayChartEffectController`에 함께 전달하는 `GameplayChartPreparation`, `GameplayChartSessionController`를 추가했다.
+- 실제 `GameRule` 기반 체력·콤보·점수·실패·클리어 상태인 `GameplaySessionState`를 만들고, MusicGimmick의 `IEffectGameState` 입력으로 연결했다.
+- 판정 이벤트의 평가 시각을 상태 계산에 전달해 지연 프레임에서도 이후 규칙이 과거 판정에 소급되지 않게 했다.
+- Snapshot 노트의 소수 밀리초 시각을 보존해 같은 위치의 Effect·노트가 반올림으로 재정렬되지 않게 했다. 샘플의 533.333…ms 위치도 실제 판정 루프에서 Effect→노트 순서임을 검사한다.
+- 채보 교체가 live service 변경을 시작한 뒤 실패하면 CurrentChart, 기존 Effect plan, 판정 초기화, 게임 상태를 함께 폐기한다. 준비되지 않은 상태의 Play도 시작 guard가 거부한다.
+- `DemoPlay`를 공용 Snapshot, 실제 상태, 전용 Effect 카메라 pivot에 연결하고 개발용 `.rd`/JSON 샘플을 저장했다. chart `musicId`와 실제 `I.mp3` AudioClip도 번들 설정으로 묶었다.
+- 씬 설정 메뉴는 열린 씬의 미저장 변경 확인과 Undo를 지원하도록 보완했다.
+- 새 수용 검사는 pair 소유권·보정·소수 시각 순서, 실패한 교체의 전체 폐기, 실제 상태/Resume/Restart, DemoPlay Snapshot·음원·서비스·카메라 연결을 고정한다.
+- 당시 솔루션 빌드는 경고 0·오류 0, Unity EditMode는 **72/72 통과**했다. 이후 비활성 구성요소 시작 차단 검사까지 추가한 최신 결과는 위 13:08 항목의 73/73이다.
+- 자동화로 확인하지 않은 것은 실제 Play 화면의 오디오/DSP, 물리 입력, 짧은 카메라 움직임이다. `DemoPlay`의 Build Settings/Home 진입 연결도 큰 곡 선택 흐름과 함께 별도 결정한다.
 
 ### 2026-09-08 19:13 KST — no-type 보완 전체 회귀 통과, 5단계 완료
 
@@ -80,7 +156,7 @@
 - Unity 6000.3.15f1 EditMode **68/68 통과**, 실패 0, 건너뜀 0이다.
 - 결과는 `Logs/EffectBaselineResults/20260908-191253-250a100a/results.xml`, 상세 로그는 같은 폴더의 `unity.log`에 보존했다.
 - 타입 미지정 Effect의 편집·보존 가능/재생 불가 규칙, 자동 선택과 설정 안내, 빨간 오류 억제를 회귀 대상으로 고정했다.
-- 자동 수용과 실제 화면 저장 흐름 확인까지 충족했으므로 5단계를 완료로 확정했다. 다음은 6단계 실제 Gameplay 연결이다.
+- 자동 수용과 실제 화면 저장 흐름 확인까지 충족했으므로 5단계를 완료로 확정했다. 당시 다음 작업으로 부른 “Gameplay 연결”은 이후 최종 씬이 아닌 `DemoPlay` 통합 하네스 연결로 재분류했다.
 
 ### 2026-09-08 18:49 KST — 5단계 수동 결과 검토 및 no-type UX 보완
 
@@ -136,7 +212,7 @@
 
 ## 작업 경계와 주의사항
 
-- 실제 Gameplay 씬 연결 완료로 과장하지 않는다. 이는 6단계다.
+- `DemoPlay` Editor 씬 연결과 Player Build Settings/Home 진입 흐름을 같은 완료 항목으로 과장하지 않는다. 후자는 아직 연결하지 않았다.
 - PlayMode 실제 오디오/DSP, 화면, 물리 입력 검증은 EditMode 회귀 검사와 별도다.
 - 기존 Long Tap / Scratch 판정 규칙은 이 작업에서 재설계하지 않는다.
 - 작업 트리에 이번 작업 이전의 수정·삭제·미추적 파일이 많다. 관련 없는 사용자 변경을 되돌리거나 정리하지 않는다.

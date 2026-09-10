@@ -158,10 +158,12 @@ namespace REmind.Gameplay.Input.Judgement
                     for (int lane = 0; lane < laneQueues.Length; lane++)
                     {
                         if (!laneQueues[lane].TryPeek(out NoteData note)) continue;
-                        double candidate = note.TimeMs;
+                        double candidate = note.TimelineTimeMs;
                         if (!IsAutoPlayEnabled)
                         {
-                            judgementTimeMs = Math.Max(note.TimeMs, timelineTimeMs);
+                            judgementTimeMs = Math.Max(
+                                note.TimelineTimeMs,
+                                timelineTimeMs);
                             candidate += userOffsetMs + gameRule.GetJudgeWindows(CreateRuleContext(note)).MissWindowMs;
                         }
                         if (candidate < autoTime)
@@ -204,7 +206,8 @@ namespace REmind.Gameplay.Input.Judgement
                     judgementTimeMs = autoTime;
                     ResolveCurrentNote(autoQueue, autoNote,
                         IsAutoPlayEnabled ? JudgeResult.Perfect : JudgeResult.Miss,
-                        IsAutoPlayEnabled ? 0d : autoTime - autoNote.TimeMs - userOffsetMs,
+                        IsAutoPlayEnabled ? 0d : autoTime -
+                            autoNote.TimelineTimeMs - userOffsetMs,
                         GetEffectiveHitTimeMs(autoNote), !IsAutoPlayEnabled);
                 }
 
@@ -275,8 +278,8 @@ namespace REmind.Gameplay.Input.Judgement
 
             LaneNoteQueue[] newQueues = new LaneNoteQueue[laneCount];
             HashSet<string> noteIds = new HashSet<string>(StringComparer.Ordinal);
-            HashSet<(long TimeMs, int Lane)> occupiedSlots =
-                new HashSet<(long TimeMs, int Lane)>();
+            HashSet<(double TimeMs, int Lane)> occupiedSlots =
+                new HashSet<(double TimeMs, int Lane)>();
 
             for (int lane = 0; lane < laneCount; lane++)
             {
@@ -292,11 +295,18 @@ namespace REmind.Gameplay.Input.Judgement
                     note.Lane >= laneCount ||
                     string.IsNullOrWhiteSpace(note.Id) ||
                     note.TimeMs < 0 ||
+                    double.IsNaN(note.TimelineTimeMs) ||
+                    double.IsInfinity(note.TimelineTimeMs) ||
+                    note.TimelineTimeMs < 0d ||
+                    double.IsNaN(note.TimelineDurationMs) ||
+                    double.IsInfinity(note.TimelineDurationMs) ||
                     (note.Type.IsLong()
-                        ? note.DurationMs <= 0
-                        : note.DurationMs != 0) ||
+                        ? note.DurationMs <= 0 ||
+                          note.TimelineDurationMs <= 0d
+                        : note.DurationMs != 0 ||
+                          note.TimelineDurationMs != 0d) ||
                     !noteIds.Add(note.Id) ||
-                    !occupiedSlots.Add((note.TimeMs, note.Lane)))
+                    !occupiedSlots.Add((note.TimelineTimeMs, note.Lane)))
                 {
                     Debug.LogError($"Invalid note at index {i}.", this);
                     return false;
@@ -312,6 +322,16 @@ namespace REmind.Gameplay.Input.Judgement
                 catch (OverflowException)
                 {
                     Debug.LogError($"Note time overflows at index {i}.", this);
+                    return false;
+                }
+
+                double timelineEndTimeMs = note.TimelineEndTimeMs;
+                if (double.IsNaN(timelineEndTimeMs) ||
+                    double.IsInfinity(timelineEndTimeMs))
+                {
+                    Debug.LogError(
+                        $"Note timeline overflows at index {i}.",
+                        this);
                     return false;
                 }
 
@@ -449,7 +469,8 @@ namespace REmind.Gameplay.Input.Judgement
             RuleContext context = CreateRuleContext(note);
             double effectiveHitTimeMs = GetEffectiveHitTimeMs(note);
 
-            double offsetMs = input.ChartTimeMs - userOffsetMs - note.TimeMs;
+            double offsetMs = input.ChartTimeMs - userOffsetMs -
+                note.TimelineTimeMs;
 
             JudgeResult result = gameRule.Judge(offsetMs, context);
             if (result == JudgeResult.None)
@@ -559,6 +580,7 @@ namespace REmind.Gameplay.Input.Judgement
                     gameRule.GetTimingSide(offsetMs),
                     offsetMs,
                     effectiveHitTimeMs,
+                    judgementTimeMs,
                     isAutomaticMiss));
         }
 
@@ -590,7 +612,7 @@ namespace REmind.Gameplay.Input.Judgement
 
         private double GetEffectiveHitTimeMs(NoteData note)
         {
-            return note.TimeMs + chartOffsetMs;
+            return note.TimelineTimeMs + chartOffsetMs;
         }
     }
 }

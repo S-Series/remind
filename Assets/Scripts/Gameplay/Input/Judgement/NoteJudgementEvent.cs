@@ -9,6 +9,11 @@ namespace REmind.Gameplay.Input.Judgement
         public TimingSide TimingSide { get; }
         public double OffsetMs { get; }
         public double EffectiveHitTimeMs { get; }
+        /// <summary>
+        /// Chart time at which the input or automatic judgement was evaluated.
+        /// Rule modifiers use this instead of the later render-frame time.
+        /// </summary>
+        public double EvaluationTimeMs { get; }
         public bool IsAutomaticMiss { get; }
 
         public NoteJudgementEvent(
@@ -17,6 +22,7 @@ namespace REmind.Gameplay.Input.Judgement
             TimingSide timingSide,
             double offsetMs,
             double effectiveHitTimeMs,
+            double evaluationTimeMs,
             bool isAutomaticMiss)
         {
             Note = note;
@@ -24,6 +30,7 @@ namespace REmind.Gameplay.Input.Judgement
             TimingSide = timingSide;
             OffsetMs = offsetMs;
             EffectiveHitTimeMs = effectiveHitTimeMs;
+            EvaluationTimeMs = evaluationTimeMs;
             IsAutomaticMiss = isAutomaticMiss;
         }
     }

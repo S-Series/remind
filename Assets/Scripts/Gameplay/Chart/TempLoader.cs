@@ -22,7 +22,7 @@ namespace REmind.Gameplay.Chart
 
         public TempChartData Chart { get; private set; }
 
-        private void Awake()
+        private void Start()
         {
             if (chartFile == null)
             {

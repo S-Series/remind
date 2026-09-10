@@ -6,7 +6,12 @@ using UnityEngine;
 
 namespace REmind.Gameplay.Effects
 {
-    /// <summary>Actual-play bridge. No independent Update: NoteJudgementSystem owns the time pump.</summary>
+    /// <summary>
+    /// Runtime Effect bridge exercised by the DemoPlay harness. It consumes only
+    /// a prepared shared plan and has no independent Update; the explicit
+    /// judgement frame pump owns ordering. The final Game composition root is not
+    /// part of this component.
+    /// </summary>
     [DisallowMultipleComponent]
     public sealed class GameplayChartEffectController : MonoBehaviour
     {
@@ -18,7 +23,8 @@ namespace REmind.Gameplay.Effects
         [SerializeField] private MonoBehaviour gameStateProvider;
 
         private PreparedEffectPlan plan;
-        private ChartEffectDocumentState.Metadata metadata;
+        private string musicId = string.Empty;
+        private string difficultyId = string.Empty;
         private RuntimeSession activeSession;
         private RuntimeSession pendingSession;
         private double chartOffsetMs;
@@ -35,9 +41,56 @@ namespace REmind.Gameplay.Effects
         public Func<string, string, bool> CanTransitionTo { get; set; }
         public event Action<string, string> TransitionRequested;
         public event Action<string> PlaybackFailed;
+        public bool IsPrepared => plan != null && LastError == null &&
+            bound && acceptingStarts && !lifecycleStopping;
 
-        public bool Prepare(PlayableChartSnapshot snapshot, IReadOnlyList<ChartHolder> holders,
-            ChartEffectDocumentState.Metadata documentMetadata, double noteChartOffsetMs)
+        /// <summary>
+        /// Invalidates every prepared/runtime Effect generation. Callers use this
+        /// together with judgement and game-state invalidation when chart
+        /// replacement has crossed its live mutation boundary.
+        /// </summary>
+        public bool ClearPreparation()
+        {
+            if (lifecycleStopping || cleanupDepth > 0 ||
+                (gameManager && gameManager.GamePlay &&
+                 gameManager.GamePlay.IsStartInProgress))
+            {
+                LastError = "Effect preparation cannot be cleared during " +
+                    "session cleanup or playback start.";
+                return false;
+            }
+            if (gameManager &&
+                (gameManager.PlaybackState == PlaybackState.Playing ||
+                 gameManager.PlaybackState == PlaybackState.Paused))
+            {
+                LastError = "Stop playback before clearing Effect preparation.";
+                return false;
+            }
+
+            plan = null;
+            Exception cleanupFailure = CombineCleanupFailures(
+                StopPendingSession(),
+                StopSession());
+            if (cleanupFailure != null)
+            {
+                ReportFailure(
+                    "Could not clear Effect preparation: " +
+                    cleanupFailure.Message);
+                return false;
+            }
+
+            musicId = string.Empty;
+            difficultyId = string.Empty;
+            chartOffsetMs = 0d;
+            LastError = null;
+            return true;
+        }
+
+        public bool Prepare(
+            PreparedEffectPlan preparedPlan,
+            string preparedMusicId,
+            string preparedDifficultyId,
+            double noteChartOffsetMs)
         {
             if (lifecycleStopping || cleanupDepth > 0 ||
                 (gameManager && gameManager.GamePlay &&
@@ -71,8 +124,10 @@ namespace REmind.Gameplay.Effects
                     throw new InvalidOperationException("Stop playback before replacing Effect definitions.");
                 if (!judgementSystem.IsInitialized || Math.Abs(judgementSystem.ChartOffsetMs - noteChartOffsetMs) > 0.000001)
                     throw new InvalidOperationException("Initialize judgement from the same chart and offset before preparing Effects.");
-                plan = ChartEffectPreparation.Prepare(snapshot, holders, documentMetadata.GimmickId);
-                metadata = documentMetadata;
+                plan = preparedPlan ?? throw new ArgumentNullException(
+                    nameof(preparedPlan));
+                musicId = preparedMusicId ?? string.Empty;
+                difficultyId = preparedDifficultyId ?? string.Empty;
                 chartOffsetMs = noteChartOffsetMs;
                 LastError = null;
                 // Validate all services now. Playback creates another fresh session and
@@ -150,19 +205,21 @@ namespace REmind.Gameplay.Effects
             var created = new RuntimeSession();
             try
             {
-                if (cameraEffectPivot) created.Camera = new EffectCameraMixer((offset, roll) =>
+                if (cameraEffectPivot) created.Camera = new EffectCameraMixer((x, y, roll) =>
                 {
                     // A prepared-but-uncommitted session must not reset the camera
                     // owned by the currently playing generation when validation aborts.
                     if (!created.PresentationEnabled || !cameraEffectPivot) return;
-                    cameraEffectPivot.localPosition = pivotPosition + new Vector3(offset.x, offset.y, 0);
-                    cameraEffectPivot.localRotation = pivotRotation * Quaternion.Euler(0, 0, roll);
+                    cameraEffectPivot.localPosition = pivotPosition +
+                        new Vector3((float)x, (float)y, 0f);
+                    cameraEffectPivot.localRotation = pivotRotation *
+                        Quaternion.Euler(0f, 0f, (float)roll);
                 });
                 // Keep prepared modifiers detached until PlaybackCommitting activates this generation.
                 created.Rules = new EffectRuleService(null);
                 created.Mailbox = new EffectTransitionMailbox((music, difficulty) =>
                     TransitionRequested != null && CanTransitionTo != null && CanTransitionTo(music, difficulty));
-                var session = new EffectSessionContext(metadata.MusicId, metadata.DifficultyId,
+                var session = new EffectSessionContext(musicId, difficultyId,
                     judgementSystem.IsAutoPlayEnabled ? EffectExecutionMode.AutoPlay : EffectExecutionMode.Gameplay,
                     created.Camera, GameState ?? gameStateProvider as IEffectGameState,
                     created.Rules, created.Mailbox);
@@ -330,7 +387,7 @@ namespace REmind.Gameplay.Effects
         }
         private void ReportFailure(string error)
         {
-            LastError = $"{metadata.MusicId}/{metadata.DifficultyId}: {error}";
+            LastError = $"{musicId}/{difficultyId}: {error}";
             Debug.LogError(LastError, this);
             if (PlaybackFailed == null) return;
             foreach (Delegate callback in PlaybackFailed.GetInvocationList())

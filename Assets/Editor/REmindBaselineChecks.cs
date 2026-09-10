@@ -7,10 +7,15 @@ using System.Runtime.ExceptionServices;
 using System.Text.RegularExpressions;
 using REmind.Charting;
 using REmind.Data;
+using REmind.Gameplay;
+using REmind.Gameplay.Chart;
+using REmind.Gameplay.Demo;
 using REmind.Gameplay.Effects;
 using REmind.Gameplay.Input.Judgement;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 /// <summary>
 /// Test-only bridge to Unity's predefined Assembly-CSharp. Test asmdefs cannot reference that
@@ -346,9 +351,50 @@ public static class REmindBaselineChecks
     private static void ParameterTypes_RejectMalformedValues()
     {
         foreach (string json in new[] { "{}", "{\"durationMs\":\"400\"}", "{\"durationMs\":-1}",
-            "{\"durationMs\":1e999}", "{\"durationMs\":1,\"durationMs\":2}", "{\"durationMs\":1,\"typo\":1}" })
+            "{\"durationMs\":1e999}", "{\"durationMs\":1,\"durationMs\":2}",
+            "{\"durationMs\":400,\"attackMs\":-1}",
+            "{\"durationMs\":400,\"releaseMs\":-1}",
+            "{\"durationMs\":400,\"attackMs\":1e999}",
+            "{\"durationMs\":400,\"releaseMs\":1e999}",
+            "{\"durationMs\":400,\"attackMs\":250,\"releaseMs\":200}",
+            "{\"durationMs\":1,\"typo\":1}" })
             Require(!ChartEffectJsonCodec.TryDecode("camera.offset", "", "", json, out _, out _),
                 "Malformed parameters were accepted: " + json);
+        Require(ChartEffectJsonCodec.TryDecode(
+                    "camera.offset",
+                    "",
+                    "",
+                    "{\"durationMs\":400,\"attackMs\":100,\"releaseMs\":100}",
+                    out object cameraValue,
+                    out _) &&
+                cameraValue is CameraEffectParameters camera &&
+                camera.AttackMs == 100d &&
+                camera.ReleaseMs == 100d,
+            "Valid camera easing parameters were not decoded.");
+        Require(ChartEffectJsonCodec.TryDecode(
+                    "camera.offset", "", "", "{\"durationMs\":400}",
+                    out object legacyCameraValue, out _) &&
+                legacyCameraValue is CameraEffectParameters legacyCamera &&
+                legacyCamera.AttackMs == 0d &&
+                legacyCamera.ReleaseMs == 0d,
+            "A camera setting without easing fields lost legacy snap compatibility.");
+        Require(ChartEffectJsonCodec.TryDecode(
+                    "camera.offset", "", "",
+                    "{\"durationMs\":400,\"attackMs\":200,\"releaseMs\":200}",
+                    out object boundaryCameraValue, out _) &&
+                boundaryCameraValue is CameraEffectParameters boundaryCamera &&
+                boundaryCamera.AttackMs + boundaryCamera.ReleaseMs ==
+                    boundaryCamera.DurationMs,
+            "A valid camera envelope that exactly fills its duration was rejected.");
+        Require(ChartEffectJsonCodec.TryDecode(
+                    "camera.offset", "", "",
+                    ChartEffectJsonCodec.GetDefaultJson(
+                        "camera.offset", "", ""),
+                    out object defaultCameraValue, out _) &&
+                defaultCameraValue is CameraEffectParameters defaultCamera &&
+                defaultCamera.AttackMs == 100d &&
+                defaultCamera.ReleaseMs == 100d,
+            "New camera settings do not default to a smooth envelope.");
         Require(ChartEffectJsonCodec.TryDecode("music.call", "count-success", "sample", "", out object parameters, out _) && parameters == null,
             "A parameterless command incorrectly requires an empty settings object.");
     }
@@ -560,11 +606,11 @@ public static class REmindBaselineChecks
 
     private static void EffectServices_RejectStaleCameraAndDuplicateTransition()
     {
-        Vector2 applied = Vector2.zero;
+        double appliedX = 0d;
         int applyCount = 0;
-        var oldMixer = new EffectCameraMixer((offset, roll) =>
+        var oldMixer = new EffectCameraMixer((x, y, roll) =>
         {
-            applied = offset;
+            appliedX = x;
             applyCount++;
         });
         IEffectCameraOffset oldHandle = oldMixer.CreateOffset("same-id");
@@ -573,15 +619,15 @@ public static class REmindBaselineChecks
         oldMixer.Dispose();
         int countAfterDispose = applyCount;
 
-        using var currentMixer = new EffectCameraMixer((offset, roll) =>
+        using var currentMixer = new EffectCameraMixer((x, y, roll) =>
         {
-            applied = offset;
+            appliedX = x;
             applyCount++;
         });
         currentMixer.CreateOffset("same-id").Set(4, 0, 0);
         currentMixer.Apply();
         oldMixer.Apply();
-        Require(applied.x == 4 && applyCount == countAfterDispose + 1,
+        Require(appliedX == 4d && applyCount == countAfterDispose + 1,
             "A disposed session's delayed camera Apply changed the current session.");
 
         using var mailbox = new EffectTransitionMailbox((music, difficulty) => true);
@@ -634,9 +680,16 @@ public static class REmindBaselineChecks
                 0, "call", "music.call", "count-success", 0));
             PlayableChartSnapshot snapshot =
                 ChartCompiler.Compile(document).Snapshot;
-            var metadata = new ChartEffectDocumentState.Metadata(
-                "song", "default", "sample", "revision");
-            Require(controller.Prepare(snapshot, new[] { holder }, metadata, 0),
+            PreparedEffectPlan preparedPlan =
+                ChartEffectJsonCodec.PreparePlan(
+                    snapshot,
+                    new[] { holder },
+                    "sample");
+            Require(controller.Prepare(
+                    preparedPlan,
+                    "song",
+                    "default",
+                    0),
                 "Gameplay Effect preparation failed: " + controller.LastError);
 
             MethodInfo starting = typeof(GameplayChartEffectController)
@@ -661,26 +714,26 @@ public static class REmindBaselineChecks
             FieldInfo pending = typeof(GameplayChartEffectController).GetField(
                 "pendingSession", BindingFlags.Instance | BindingFlags.NonPublic);
 
-            var invalidHolder = new ChartHolder(0, 0)
-            {
-                isEffect = true,
-                effectId = "call",
-                effectTypeId = "unknown.effect.type",
-                effectCommandId = "count-success",
-                effectParametersJson = string.Empty
-            };
             UnityEngine.TestTools.LogAssert.Expect(
                 LogType.Error,
                 new System.Text.RegularExpressions.Regex(
-                    "song/default:.*unknown.effect.type",
-                    System.Text.RegularExpressions.RegexOptions.Singleline));
-            Require(!controller.Prepare(snapshot, new[] { invalidHolder }, metadata, 0),
-                "Invalid Effect definitions unexpectedly replaced the prepared plan.");
+                    "^song/default: Value cannot be null\\."));
+            Require(!controller.Prepare(
+                    null,
+                    "song",
+                    "default",
+                    0),
+                "A missing prepared Effect plan unexpectedly replaced the " +
+                "runtime plan.");
             Require(!(bool)Invoke(starting, controller, new object[] { 0d }) &&
                     active.GetValue(controller) == null &&
                     pending.GetValue(controller) == null,
                 "A failed Prepare left a stale Effect plan available for playback.");
-            Require(controller.Prepare(snapshot, new[] { holder }, metadata, 0),
+            Require(controller.Prepare(
+                    preparedPlan,
+                    "song",
+                    "default",
+                    0),
                 "Valid Effect preparation could not recover after a rejected plan: " +
                 controller.LastError);
 
@@ -1299,8 +1352,9 @@ public static class REmindBaselineChecks
                 Require(compiled.Succeeded &&
                         compiled.Snapshot.EffectEvents.Count == 1,
                     "The reopened ChartMaker document could not compile the placed Effect.");
-                PreparedEffectPlan plan = ChartEffectPreparation.Prepare(
-                    compiled.Snapshot, ChartManager.ChartHolders,
+                PreparedEffectPlan plan = ChartEffectJsonCodec.PreparePlan(
+                    compiled.Snapshot,
+                    ChartManager.ChartHolders,
                     ChartEffectDocumentState.GimmickId);
                 Require(plan != null && plan.Count == 1,
                     "The reopened Effect could not be prepared with its saved JSON.");
@@ -1360,6 +1414,518 @@ public static class REmindBaselineChecks
                 }
             }
         });
+    }
+
+    private static void GameplayPreparation_UsesSharedPairAndOffset()
+    {
+        string chartPath = Path.Combine(
+            Application.dataPath,
+            "Chart/EffectGameplaySample.rd");
+        string parameterPath = Path.Combine(
+            Application.dataPath,
+            "Chart/effect.effect_gameplay_sample.demo.json");
+        string chartText = File.ReadAllText(chartPath);
+        string parameterText = File.ReadAllText(parameterPath);
+        string correctedChartText = chartText.Replace(
+            "\"musicStartCorrectionMs\": 0.0",
+            "\"musicStartCorrectionMs\": -125.0");
+
+        PreparedGameplayChart prepared = GameplayChartPreparation.Prepare(
+            correctedChartText,
+            parameterText,
+            4);
+        Require(prepared.Snapshot.EffectEvents.Count == 4,
+            "Gameplay did not compile every Effect from the shared Snapshot.");
+        Require(prepared.Notes.Count == 2 &&
+                prepared.Notes[0].Type == NoteType.Tap &&
+                prepared.Notes[1].Type == NoteType.Tap,
+            "Gameplay judgement notes did not come from the compiled Snapshot.");
+        Require(Math.Abs(prepared.ChartOffsetMs - 125d) < 0.000001,
+            "Gameplay did not invert ChartMaker's music-start correction.");
+        Require(prepared.Metadata.MusicId == "effect_gameplay_sample" &&
+                prepared.Metadata.DifficultyId == "demo" &&
+                prepared.Metadata.GimmickId == "sample",
+            "Gameplay metadata changed while preparing the matching pair.");
+
+        NoteData alignedNote = prepared.Notes[1];
+        PlayableEffectEvent alignedEffect =
+            prepared.Snapshot.EffectEvents[2];
+        Require(alignedEffect.EffectId == "fx_stage6_count" &&
+                Math.Abs(alignedNote.TimelineTimeMs -
+                    alignedEffect.TimeMs) < 0.000000001d &&
+                Math.Abs(alignedNote.TimelineTimeMs -
+                    alignedNote.TimeMs) > 0.1d,
+            "Gameplay rounded a Snapshot note away from its same-position Effect.");
+
+        WithJudgement((system, rule) =>
+        {
+            Require(system.Initialize(
+                    ChartLaneLayout.LaneCount,
+                    new[] { alignedNote }),
+                "Could not initialize the fractional Snapshot note.");
+            system.SetAutoPlayEnabled(true);
+            var order = new List<string>();
+            var registry = new EffectRegistry();
+            registry.RegisterEffect(new EffectRegistration(
+                "fractional-record",
+                "Fractional record",
+                null,
+                false,
+                null,
+                null,
+                _ => new RecordingEffect(() => order.Add("effect"))));
+            var document = new ChartDocument(4800, 4, 225);
+            document.EffectEvents.Add(new ChartEffectEvent(
+                8400,
+                "fractional-effect",
+                "fractional-record",
+                "",
+                0));
+            PreparedEffectPlan plan = EffectPreparation.Prepare(
+                ChartCompiler.Compile(document).Snapshot.EffectEvents,
+                null,
+                registry).Plan;
+            using var runner = new EffectRunner(
+                plan,
+                new EffectSessionContext(
+                    "test",
+                    "default",
+                    EffectExecutionMode.AutoPlay));
+            system.AttachEffectRunner(runner);
+            system.NoteJudged += _ => order.Add("note");
+            system.ProcessFrame(2000d);
+            Require(string.Join(",", order) == "effect,note",
+                "A same-position fractional Effect ran after its gameplay note.");
+        });
+
+        bool mismatchRejected = false;
+        try
+        {
+            GameplayChartPreparation.Prepare(
+                chartText,
+                parameterText.Replace(
+                    "stage6_demo_004",
+                    "stage6_demo_wrong"),
+                4);
+        }
+        catch (FormatException)
+        {
+            mismatchRejected = true;
+        }
+
+        Require(mismatchRejected,
+            "Gameplay accepted an Effect JSON owned by another revision.");
+    }
+
+    private static void GameplayChartSession_FailedReplacementInvalidatesAll()
+    {
+        string chartText = File.ReadAllText(Path.Combine(
+            Application.dataPath,
+            "Chart/EffectGameplaySample.rd"));
+        string parameterText = File.ReadAllText(Path.Combine(
+            Application.dataPath,
+            "Chart/effect.effect_gameplay_sample.demo.json"));
+        var go = new GameObject(
+            "Stage 6 failed replacement acceptance (inactive)");
+        go.SetActive(false);
+        var config = ScriptableObject.CreateInstance<GameRuleConfig>();
+
+        try
+        {
+            var audio = go.AddComponent<AudioSource>();
+            var play = go.AddComponent<GamePlay>();
+            SetField(play, "audioSource", audio);
+            var rule = go.AddComponent<DefaultGameRule>();
+            typeof(GameRule).GetField("config",
+                    BindingFlags.Instance | BindingFlags.NonPublic)
+                .SetValue(rule, config);
+            var manager = go.AddComponent<GameManager>();
+            SetField(manager, "gamePlay", play);
+            SetField(manager, "gameRule", rule);
+            var judgement = go.AddComponent<NoteJudgementSystem>();
+            SetField(judgement, "gameManager", manager);
+            SetField(judgement, "gameRule", rule);
+            var state = go.AddComponent<GameplaySessionState>();
+            SetField(state, "gameManager", manager);
+            SetField(state, "judgementSystem", judgement);
+            SetField(state, "gameRule", rule);
+            var effects = go.AddComponent<GameplayChartEffectController>();
+            SetField(effects, "gameManager", manager);
+            SetField(effects, "judgementSystem", judgement);
+            SetField(effects, "gameStateProvider", state);
+            var cameraPivot = new GameObject(
+                "Stage 6 test camera Effect pivot");
+            cameraPivot.transform.SetParent(go.transform, false);
+            SetField(effects, "cameraEffectPivot", cameraPivot.transform);
+            var chartSession = go.AddComponent<
+                GameplayChartSessionController>();
+            SetField(chartSession, "gameManager", manager);
+            SetField(chartSession, "judgementSystem", judgement);
+            SetField(chartSession, "effectController", effects);
+            SetField(chartSession, "sessionState", state);
+
+            Require(chartSession.TryPrepare(chartText, parameterText),
+                "The valid gameplay chart could not establish the fixture: " +
+                chartSession.LastError);
+            Require(chartSession.IsPrepared && judgement.IsInitialized &&
+                    state.HasPreparedChart &&
+                    GetFieldValue(effects, "plan") != null,
+                "The valid chart was not published to every live service.");
+
+            SetField(manager, "gameRule", null);
+            SetField(state, "gameRule", null);
+            UnityEngine.TestTools.LogAssert.Expect(
+                LogType.Error,
+                "GameplaySessionState requires GameManager, GamePlay, " +
+                "NoteJudgementSystem and GameRule references.");
+            Require(!chartSession.TryPrepare(chartText, parameterText),
+                "A replacement with incomplete live state unexpectedly succeeded.");
+            Require(!chartSession.IsPrepared && !judgement.IsInitialized &&
+                    !state.HasPreparedChart &&
+                    GetFieldValue(effects, "plan") == null,
+                "A failed replacement left stale chart services startable.");
+
+            SetField(manager, "gameRule", rule);
+            SetField(state, "gameRule", rule);
+        }
+        finally
+        {
+            UnityEngine.Object.DestroyImmediate(go);
+            UnityEngine.Object.DestroyImmediate(config);
+        }
+    }
+
+    private static void GameplayChartSession_DisabledServiceRejectsStart()
+    {
+        string chartText = File.ReadAllText(Path.Combine(
+            Application.dataPath,
+            "Chart/EffectGameplaySample.rd"));
+        string parameterText = File.ReadAllText(Path.Combine(
+            Application.dataPath,
+            "Chart/effect.effect_gameplay_sample.demo.json"));
+        var go = new GameObject(
+            "Stage 6 disabled service start guard (inactive)");
+        go.SetActive(false);
+        var config = ScriptableObject.CreateInstance<GameRuleConfig>();
+        AudioClip song = null;
+
+        try
+        {
+            var audio = go.AddComponent<AudioSource>();
+            var play = go.AddComponent<GamePlay>();
+            SetField(play, "audioSource", audio);
+            var rule = go.AddComponent<DefaultGameRule>();
+            typeof(GameRule).GetField("config",
+                    BindingFlags.Instance | BindingFlags.NonPublic)
+                .SetValue(rule, config);
+            var manager = go.AddComponent<GameManager>();
+            SetField(manager, "gamePlay", play);
+            SetField(manager, "gameRule", rule);
+            var judgement = go.AddComponent<NoteJudgementSystem>();
+            SetField(judgement, "gameManager", manager);
+            SetField(judgement, "gameRule", rule);
+            var state = go.AddComponent<GameplaySessionState>();
+            SetField(state, "gameManager", manager);
+            SetField(state, "judgementSystem", judgement);
+            SetField(state, "gameRule", rule);
+            var effects = go.AddComponent<GameplayChartEffectController>();
+            SetField(effects, "gameManager", manager);
+            SetField(effects, "judgementSystem", judgement);
+            SetField(effects, "gameStateProvider", state);
+            var cameraPivot = new GameObject(
+                "Stage 6 disabled service camera Effect pivot");
+            cameraPivot.transform.SetParent(go.transform, false);
+            SetField(effects, "cameraEffectPivot", cameraPivot.transform);
+            var chartSession = go.AddComponent<
+                GameplayChartSessionController>();
+            SetField(chartSession, "gameManager", manager);
+            SetField(chartSession, "judgementSystem", judgement);
+            SetField(chartSession, "effectController", effects);
+            SetField(chartSession, "sessionState", state);
+
+            go.SetActive(true);
+            Require(chartSession.TryPrepare(chartText, parameterText),
+                "The valid gameplay chart could not establish the disabled-service fixture: " +
+                chartSession.LastError);
+            song = AudioClip.Create(
+                "Stage 6 disabled service start guard",
+                4410,
+                1,
+                44100,
+                false);
+            Require(play.PrepareSong(song),
+                "The disabled-service fixture could not prepare its song.");
+
+            MethodInfo startGuard = typeof(GameplayChartSessionController)
+                .GetMethod("HandlePlaybackStarting",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+            Require((bool)Invoke(startGuard, chartSession,
+                    new object[] { 0d }),
+                "A fully prepared active gameplay graph was rejected.");
+
+            judgement.enabled = false;
+            Require(!(bool)Invoke(startGuard, chartSession,
+                        new object[] { 0d }) &&
+                    !manager.StartGame() &&
+                    play.State == PlaybackState.Ready,
+                "Playback was accepted while judgement was disabled.");
+            judgement.enabled = true;
+            Require((bool)Invoke(startGuard, chartSession,
+                    new object[] { 0d }),
+                "Re-enabled judgement did not restore the valid graph.");
+
+            state.enabled = false;
+            Require(!(bool)Invoke(startGuard, chartSession,
+                        new object[] { 0d }) &&
+                    !manager.StartGame() &&
+                    play.State == PlaybackState.Ready,
+                "Playback was accepted while gameplay state was disabled.");
+            state.enabled = true;
+            Require((bool)Invoke(startGuard, chartSession,
+                    new object[] { 0d }),
+                "Re-enabled gameplay state did not restore the valid graph.");
+
+            effects.enabled = false;
+            Require(!(bool)Invoke(startGuard, chartSession,
+                        new object[] { 0d }) &&
+                    !manager.StartGame() &&
+                    play.State == PlaybackState.Ready,
+                "Playback was accepted while Effects were disabled.");
+        }
+        finally
+        {
+            UnityEngine.Object.DestroyImmediate(go);
+            UnityEngine.Object.DestroyImmediate(config);
+            if (song != null)
+            {
+                UnityEngine.Object.DestroyImmediate(song);
+            }
+        }
+    }
+
+    private static void GameplaySessionState_UsesRuleStateAndRestartBoundary()
+    {
+        var go = new GameObject(
+            "Stage 6 gameplay state acceptance (inactive)");
+        go.SetActive(false);
+        var config = ScriptableObject.CreateInstance<GameRuleConfig>();
+
+        try
+        {
+            var audio = go.AddComponent<AudioSource>();
+            var play = go.AddComponent<GamePlay>();
+            SetField(play, "audioSource", audio);
+            var rule = go.AddComponent<DefaultGameRule>();
+            typeof(GameRule).GetField("config",
+                    BindingFlags.Instance | BindingFlags.NonPublic)
+                .SetValue(rule, config);
+            var manager = go.AddComponent<GameManager>();
+            SetField(manager, "gamePlay", play);
+            SetField(manager, "gameRule", rule);
+            var judgement = go.AddComponent<NoteJudgementSystem>();
+            SetField(judgement, "gameManager", manager);
+            SetField(judgement, "gameRule", rule);
+            var state = go.AddComponent<GameplaySessionState>();
+            SetField(state, "gameManager", manager);
+            SetField(state, "judgementSystem", judgement);
+            SetField(state, "gameRule", rule);
+
+            Require(judgement.Initialize(
+                    ChartLaneLayout.LaneCount,
+                    new[] { Note("stage6-state-note", 0, 100) },
+                    0d),
+                "Could not initialize the Stage 6 state judgement fixture.");
+            judgement.SetAutoPlayEnabled(true);
+            Require(state.TryConfigureChart(1, out string error),
+                "Could not configure real gameplay state: " + error);
+            Require(Math.Abs(state.CurrentHealth - rule.BaseInitialHealth) <
+                    0.000001,
+                "Gameplay state did not start from the active GameRule.");
+
+            judgement.ProcessFrame(100d);
+            Require(state.JudgedNoteCount == 1 &&
+                    state.CurrentCombo == 1 &&
+                    state.CurrentScore > 0d &&
+                    state.IsCleared,
+                "A real judgement did not update health/combo/score/clear state.");
+
+            double scoreAfterJudge = state.CurrentScore;
+            int comboAfterJudge = state.CurrentCombo;
+            SetProperty(play, "StartReason", PlaybackStartReason.Resume);
+            Invoke(typeof(GameplaySessionState).GetMethod(
+                "HandlePlaybackStarted",
+                BindingFlags.Instance | BindingFlags.NonPublic),
+                state,
+                new object[] { 100d });
+            Require(state.CurrentScore == scoreAfterJudge &&
+                    state.CurrentCombo == comboAfterJudge,
+                "Resume reset live gameplay state.");
+
+            SetProperty(play, "StartReason", PlaybackStartReason.Restart);
+            Invoke(typeof(GameplaySessionState).GetMethod(
+                "HandlePlaybackStarted",
+                BindingFlags.Instance | BindingFlags.NonPublic),
+                state,
+                new object[] { 0d });
+            Require(state.JudgedNoteCount == 0 &&
+                    state.CurrentCombo == 0 &&
+                    state.CurrentScore == 0d &&
+                    Math.Abs(state.CurrentHealth - rule.BaseInitialHealth) <
+                        0.000001,
+                "Restart did not create fresh gameplay rule state.");
+        }
+        finally
+        {
+            UnityEngine.Object.DestroyImmediate(go);
+            UnityEngine.Object.DestroyImmediate(config);
+        }
+    }
+
+    private static void GameplayScene_ConnectsSnapshotStateAndCamera()
+    {
+        const string scenePath = "Assets/Scenes/DemoPlay.unity";
+        Scene scene = SceneManager.GetSceneByPath(scenePath);
+        bool opened = !scene.IsValid() || !scene.isLoaded;
+        if (opened)
+        {
+            scene = EditorSceneManager.OpenScene(
+                scenePath,
+                OpenSceneMode.Additive);
+        }
+
+        try
+        {
+            GameplayChartSessionController chartSession =
+                FindSingleInScene<GameplayChartSessionController>(scene);
+            GameplaySessionState state =
+                FindSingleInScene<GameplaySessionState>(scene);
+            GameplayChartEffectController effects =
+                FindSingleInScene<GameplayChartEffectController>(scene);
+            DemoPlayController demo =
+                FindSingleInScene<DemoPlayController>(scene);
+            GameManager manager = FindSingleInScene<GameManager>(scene);
+            NoteJudgementSystem judgement =
+                FindSingleInScene<NoteJudgementSystem>(scene);
+            Camera camera = FindSingleInScene<Camera>(scene);
+
+            int legacyLoaderCount = 0;
+            foreach (GameObject root in scene.GetRootGameObjects())
+            {
+                legacyLoaderCount += root
+                    .GetComponentsInChildren<TempLoader>(true).Length;
+            }
+            Require(legacyLoaderCount == 0,
+                "DemoPlay still contains the obsolete TempLoader.");
+
+            var chartAsset = (TextAsset)GetFieldValue(
+                chartSession,
+                "chartAsset");
+            var parameterAsset = (TextAsset)GetFieldValue(
+                chartSession,
+                "effectParameterAsset");
+            Require(chartAsset && parameterAsset,
+                "DemoPlay does not reference its bundled .rd/Effect JSON pair.");
+            PreparedGameplayChart prepared = GameplayChartPreparation.Prepare(
+                chartAsset.text,
+                parameterAsset.text,
+                (int)GetFieldValue(chartSession, "beatsPerMeasure"));
+            Require(prepared.Snapshot.EffectEvents.Count == 4 &&
+                    prepared.Notes.Count == 2,
+                "The pair wired into DemoPlay is not actually gameplay-ready.");
+            PlayableEffectEvent cameraEvent = null;
+            foreach (NoteData note in prepared.Notes)
+            {
+                Require(note.TimelineTimeMs > 1000d,
+                    "The bundled sample contains a gameplay note at or before " +
+                    "the one-second loading guard.");
+            }
+            foreach (PlayableEffectEvent effectEvent in
+                     prepared.Snapshot.EffectEvents)
+            {
+                Require(effectEvent.TimeMs > 1000d,
+                    "The bundled sample contains an Effect at or before the " +
+                    "one-second loading guard.");
+                if (effectEvent.EffectId == "fx_stage6_camera")
+                {
+                    cameraEvent = effectEvent;
+                }
+            }
+            ChartFile inspectedChart = ChartFileCodec.Parse(chartAsset.text);
+            ChartEffectFileStore.ApplyParameters(
+                inspectedChart,
+                parameterAsset.text);
+            var cameraParameters = (CameraEffectParameters)
+                ChartEffectJsonCodec.BuildParameterMap(
+                    inspectedChart.chartDatas,
+                    prepared.Metadata.GimmickId)["fx_stage6_camera"];
+            Require(cameraEvent != null &&
+                    cameraEvent.TimeMs >= 1500d &&
+                    cameraEvent.TimeMs <= 2500d &&
+                    cameraParameters.DurationMs >= 1500d &&
+                    cameraParameters.AttackMs >= 250d &&
+                    cameraParameters.ReleaseMs >= 250d &&
+                    cameraParameters.AttackMs +
+                        cameraParameters.ReleaseMs <=
+                        cameraParameters.DurationMs,
+                "The manual camera sample starts too early or ends too fast " +
+                "to verify smoothly in Play Mode.");
+            string bundledMusicId = (string)GetFieldValue(
+                chartSession,
+                "bundledMusicId");
+            var bundledSong = (AudioClip)GetFieldValue(
+                chartSession,
+                "bundledSong");
+            Require(string.Equals(
+                        bundledMusicId,
+                        prepared.Metadata.MusicId,
+                        StringComparison.Ordinal) &&
+                    bundledSong &&
+                    ReferenceEquals(
+                        bundledSong,
+                        GetFieldValue(manager.GamePlay, "initialSong")),
+                "DemoPlay's chart musicId is not bound to its actual AudioClip.");
+
+            Require(ReferenceEquals(
+                    GetFieldValue(chartSession, "judgementSystem"),
+                    judgement) &&
+                ReferenceEquals(
+                    GetFieldValue(chartSession, "effectController"),
+                    effects) &&
+                ReferenceEquals(
+                    GetFieldValue(chartSession, "sessionState"),
+                    state),
+                "DemoPlay chart preparation does not publish to the same " +
+                "judgement, Effect and state services.");
+            Require(ReferenceEquals(
+                    GetFieldValue(effects, "gameStateProvider"),
+                    state),
+                "The real Effect session is not reading real gameplay health.");
+
+            Transform cameraBase = (Transform)GetFieldValue(
+                demo,
+                "cameraTransform");
+            Transform effectPivot = (Transform)GetFieldValue(
+                effects,
+                "cameraEffectPivot");
+            Require(cameraBase && effectPivot &&
+                    cameraBase.name == "Camera Base Motion" &&
+                    effectPivot.name == "Camera Effect Pivot" &&
+                    effectPivot.parent == cameraBase &&
+                    camera.transform.parent == effectPivot,
+                "DemoPlay camera base motion and additive Effect pivot are " +
+                "not isolated in the required hierarchy.");
+            Require(ReferenceEquals(
+                    GetFieldValue(demo, "chartSession"),
+                    chartSession),
+                "DemoPlay still bypasses the prepared gameplay chart session.");
+        }
+        finally
+        {
+            if (opened && scene.IsValid() && scene.isLoaded)
+            {
+                EditorSceneManager.CloseScene(scene, true);
+            }
+        }
     }
 
     private static void CheckCameraValidation(EffectRegistry registry,
@@ -1462,6 +2028,53 @@ public static class REmindBaselineChecks
         if (field == null) throw new MissingFieldException(
             instance.GetType().Name, name);
         field.SetValue(instance, value);
+    }
+
+    private static object GetFieldValue(object instance, string name)
+    {
+        FieldInfo field = instance.GetType().GetField(
+            name,
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        if (field == null)
+        {
+            throw new MissingFieldException(instance.GetType().Name, name);
+        }
+        return field.GetValue(instance);
+    }
+
+    private static void SetProperty(
+        object instance,
+        string name,
+        object value)
+    {
+        PropertyInfo property = instance.GetType().GetProperty(
+            name,
+            BindingFlags.Instance | BindingFlags.Public |
+            BindingFlags.NonPublic);
+        MethodInfo setter = property?.GetSetMethod(true);
+        if (setter == null)
+        {
+            throw new MissingMemberException(instance.GetType().Name, name);
+        }
+        Invoke(setter, instance, new[] { value });
+    }
+
+    private static T FindSingleInScene<T>(Scene scene)
+        where T : Component
+    {
+        var matches = new List<T>();
+        foreach (GameObject root in scene.GetRootGameObjects())
+        {
+            matches.AddRange(root.GetComponentsInChildren<T>(true));
+        }
+
+        if (matches.Count != 1)
+        {
+            throw new InvalidOperationException(
+                $"Expected one {typeof(T).Name} in {scene.path}; found " +
+                $"{matches.Count}.");
+        }
+        return matches[0];
     }
 
     private static NoteData Note(string id, int lane, long time) => (NoteData)Activator.CreateInstance(typeof(NoteData),

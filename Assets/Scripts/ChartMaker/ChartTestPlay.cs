@@ -44,7 +44,7 @@ public sealed class ChartTestPlay : MonoBehaviour
     private PreparedEffectPlan effectPlan;
     private EffectRunner effectRunner;
     private EffectCameraMixer effectCamera;
-    private EffectRuleService effectRules;
+    private EffectPreviewRuleService effectRules;
     private EffectTransitionMailbox effectTransitions;
     private long effectSessionId;
     private bool initialized;
@@ -319,7 +319,9 @@ public sealed class ChartTestPlay : MonoBehaviour
         viewBindings = buildResult.ViewBindings;
         try
         {
-            effectPlan = ChartEffectPreparation.Prepare(snapshot, ChartManager.ChartHolders,
+            effectPlan = ChartEffectJsonCodec.PreparePlan(
+                snapshot,
+                ChartManager.ChartHolders,
                 ChartEffectDocumentState.GimmickId);
             LastEffectMessage = null;
         }
@@ -408,8 +410,11 @@ public sealed class ChartTestPlay : MonoBehaviour
         }
         try
         {
-            effectCamera = new EffectCameraMixer(chartScroll.SetEffectCameraOffset);
-            effectRules = new EffectRuleService(null);
+            effectCamera = new EffectCameraMixer((x, y, rollDegrees) =>
+                chartScroll.SetEffectCameraOffset(
+                    new Vector2((float)x, (float)y),
+                    (float)rollDegrees));
+            effectRules = new EffectPreviewRuleService();
             // Preview only reports requests; it has no access to scenes/accounts/progress.
             effectTransitions = new EffectTransitionMailbox((music, difficulty) =>
                 !string.IsNullOrWhiteSpace(music) && !string.IsNullOrWhiteSpace(difficulty));
@@ -433,7 +438,7 @@ public sealed class ChartTestPlay : MonoBehaviour
         // Detach the current generation before invoking user/plugin cleanup. A
         // re-entrant callback cannot observe or dispose a newly created session.
         EffectRunner runnerToDispose = effectRunner;
-        EffectRuleService rulesToDispose = effectRules;
+        EffectPreviewRuleService rulesToDispose = effectRules;
         EffectCameraMixer cameraToDispose = effectCamera;
         EffectTransitionMailbox transitionsToDispose = effectTransitions;
         effectSessionId = 0L;

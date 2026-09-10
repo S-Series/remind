@@ -41,6 +41,11 @@ namespace REmind.Effects.Tests
         [TestCase("UndoRedo_PreserveLastSavedRevision")]
         [TestCase("EditorAndRuntimeValidation_Agree")]
         [TestCase("ChartMaker_SaveReopenPreview_RoundTrips")]
+        [TestCase("GameplayPreparation_UsesSharedPairAndOffset")]
+        [TestCase("GameplayChartSession_FailedReplacementInvalidatesAll")]
+        [TestCase("GameplayChartSession_DisabledServiceRejectsStart")]
+        [TestCase("GameplaySessionState_UsesRuleStateAndRestartBoundary")]
+        [TestCase("GameplayScene_ConnectsSnapshotStateAndCamera")]
         [Category("EffectAcceptance")]
         public void Acceptance(string name) => Run(name);
 

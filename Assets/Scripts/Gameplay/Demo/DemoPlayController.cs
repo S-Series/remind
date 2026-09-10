@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using REmind.Charting;
 using REmind.Data;
+using REmind.Gameplay.Chart;
 using REmind.Gameplay.Input.Judgement;
 using UnityEngine;
 
@@ -20,6 +22,7 @@ namespace REmind.Gameplay.Demo
         [Header("Systems")]
         [SerializeField] private GameManager gameManager;
         [SerializeField] private NoteJudgementSystem judgementSystem;
+        [SerializeField] private GameplayChartSessionController chartSession;
 
         [Header("Movement")]
         [SerializeField] private Transform cameraTransform;
@@ -34,7 +37,9 @@ namespace REmind.Gameplay.Demo
 
         private Transform playCanvasTransform;
         private Vector3 initialCameraPosition;
+        private Quaternion initialCameraRotation;
         private Vector3 initialPlayCanvasScale;
+        private PreparedGameplayChart preparedChart;
 
         private double QuarterNoteMs => 60000d / bpm;
         private double EffectiveSpeedMultiplier => speedMultiplier * 0.5d;
@@ -48,10 +53,26 @@ namespace REmind.Gameplay.Demo
             }
 
             initialCameraPosition = cameraTransform.position;
+            initialCameraRotation = cameraTransform.rotation;
             initialPlayCanvasScale = playCanvasTransform.localScale;
             ApplySpeedMultiplier();
 
-            if (!BuildDemoChart())
+            bool chartReady;
+            if (chartSession)
+            {
+                chartReady = chartSession.TryPrepareConfiguredChart();
+                if (chartReady)
+                {
+                    preparedChart = chartSession.CurrentChart;
+                    chartReady = BuildPreparedChartViews();
+                }
+            }
+            else
+            {
+                chartReady = BuildDemoChart();
+            }
+
+            if (!chartReady)
             {
                 enabled = false;
                 return;
@@ -59,7 +80,14 @@ namespace REmind.Gameplay.Demo
 
             if (playOnReady)
             {
-                gameManager.StartGame();
+                if (!gameManager.StartGame())
+                {
+                    Debug.LogError(
+                        "DemoPlay prepared its chart, but automatic playback " +
+                        "start was rejected. Review the preceding gameplay " +
+                        "error or use Play to retry.",
+                        this);
+                }
             }
         }
 
@@ -71,10 +99,40 @@ namespace REmind.Gameplay.Demo
             }
 
             Vector3 cameraPosition = initialCameraPosition;
-            cameraPosition.z += (float)(
-                MsToPosition(Math.Max(0d, gameManager.CorePlayMs)) *
-                EffectiveSpeedMultiplier);
+            Quaternion cameraRotation = initialCameraRotation;
+
+            if (preparedChart != null)
+            {
+                double chartTimeMs = gameManager.CorePlayMs -
+                    preparedChart.ChartOffsetMs;
+                cameraPosition.z += (float)(
+                    preparedChart.Snapshot.ScrollMap.FloorPositionAtTime(
+                        chartTimeMs) * EffectiveSpeedMultiplier);
+
+                CameraMotionState cameraState = preparedChart.Snapshot
+                    .CameraMotionMap.EvaluateAtTime(chartTimeMs);
+                if (cameraState.HasReference)
+                {
+                    cameraPosition.x += (float)
+                        cameraState.ReferenceOffsetX;
+                }
+
+                double scratchTilt = preparedChart.Snapshot
+                    .ScratchCameraTiltMap.EvaluateAtTime(chartTimeMs);
+                cameraRotation = initialCameraRotation * Quaternion.Euler(
+                    0f,
+                    0f,
+                    (float)(cameraState.SpinDegrees + scratchTilt));
+            }
+            else
+            {
+                cameraPosition.z += (float)(
+                    MsToPosition(Math.Max(0d, gameManager.CorePlayMs)) *
+                    EffectiveSpeedMultiplier);
+            }
+
             cameraTransform.position = cameraPosition;
+            cameraTransform.rotation = cameraRotation;
         }
 
         private void OnDestroy()
@@ -90,6 +148,7 @@ namespace REmind.Gameplay.Demo
             if (cameraTransform)
             {
                 cameraTransform.position = initialCameraPosition;
+                cameraTransform.rotation = initialCameraRotation;
             }
         }
 
@@ -204,6 +263,68 @@ namespace REmind.Gameplay.Demo
                 LineXPositions.Length,
                 notes,
                 noteCorrectionMs);
+        }
+
+        /// <summary>
+        /// DemoPlay currently owns only the four main-lane Tap visuals.  All note
+        /// families still enter judgement through the shared prepared Snapshot;
+        /// their dedicated presenters remain outside this Effect connection.
+        /// </summary>
+        private bool BuildPreparedChartViews()
+        {
+            if (preparedChart?.Snapshot == null)
+            {
+                Debug.LogError(
+                    "DemoPlay did not receive a prepared gameplay Snapshot.",
+                    this);
+                return false;
+            }
+
+            for (int index = noteField.childCount - 1; index >= 0; index--)
+            {
+                Destroy(noteField.GetChild(index).gameObject);
+            }
+
+            judgementSystem.ClearRegisteredNoteViews();
+
+            IReadOnlyList<PlayableNoteSnapshot> notes =
+                preparedChart.Snapshot.Notes;
+            for (int noteIndex = 0; noteIndex < notes.Count; noteIndex++)
+            {
+                PlayableNoteSnapshot note = notes[noteIndex];
+                if (note.Kind != ChartNoteKind.Tap ||
+                    note.Lane < 0 || note.Lane >= LineXPositions.Length)
+                {
+                    continue;
+                }
+
+                GameObject noteObject = Instantiate(
+                    tapNotePrefab,
+                    noteField,
+                    false);
+                noteObject.name =
+                    $"Chart Tap {note.Id} - Line {note.Lane + 1}";
+                noteObject.transform.localPosition = new Vector3(
+                    LineXPositions[note.Lane],
+                    (float)note.StartFloorPosition,
+                    0f);
+
+                Vector3 noteScale = noteObject.transform.localScale;
+                noteScale.y /= (float)EffectiveSpeedMultiplier;
+                noteObject.transform.localScale = noteScale;
+
+                if (!judgementSystem.RegisterNoteView(
+                        note.Id,
+                        noteObject))
+                {
+                    Debug.LogError(
+                        $"Could not register chart note view '{note.Id}'.",
+                        this);
+                    return false;
+                }
+            }
+
+            return true;
         }
     }
 }

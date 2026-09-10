@@ -300,6 +300,38 @@ MeshRenderer:
   m_SortingOrder: 3
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
+--- !u!1 &248921288
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 248921289}
+  m_Layer: 0
+  m_Name: Camera Base Motion
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &248921289
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 248921288}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0.13052616, y: 0, z: 0, w: 0.9914449}
+  m_LocalPosition: {x: 0, y: 1, z: 17}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 864997406}
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &259012286
 GameObject:
   m_ObjectHideFlags: 0
@@ -669,12 +701,12 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 414375658}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.13052616, y: 0, z: 0, w: 0.9914449}
-  m_LocalPosition: {x: 0, y: 1, z: 17}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
-  m_Father: {fileID: 0}
+  m_Father: {fileID: 864997406}
   m_LocalEulerAnglesHint: {x: 15, y: 0, z: 0}
 --- !u!114 &414375662
 MonoBehaviour:
@@ -1672,6 +1704,38 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &864997405
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 864997406}
+  m_Layer: 0
+  m_Name: Camera Effect Pivot
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &864997406
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 864997405}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 414375661}
+  m_Father: {fileID: 248921289}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &893603640
 GameObject:
   m_ObjectHideFlags: 0
@@ -2645,6 +2709,9 @@ GameObject:
   - component: {fileID: 1721417051}
   - component: {fileID: 1721417052}
   - component: {fileID: 2200000002}
+  - component: {fileID: 2200000004}
+  - component: {fileID: 2200000005}
+  - component: {fileID: 2200000003}
   m_Layer: 0
   m_Name: Core System
   m_TagString: Untagged
@@ -3617,53 +3684,6 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1857765332}
   m_CullTransparentMesh: 1
---- !u!1 &1869588719
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 1869588720}
-  - component: {fileID: 1869588721}
-  m_Layer: 0
-  m_Name: Chart Provider
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &1869588720
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1869588719}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1869588721
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1869588719}
-  m_Enabled: 0
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 120615be03225444ba0c2ef1f4b7922a, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::REmind.Gameplay.Chart.TempLoader
-  TapNotePrefab: {fileID: 7256374167690495269, guid: ef722f8fe35a808468de9c43ee1ca0a2, type: 3}
-  NoteField: {fileID: 418015322}
-  chartFile: {fileID: 4900000, guid: 3e163746740054b419788d0359379e7b, type: 3}
 --- !u!1 &1869660258
 GameObject:
   m_ObjectHideFlags: 0
@@ -3933,6 +3953,7 @@ MonoBehaviour:
   - {fileID: 1806379977}
   - {fileID: 1960397201}
   triggerName: Play
+  effectStateName: Base Layer.HitEffect
 --- !u!1 &2057168255
 GameObject:
   m_ObjectHideFlags: 0
@@ -4213,22 +4234,75 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::REmind.Gameplay.Demo.DemoPlayController
   gameManager: {fileID: 1721417052}
   judgementSystem: {fileID: 1721417054}
-  cameraTransform: {fileID: 414375661}
+  chartSession: {fileID: 2200000003}
+  cameraTransform: {fileID: 248921289}
   bpm: 225
   speedMultiplier: 7.5
   tapNotePrefab: {fileID: 7256374167690495269, guid: ef722f8fe35a808468de9c43ee1ca0a2, type: 3}
   noteField: {fileID: 418015322}
   noteCorrectionMs: -1200
   playOnReady: 1
+--- !u!114 &2200000003
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1721417048}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e36aea3d03c642dcbec37428e6e25f41, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::REmind.Gameplay.Chart.GameplayChartSessionController
+  chartAsset: {fileID: 6727790516650051051, guid: dce71dddbf6e41f1a49a90b4c7eb58a5, type: 3}
+  effectParameterAsset: {fileID: 4900000, guid: 5c4b98f906124ae8ad8ecd771a10d020, type: 3}
+  beatsPerMeasure: 4
+  bundledMusicId: effect_gameplay_sample
+  bundledSong: {fileID: 8300000, guid: 78bbcd18f077b6e45a2a3165214242fd, type: 3}
+  bundledSongVolume: 0.5
+  gameManager: {fileID: 1721417052}
+  judgementSystem: {fileID: 1721417054}
+  effectController: {fileID: 2200000005}
+  sessionState: {fileID: 2200000004}
+--- !u!114 &2200000004
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1721417048}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 82d06c602100488da16183c480aca68d, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::REmind.Gameplay.GameplaySessionState
+  gameManager: {fileID: 1721417052}
+  judgementSystem: {fileID: 1721417054}
+  gameRule: {fileID: 1721417053}
+--- !u!114 &2200000005
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1721417048}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 49373d67f68b92a4d95a61a6021f88a3, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::REmind.Gameplay.Effects.GameplayChartEffectController
+  gameManager: {fileID: 1721417052}
+  judgementSystem: {fileID: 1721417054}
+  cameraEffectPivot: {fileID: 864997406}
+  gameStateProvider: {fileID: 2200000004}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
   m_Roots:
-  - {fileID: 414375661}
   - {fileID: 558180788}
   - {fileID: 1431592743}
   - {fileID: 259012290}
   - {fileID: 1727236717}
-  - {fileID: 1869588720}
   - {fileID: 1721417051}
   - {fileID: 763775015}
+  - {fileID: 248921289}

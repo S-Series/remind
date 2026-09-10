@@ -36,7 +36,7 @@ public static class ChartEffectJsonCodec
     {
         if (CustomDefaults.TryGetValue(Key(typeId, commandId, gimmickId), out string value)) return value;
         if (typeId == "camera.offset")
-            return "{\"durationMs\":400,\"offsetX\":0,\"offsetY\":0,\"rollDegrees\":0}";
+            return "{\"durationMs\":400,\"offsetX\":0,\"offsetY\":0,\"rollDegrees\":0,\"attackMs\":100,\"releaseMs\":100}";
         if (typeId == "music.call" && gimmickId == "sample")
         {
             if (commandId == "begin-section") return "{\"minimumHealth\":30,\"damageMultiplier\":1.5}";
@@ -86,6 +86,50 @@ public static class ChartEffectJsonCodec
     }
 
     /// <summary>
+    /// Transitional authoring adapter: converts current ChartHolder parameter
+    /// JSON into the immutable shared Effect plan consumed by both Preview and
+    /// the DemoPlay integration harness.
+    /// </summary>
+    public static PreparedEffectPlan PreparePlan(
+        PlayableChartSnapshot snapshot,
+        IReadOnlyList<ChartHolder> holders,
+        string gimmickId,
+        EffectRegistry registry = null)
+    {
+        if (snapshot == null)
+        {
+            throw new ArgumentNullException(nameof(snapshot));
+        }
+
+        registry ??= EffectRegistry.CreateDefault();
+        Dictionary<string, object> parameters = BuildParameterMap(
+            holders,
+            gimmickId,
+            registry);
+        EffectPreparationResult result = EffectPreparation.Prepare(
+            snapshot.EffectEvents,
+            parameters,
+            registry,
+            gimmickId);
+        if (result.Succeeded)
+        {
+            return result.Plan;
+        }
+
+        var errors = new StringBuilder();
+        for (int i = 0; i < result.Issues.Count; i++)
+        {
+            CompileIssue issue = result.Issues[i];
+            if (issue.Severity == CompileIssueSeverity.Error)
+            {
+                errors.AppendLine(issue.Code + ": " + issue.Message);
+            }
+        }
+
+        throw new FormatException(errors.ToString());
+    }
+
+    /// <summary>
     /// Validate every Effect whose implementation is currently available. Unknown
     /// legacy/plugin definitions remain round-trippable, but known malformed data
     /// cannot be written as though it were playable.
@@ -130,12 +174,15 @@ public static class ChartEffectJsonCodec
         {
             if (!string.IsNullOrWhiteSpace(commandId)) throw new FormatException("Camera effect has no command ID.");
             XElement data = ReadObject(json);
-            Only(data, "durationMs", "offsetX", "offsetY", "rollDegrees");
+            Only(data, "durationMs", "offsetX", "offsetY", "rollDegrees",
+                "attackMs", "releaseMs");
             double duration = Number(data, "durationMs");
             return ValidateDecoded(typeId, commandId, gimmickId,
                 new CameraEffectParameters(duration,
                     Number(data, "offsetX", 0), Number(data, "offsetY", 0),
-                    Number(data, "rollDegrees", 0)), registry);
+                    Number(data, "rollDegrees", 0),
+                    Number(data, "attackMs", 0),
+                    Number(data, "releaseMs", 0)), registry);
         }
         if (typeId == "music.call" && gimmickId == "sample")
         {
