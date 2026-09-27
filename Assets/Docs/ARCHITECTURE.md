@@ -33,6 +33,33 @@ Shared는 두 앱에서 우연히 재사용할 수 있는 모든 코드를 뜻�
 
 ## 3. Chart Data Flow
 
+곡별 폴더의 `data.json`은 여러 난이도가 공유하는 곡 식별자, 제목, 아티스트,
+음원, 선택 화면 미리듣기 구간, 공통 재킷 등 곡 카탈로그 정보를 소유한다.
+곡 파일의 난이도 목록은 난이도/레벨, 채보 제작자와 채보 경로를 소유한다.
+난이도별 채보는 BPM·박자·시간 보정, 노트와 Effect·연출 규칙을 소유한다.
+재킷이나 배경이 난이도마다 다르면 난이도 목록의 표시 정보로 두며,
+플레이 결과·점수·즐겨찾기는 별도 사용자 저장 데이터다.
+동일 값의 복사본을 두 파일에 독립적으로 편집하지 않고, 필요할 때 검증된
+실행 패키지로 조합한다.
+
+목표 필드명은 약어 대신 의미를 드러내도록 한다.
+
+| 소유 파일 | 필드명 | 의미 |
+| --- | --- | --- |
+| 곡 `data.json` | `musicId`, `title`, `artist`, `audioFile` | 곡 식별자와 공통 표시·음원 정보 |
+| 곡 `data.json` | `previewStartMs`, `previewDurationMs` | 곡 선택 화면의 미리듣기 구간 |
+| 곡 `data.json` | `jacketFile`, `jacketIllustrator`, `charts[]` | 공통 재킷과 난이도 목록 |
+| `charts[]` 항목 | `difficultyId`, `level`, `chartAuthor`, `chartFile` | 난이도 표시 정보와 제작용 채보 참조 |
+| 난이도별 채보 | `musicId`, `difficultyId` | 곡·난이도 연결을 검증하는 식별자 |
+| 난이도별 채보 | `baseBpm`, `bpmChanges`, `musicStartCorrectionMs` | 채보의 시간 계산과 음원 정렬 |
+| 난이도별 채보 | `backgroundId`, `backgroundLayerId`, `effectDefinitions`, `effectParameters` | 해당 채보의 연출과 실행 규칙 |
+
+이 표는 목표 소유권과 이름이다. 현행 `.rd`와 로더에 없는 필드를 이미 지원한다고
+간주하지 않는다. 선택 화면의 BPM 표기는 채보의 시간 데이터에서 산출하며, 곡 파일에
+독립된 BPM 원본을 중복 저장하지 않는다. 원본 포맷의 버전 번호는 해당 포맷을 읽는
+도구의 정보이고, ReMind 파일은 각자 `formatVersion`을 가진다.
+현행 곡 목록 계약과 `i` 샘플의 파일 배치는 `MusicContent.md`에 기록한다.
+
 장기 개념 목표:
 
 ```text
@@ -84,6 +111,15 @@ Validated Runtime Package
 - 실제 `GameRule`, 체력·점수·콤보·실패/클리어 상태 adapter
 - Game 전용 카메라/노트/이펙트/오디오 표시
 - 곡 선택, 콘텐츠 로딩, 씬 전환, 결과와 영구 진행
+- uGUI 메뉴는 씬에 배치한 `NavigationScope`와 `NavigationNode`로 선택 범위를
+  정의한다. `MenuNavigationController`는 활성 범위와 선택 복원만 맡고,
+  방향 이동·Submit은 `InputSystemUIInputModule`/`Selectable`에 맡긴다.
+  실제 플레이 중 Pause 진입만 Gameplay 입력에서 처리한다.
+- Home의 MUSIC 버튼은 하이어라키에 저장된 `MusicSelect` 곡 선택 화면을 연다.
+  현재 곡 선택·분류·즐겨찾기·정렬·난이도 필터는 화면 안에서 동작하며,
+  실제 곡 재생 연결은 아직 없다. 기존 `Music` 임시 씬은 샘플 Game 진입용으로
+  보존한다. 임시 메뉴 씬의 복귀는 Home으로, Game 곡 선택의 복귀는 Music으로
+  연결한다. 화면 내용은 각 씬 하이어라키에서 교체한다.
 
 ### ChartMaker
 
@@ -121,8 +157,10 @@ Validated Runtime Package
 같은 시각 중복 update를 허용하지 않는다.
 
 노트 배치의 Y/시간/scroll 계산은 Snapshot의 Timing/Scroll 결과를 공유한다. X 위치,
-prefab, Animator와 물리 입력은 앱별 표현이다. 전체 판정 엔진의 공용화는 Long/Scratch
-현행 규칙을 함께 분류한 뒤 진행하며, 부분적인 두 번째 판정 엔진을 만들지 않는다.
+prefab, Animator와 물리 입력은 앱별 표현이다. `PlayableJudgementSession`은
+Snapshot 지점과 구간을 공용 시간축에서 처리한다. Game의 `NoteJudgementSystem`은
+입력 시각, 노트별 시간 창, `GameRule` 점수와 Effect 순서를 연결한다. Preview의
+자동 표시는 Snapshot target을 사용하며, 수동 입력을 도입할 때 공용 세션을 쓴다.
 
 ## 8. Effect / MusicGimmick
 
@@ -155,7 +193,7 @@ Effect 안에서 Scene을 즉시 바꾸지 않고 요청만 제출하며 앱의 
 우선하며 두 앱의 구체 타입을 참조하지 않는다. Game과 ChartMaker 사이의 직접 타입
 참조는 허용된 최종 구조가 아니라 제거 조건이 적힌 migration adapter로만 둔다.
 
-현재 `REmind.ChartCore`만 별도 `noEngineReferences` assembly로 검증되어 있다.
-Game/ChartMaker assembly와 독립 Build Profile은 아직 완성되지 않았으므로 폴더 위치만으로
-독립성이 보장된다고 보지 않는다. 현재 직접 의존과 제거 순서는 `MIGRATION.md`에서,
-작업 우선순위는 `TASKS.md`에서 관리한다.
+`REmind.ChartCore`, `REmind.NoteRules`는 Unity 비의존 assembly이고,
+`REmind.Gameplay`와 `REmind.ChartMaker`는 별도 제품 assembly다. Game/ChartMaker
+Windows 빌드에서 상대 제품 DLL이 포함되지 않음을 확인했다. 배포용 Build Profile,
+플랫폼별 설정과 수동 실행 검증은 `MIGRATION.md`와 `TASKS.md`에서 관리한다.

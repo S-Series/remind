@@ -19,6 +19,37 @@ namespace REmind.Effects.Tests
             "Assets/UI/ChartMaker/ChartMakerTopMenu.uxml";
 
         [Test]
+        [Category("Architecture")]
+        public void SharedAndChartMakerAssemblies_DoNotReferenceGameplay()
+        {
+            AssertReferencesExclude("REmind.ChartCore", "REmind.ChartMaker",
+                "Assembly-CSharp");
+            AssertReferencesExclude("REmind.NoteRules", "REmind.ChartMaker",
+                "Assembly-CSharp");
+            AssertReferencesExclude("REmind.Common", "REmind.ChartMaker",
+                "Assembly-CSharp");
+            AssertReferencesExclude("REmind.Presentation", "REmind.ChartMaker",
+                "Assembly-CSharp");
+            AssertReferencesExclude("REmind.ChartMaker", "Assembly-CSharp");
+            AssertReferencesExclude("REmind.Gameplay", "REmind.ChartMaker",
+                "Assembly-CSharp");
+        }
+
+        private static void AssertReferencesExclude(string assemblyName,
+            params string[] forbidden)
+        {
+            Assembly assembly = Assembly.Load(assemblyName);
+            foreach (AssemblyName reference in assembly.GetReferencedAssemblies())
+            {
+                foreach (string name in forbidden)
+                {
+                    Assert.That(reference.Name, Is.Not.EqualTo(name),
+                        assemblyName + " references " + name);
+                }
+            }
+        }
+
+        [Test]
         [Category("EffectAcceptance")]
         [Category("ChartMakerFlow")]
         public void Scene_ConnectsEffectPlacementSavingAndPreview()

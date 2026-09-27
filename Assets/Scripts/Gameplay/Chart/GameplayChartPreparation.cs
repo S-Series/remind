@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using REmind.Charting;
-using REmind.Data;
 
 namespace REmind.Gameplay.Chart
 {
@@ -35,7 +34,6 @@ namespace REmind.Gameplay.Chart
         internal PreparedGameplayChart(
             PlayableChartSnapshot snapshot,
             PreparedEffectPlan effectPlan,
-            NoteData[] notes,
             GameplayChartMetadata metadata,
             double baseBpm,
             double chartOffsetMs)
@@ -44,8 +42,6 @@ namespace REmind.Gameplay.Chart
                 nameof(snapshot));
             EffectPlan = effectPlan ?? throw new ArgumentNullException(
                 nameof(effectPlan));
-            Notes = Array.AsReadOnly(notes ??
-                throw new ArgumentNullException(nameof(notes)));
             Metadata = metadata;
             BaseBpm = baseBpm;
             ChartOffsetMs = chartOffsetMs;
@@ -53,7 +49,6 @@ namespace REmind.Gameplay.Chart
 
         public PlayableChartSnapshot Snapshot { get; }
         public PreparedEffectPlan EffectPlan { get; }
-        public IReadOnlyList<NoteData> Notes { get; }
         public GameplayChartMetadata Metadata { get; }
         public double BaseBpm { get; }
 
@@ -65,231 +60,46 @@ namespace REmind.Gameplay.Chart
     }
 
     /// <summary>
-    /// Transitional DemoPlay file adapter: current .rd/sidecar authoring data is
-    /// converted into a shared Snapshot and immutable Effect plan.  A future
-    /// Game composition root should consume the shared runtime package rather
-    /// than depend on the ChartMaker storage model.  No file access or parameter
-    /// decoding occurs after this boundary.
+    /// Game boundary: accepts only the versioned, validated runtime package.
+    /// Authoring files are exported by ChartMaker before being bundled here.
     /// </summary>
     public static class GameplayChartPreparation
     {
-        public static PreparedGameplayChart Prepare(
-            string chartJson,
-            string effectParameterJson,
-            int beatsPerMeasure = 4)
+        public static PreparedGameplayChart Prepare(string packageJson)
         {
-            if (string.IsNullOrWhiteSpace(chartJson))
-            {
-                throw new FormatException("Gameplay chart data is empty.");
-            }
-
-            if (beatsPerMeasure <= 0)
-            {
-                throw new ArgumentOutOfRangeException(
-                    nameof(beatsPerMeasure),
-                    "Beats per measure must be greater than zero.");
-            }
-
-            ChartFile chart = ChartFileCodec.Parse(chartJson);
-
-            if (chart.HasEffectParameterFile)
-            {
-                if (string.IsNullOrWhiteSpace(effectParameterJson))
-                {
-                    throw new FormatException(
-                        "This chart requires its matching Effect parameter JSON.");
-                }
-
-                // This checks music, difficulty and revision ownership before
-                // mutating the newly parsed holder collection.
-                ChartEffectFileStore.ApplyParameters(
-                    chart,
-                    effectParameterJson);
-            }
-            else if (!string.IsNullOrWhiteSpace(effectParameterJson))
-            {
-                throw new FormatException(
-                    "An Effect parameter JSON was supplied for a chart that " +
-                    "does not declare one.");
-            }
-
-            string musicId = string.IsNullOrWhiteSpace(chart.MusicId)
-                ? "untitled"
-                : chart.MusicId;
-            string difficultyId = string.IsNullOrWhiteSpace(
-                chart.DifficultyId)
-                    ? "default"
-                    : chart.DifficultyId;
-
-            if (chart.HasEffectParameterFile)
-            {
-                ChartEffectFileStore.ValidateFileId(
-                    musicId,
-                    nameof(chart.MusicId));
-                ChartEffectFileStore.ValidateFileId(
-                    difficultyId,
-                    nameof(chart.DifficultyId));
-            }
-
-            ChartHolder[] holders = chart.chartDatas ??
-                Array.Empty<ChartHolder>();
-            ChartHolderDocumentBuildResult built =
-                ChartHolderDocumentAdapter.Build(
-                    holders,
-                    chart.BaseBpm,
-                    beatsPerMeasure);
-            if (!built.Succeeded)
-            {
-                throw CompileFailure(
-                    "Gameplay chart conversion failed",
-                    built.Issues);
-            }
-
-            ChartCompileResult compiled = ChartCompiler.Compile(
-                built.Document,
-                1d / ChartHolder.PositionUnitsPerWorldUnit);
-            if (!compiled.Succeeded)
-            {
-                throw CompileFailure(
-                    "Gameplay chart compilation failed",
-                    compiled.Issues);
-            }
-
+            RuntimeChartPackage package = RuntimeChartPackageCodec.Import(
+                packageJson);
             var metadata = new GameplayChartMetadata(
-                musicId,
-                difficultyId,
-                chart.GimmickId ?? string.Empty,
-                chart.EffectRevision ?? string.Empty);
-
-            // Decode and validate every Effect once at the file/authoring
-            // boundary. Runtime services receive only the immutable plan.
-            PreparedEffectPlan effectPlan = ChartEffectJsonCodec.PreparePlan(
-                compiled.Snapshot,
-                holders,
-                metadata.GimmickId);
-
-            NoteData[] notes = BuildJudgementNotes(compiled.Snapshot);
-            double chartOffsetMs = -chart.MusicStartCorrectionMs;
-            if (double.IsNaN(chartOffsetMs) ||
-                double.IsInfinity(chartOffsetMs))
+                package.MusicId, package.DifficultyId,
+                package.GimmickId, package.Revision);
+            EffectRegistry registry = EffectRegistry.CreateDefault();
+            var parameters = new Dictionary<string, object>(
+                StringComparer.Ordinal);
+            foreach (PlayableEffectEvent effect in
+                package.Snapshot.EffectEvents)
             {
-                throw new FormatException(
-                    "Gameplay chart offset must be finite.");
+                if (!package.EffectParameterJson.TryGetValue(
+                        effect.EffectId, out string json))
+                    throw new FormatException("Effect '" + effect.EffectId +
+                        "' parameters are missing.");
+                if (!ChartEffectParameterCodec.TryDecode(effect.EffectTypeId,
+                        effect.CommandId, package.GimmickId, json, registry,
+                        out object decoded, out string error))
+                    throw new FormatException("Effect '" + effect.EffectId +
+                        "' parameters are invalid: " + error);
+                parameters.Add(effect.EffectId, decoded);
             }
+            EffectPreparationResult preparedEffects = EffectPreparation.Prepare(
+                package.Snapshot.EffectEvents, parameters, registry,
+                package.GimmickId);
+            if (!preparedEffects.Succeeded)
+                throw CompileFailure("Effect preparation failed",
+                    preparedEffects.Issues);
 
             return new PreparedGameplayChart(
-                compiled.Snapshot,
-                effectPlan,
-                notes,
+                package.Snapshot, preparedEffects.Plan,
                 metadata,
-                chart.BaseBpm,
-                chartOffsetMs);
-        }
-
-        private static NoteData[] BuildJudgementNotes(
-            PlayableChartSnapshot snapshot)
-        {
-            var result = new NoteData[snapshot.Notes.Count];
-            var occupied = new HashSet<(double TimeMs, int Lane)>();
-
-            for (int index = 0; index < snapshot.Notes.Count; index++)
-            {
-                PlayableNoteSnapshot source = snapshot.Notes[index];
-                NoteType type = ToGameplayType(source.Kind);
-                long startTimeMs = RoundMilliseconds(
-                    source.StartTimeMs,
-                    source.Id,
-                    "start");
-                long durationMs = 0L;
-                double timelineDurationMs = 0d;
-
-                if (type.IsLong())
-                {
-                    if (!source.EndTimeMs.HasValue)
-                    {
-                        throw new FormatException(
-                            $"Long note '{source.Id}' has no end time.");
-                    }
-
-                    long endTimeMs = RoundMilliseconds(
-                        source.EndTimeMs.Value,
-                        source.Id,
-                        "end");
-                    timelineDurationMs =
-                        source.EndTimeMs.Value - source.StartTimeMs;
-                    durationMs = checked(endTimeMs - startTimeMs);
-                    if (timelineDurationMs <= 0d || durationMs <= 0L)
-                    {
-                        throw new FormatException(
-                            $"Long note '{source.Id}' becomes zero-length at " +
-                            "the gameplay millisecond resolution.");
-                    }
-                }
-
-                if (!occupied.Add((source.StartTimeMs, source.Lane)))
-                {
-                    throw new FormatException(
-                        $"Notes collide in lane {source.Lane + 1} at " +
-                        $"{source.StartTimeMs:R} ms.");
-                }
-
-                result[index] = new NoteData(
-                    source.Id,
-                    type,
-                    source.Lane,
-                    startTimeMs,
-                    durationMs,
-                    source.StartTimeMs,
-                    timelineDurationMs);
-            }
-
-            return result;
-        }
-
-        private static NoteType ToGameplayType(ChartNoteKind kind)
-        {
-            switch (kind)
-            {
-                case ChartNoteKind.Tap:
-                    return NoteType.Tap;
-                case ChartNoteKind.Hold:
-                    return NoteType.LongTap;
-                case ChartNoteKind.Scratch:
-                    return NoteType.Scratch;
-                case ChartNoteKind.LongScratch:
-                    return NoteType.LongScratch;
-                case ChartNoteKind.Air:
-                    return NoteType.Air;
-                default:
-                    throw new FormatException(
-                        $"Unsupported gameplay note kind: {kind}.");
-            }
-        }
-
-        private static long RoundMilliseconds(
-            double value,
-            string noteId,
-            string endpoint)
-        {
-            if (double.IsNaN(value) || double.IsInfinity(value) || value < 0d)
-            {
-                throw new FormatException(
-                    $"Note '{noteId}' has an invalid {endpoint} time.");
-            }
-
-            try
-            {
-                return checked((long)Math.Round(
-                    value,
-                    MidpointRounding.AwayFromZero));
-            }
-            catch (OverflowException exception)
-            {
-                throw new FormatException(
-                    $"Note '{noteId}' {endpoint} time is outside the " +
-                    "gameplay range.",
-                    exception);
-            }
+                package.BaseBpm, package.ChartOffsetMs);
         }
 
         private static FormatException CompileFailure(

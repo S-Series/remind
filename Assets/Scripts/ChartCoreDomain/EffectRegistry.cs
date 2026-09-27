@@ -9,10 +9,12 @@ namespace REmind.Charting
         private readonly Func<object, string> validate;
         internal readonly Func<object, Effect> Factory;
         internal readonly Action<EffectSessionContext, object> ValidateServices;
+        internal readonly Func<object, object> CopyParameters;
         public EffectRegistration(string typeId, string displayName, Type parameterType,
             bool parametersRequired, Func<object> defaultParameters, Func<object, string> validateParameters,
             Func<object, Effect> factory, Action<EffectSessionContext, object> validateServices = null,
-            bool supportsSeek = false)
+            bool supportsSeek = false,
+            Func<object, object> copyParameters = null)
         {
             if (string.IsNullOrWhiteSpace(typeId)) throw new ArgumentException("Effect type ID is required.");
             TypeId = typeId;
@@ -24,6 +26,7 @@ namespace REmind.Charting
             Factory = factory;
             ValidateServices = validateServices;
             SupportsSeek = supportsSeek;
+            CopyParameters = copyParameters;
         }
         public string TypeId { get; }
         public string DisplayName { get; }
@@ -43,11 +46,13 @@ namespace REmind.Charting
         private readonly Func<object, string> validate;
         internal readonly Action<MusicGimmick, EffectExecutionContext, object> Handler;
         internal readonly Action<EffectSessionContext, object> ValidateServices;
+        internal readonly Func<object, object> CopyParameters;
         public MusicGimmickCommandRegistration(string commandId, string displayName,
             Type parameterType, bool parametersRequired, Func<object> defaultParameters,
             Func<object, string> validateParameters,
             Action<MusicGimmick, EffectExecutionContext, object> handler,
-            Action<EffectSessionContext, object> validateServices = null)
+            Action<EffectSessionContext, object> validateServices = null,
+            Func<object, object> copyParameters = null)
         {
             if (string.IsNullOrWhiteSpace(commandId)) throw new ArgumentException("Command ID is required.");
             CommandId = commandId;
@@ -58,6 +63,7 @@ namespace REmind.Charting
             validate = validateParameters;
             Handler = handler ?? throw new ArgumentNullException(nameof(handler));
             ValidateServices = validateServices;
+            CopyParameters = copyParameters;
         }
         public string CommandId { get; }
         public string DisplayName { get; }
@@ -194,26 +200,69 @@ namespace REmind.Charting
 
     internal sealed class PreparedEffectEntry
     {
-        internal PlayableEffectEvent Definition;
-        internal EffectRegistration Registration;
-        internal MusicGimmickCommandRegistration Command;
-        internal object Parameters;
+        internal PreparedEffectEntry(PlayableEffectEvent definition,
+            EffectRegistration registration,
+            MusicGimmickCommandRegistration command,
+            object parameters,
+            Func<object, object> copyParameters)
+        {
+            Definition = definition;
+            Registration = registration;
+            Command = command;
+            Parameters = parameters;
+            CopyParameters = copyParameters;
+        }
+
+        internal PlayableEffectEvent Definition { get; }
+        internal EffectRegistration Registration { get; }
+        internal MusicGimmickCommandRegistration Command { get; }
+        internal object Parameters { get; }
+        private Func<object, object> CopyParameters { get; }
+        internal object CreateSessionParameters() =>
+            EffectParameterCopies.Copy(Parameters, CopyParameters);
+    }
+
+    internal static class EffectParameterCopies
+    {
+        internal static object Copy(object value, Func<object, object> customCopy)
+        {
+            if (value == null) return null;
+            if (value is CameraEffectParameters camera)
+                return new CameraEffectParameters(camera.DurationMs,
+                    camera.OffsetX, camera.OffsetY, camera.RollDegrees,
+                    camera.AttackMs, camera.ReleaseMs);
+            if (value is SampleSectionParameters section)
+                return new SampleSectionParameters(section.MinimumHealth,
+                    section.DamageMultiplier);
+            if (value is SongTransitionParameters transition)
+                return new SongTransitionParameters(transition.TargetMusicId,
+                    transition.TargetDifficultyId);
+            if (customCopy == null)
+                throw new InvalidOperationException(
+                    $"Effect parameters of type '{value.GetType().Name}' require a copy function.");
+            object result = customCopy(value);
+            if (result == null || ReferenceEquals(result, value) ||
+                result.GetType() != value.GetType())
+                throw new InvalidOperationException(
+                    "Effect parameter copy must return a separate value of the same type.");
+            return result;
+        }
     }
 
     /// <summary>Prepared runtime boundary, intentionally separate from the passive chart Snapshot.</summary>
     public sealed class PreparedEffectPlan
     {
-        internal readonly PreparedEffectEntry[] Entries;
+        internal readonly IReadOnlyList<PreparedEffectEntry> Entries;
         internal readonly MusicGimmickRegistration Gimmick;
         internal PreparedEffectPlan(List<PreparedEffectEntry> entries, MusicGimmickRegistration gimmick)
         {
-            Entries = entries.ToArray();
+            Entries = entries.AsReadOnly();
             Gimmick = gimmick;
             SupportsSeek = true;
             foreach (PreparedEffectEntry entry in Entries)
                 SupportsSeek &= entry.Registration.SupportsSeek;
         }
-        public int Count => Entries.Length;
+        public int Count => Entries.Count;
         public bool SupportsSeek { get; }
     }
 
@@ -271,10 +320,22 @@ namespace REmind.Charting
                     issues.Add(new CompileIssue("EFFECT_PARAMETERS", $"Effect '{definition.EffectId}': {error}"));
                     continue;
                 }
-                entries.Add(new PreparedEffectEntry
+                Func<object, object> copyParameters = command != null
+                    ? command.CopyParameters : effect.CopyParameters;
+                object frozenParameters;
+                try
                 {
-                    Definition = definition, Registration = effect, Command = command, Parameters = value
-                });
+                    frozenParameters = EffectParameterCopies.Copy(value,
+                        copyParameters);
+                }
+                catch (Exception exception)
+                {
+                    issues.Add(new CompileIssue("EFFECT_PARAMETERS_SNAPSHOT",
+                        $"Effect '{definition.EffectId}': {exception.Message}"));
+                    continue;
+                }
+                entries.Add(new PreparedEffectEntry(definition, effect,
+                    command, frozenParameters, copyParameters));
             }
             if (parameters != null)
                 foreach (string id in parameters.Keys)

@@ -9,6 +9,7 @@ namespace REmind.Effects.Tests
     public sealed class EffectBaselineTests
     {
         [TestCase("LegacyV7_AllNoteFamilies")]
+        [TestCase("LongScratchAdapter_PreservesIntermediatePoint")]
         [TestCase("LegacyEffect_RemainsUnresolved")]
         [TestCase("UnclosedLongSave_DoesNotMutateSource")]
         [TestCase("EffectPair_RoundTripAndBackupRecovery")]
@@ -21,6 +22,7 @@ namespace REmind.Effects.Tests
         [TestCase("ParameterTypes_RejectMalformedValues")]
         [TestCase("ParameterSave_ValidatesKnownAndPreservesUnresolved")]
         [TestCase("Judgement_DelayedInputBeatsFrameMiss")]
+        [TestCase("Judgement_InputDeliveredAfterPreviousFrame")]
         [TestCase("Judgement_OffsetsAndExactMissBoundary")]
         [TestCase("Judgement_EffectBeforeSameTimeInput")]
         [TestCase("Judgement_DelayedFrameUsesActualTimeAndTotalOrder")]
@@ -46,6 +48,7 @@ namespace REmind.Effects.Tests
         [TestCase("GameplayChartSession_DisabledServiceRejectsStart")]
         [TestCase("GameplaySessionState_UsesRuleStateAndRestartBoundary")]
         [TestCase("GameplayScene_ConnectsSnapshotStateAndCamera")]
+        [TestCase("GameScene_WiresFullSongAndFlow")]
         [Category("EffectAcceptance")]
         public void Acceptance(string name) => Run(name);
 

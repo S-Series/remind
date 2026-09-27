@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using REmind.Charting;
 using REmind.Data;
 using UnityEngine;
 
@@ -91,6 +92,43 @@ public sealed class FileToChart : MonoBehaviour
         {
             Debug.LogError("ChartCore was not found.", this);
             yield break;
+        }
+
+        if (chartToFile && chartToFile.HasSavePath)
+        {
+            string dataPath = SongContentFileStore.FindDataPath(
+                chartToFile.CurrentFilePath);
+            if (dataPath != null)
+            {
+                string audioPath;
+                try
+                {
+                    SongContent song = SongContentFileStore.Load(dataPath);
+                    audioPath = SongContentCodec.ResolveReference(dataPath,
+                        song.AudioFile);
+                }
+                catch (Exception exception)
+                {
+                    Debug.LogWarning("Song data could not restore audio: " +
+                        exception.Message, this);
+                    audioPath = null;
+                }
+                if (audioPath != null)
+                {
+                    while (chartCore.IsAudioLoading) yield return null;
+                    if (ChartMakerRecentFiles.AreSamePath(
+                            chartCore.CurrentAudioFilePath, audioPath) ||
+                        chartCore.LoadAudioFile(audioPath))
+                    {
+                        while (chartCore.IsAudioLoading) yield return null;
+                        if (ChartMakerRecentFiles.AreSamePath(
+                                chartCore.CurrentAudioFilePath, audioPath))
+                            yield break;
+                    }
+                    Debug.LogWarning("Song audio could not be loaded: " +
+                        audioPath, this);
+                }
+            }
         }
 
         string recentPath = ChartMakerRecentFiles.LastAudioPath;
@@ -458,13 +496,15 @@ public sealed class FileToChart : MonoBehaviour
         {
             chartFile = ChartEffectFileStore.Load(fullPath, out recovered, out _);
             loadedFromPairedStore = true;
-            ApplyLoadedChart(chartFile);
         }
         else if (currentExists)
         {
             try
             {
-                chartFile = LoadText(text);
+                chartFile = ParseSupportedChart(text);
+                if (chartFile.HasEffectParameterFile)
+                    throw new FormatException(
+                        "This chart needs its paired Effect JSON. Open the .rd file by path.");
             }
             catch (Exception currentException)
             {
@@ -474,7 +514,6 @@ public sealed class FileToChart : MonoBehaviour
                     chartFile = ChartEffectFileStore.Load(fullPath,
                         out recovered, out _);
                     loadedFromPairedStore = true;
-                    ApplyLoadedChart(chartFile);
                 }
                 catch (Exception recoveryException)
                 {
@@ -489,6 +528,22 @@ public sealed class FileToChart : MonoBehaviour
         else
         {
             throw new FileNotFoundException("The chart and a recoverable backup do not exist.", fullPath);
+        }
+
+        SongContent songContent = SongContentFileStore.ValidateChart(fullPath,
+            chartFile);
+        ApplyLoadedChart(chartFile);
+
+        if (songContent != null && chartCore)
+        {
+            string dataPath = SongContentFileStore.FindDataPath(fullPath);
+            string audioPath = SongContentCodec.ResolveReference(dataPath,
+                songContent.AudioFile);
+            if (!ChartMakerRecentFiles.AreSamePath(
+                    chartCore.CurrentAudioFilePath, audioPath) &&
+                !chartCore.LoadAudioFile(audioPath))
+                Debug.LogWarning("Song audio could not start loading: " +
+                    audioPath, this);
         }
 
         if (recovered)

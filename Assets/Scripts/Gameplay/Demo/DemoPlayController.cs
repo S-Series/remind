@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using REmind.Charting;
-using REmind.Data;
 using REmind.Gameplay.Chart;
 using REmind.Gameplay.Input.Judgement;
 using UnityEngine;
@@ -26,13 +25,15 @@ namespace REmind.Gameplay.Demo
 
         [Header("Movement")]
         [SerializeField] private Transform cameraTransform;
-        [SerializeField, Min(1f)] private float bpm = 225f;
         [SerializeField, Min(0.01f)] private double speedMultiplier = 1d;
 
         [Header("Demo Notes")]
         [SerializeField] private GameObject tapNotePrefab;
+        [SerializeField] private GameObject scratchNotePrefab;
+        [SerializeField] private GameObject longTapNotePrefab;
+        [SerializeField] private GameObject longScratchNotePrefab;
+        [SerializeField] private GameObject airNotePrefab;
         [SerializeField] private Transform noteField;
-        [SerializeField] private double noteCorrectionMs;
         [SerializeField] private bool playOnReady = true;
 
         private Transform playCanvasTransform;
@@ -40,14 +41,16 @@ namespace REmind.Gameplay.Demo
         private Quaternion initialCameraRotation;
         private Vector3 initialPlayCanvasScale;
         private PreparedGameplayChart preparedChart;
+        public bool IsReady { get; private set; }
+        public string LastError { get; private set; }
 
-        private double QuarterNoteMs => 60000d / bpm;
         private double EffectiveSpeedMultiplier => speedMultiplier * 0.5d;
 
         private void Start()
         {
             if (!ValidateReferences())
             {
+                LastError = "Gameplay scene references are incomplete.";
                 enabled = false;
                 return;
             }
@@ -57,7 +60,7 @@ namespace REmind.Gameplay.Demo
             initialPlayCanvasScale = playCanvasTransform.localScale;
             ApplySpeedMultiplier();
 
-            bool chartReady;
+            bool chartReady = false;
             if (chartSession)
             {
                 chartReady = chartSession.TryPrepareConfiguredChart();
@@ -67,16 +70,16 @@ namespace REmind.Gameplay.Demo
                     chartReady = BuildPreparedChartViews();
                 }
             }
-            else
-            {
-                chartReady = BuildDemoChart();
-            }
 
             if (!chartReady)
             {
+                LastError = chartSession ? chartSession.LastError :
+                    "Could not create the demo chart.";
                 enabled = false;
                 return;
             }
+
+            IsReady = true;
 
             if (playOnReady)
             {
@@ -124,12 +127,6 @@ namespace REmind.Gameplay.Demo
                     0f,
                     (float)(cameraState.SpinDegrees + scratchTilt));
             }
-            else
-            {
-                cameraPosition.z += (float)(
-                    MsToPosition(Math.Max(0d, gameManager.CorePlayMs)) *
-                    EffectiveSpeedMultiplier);
-            }
 
             cameraTransform.position = cameraPosition;
             cameraTransform.rotation = cameraRotation;
@@ -162,15 +159,11 @@ namespace REmind.Gameplay.Demo
             judgementSystem?.SetAutoPlayEnabled(value);
         }
 
-        private double MsToPosition(double ms)
-        {
-            return bpm * ms / 1500d;
-        }
-
         private bool ValidateReferences()
         {
             if (!gameManager ||
                 !judgementSystem ||
+                !chartSession ||
                 !cameraTransform ||
                 !tapNotePrefab ||
                 !noteField)
@@ -204,72 +197,7 @@ namespace REmind.Gameplay.Demo
             playCanvasTransform.localScale = playCanvasScale;
         }
 
-        /// <summary>테스트 곡 길이에 맞춰 1/4박 데모 노트와 판정 큐를 구성합니다.</summary>
-        private bool BuildDemoChart()
-        {
-            for (int i = noteField.childCount - 1; i >= 0; i--)
-            {
-                Destroy(noteField.GetChild(i).gameObject);
-            }
-
-            double songDurationMs = gameManager.GamePlay.SongDurationMs;
-            int noteCount = (int)Math.Ceiling(songDurationMs / QuarterNoteMs);
-            List<NoteData> notes = new List<NoteData>(noteCount);
-
-            judgementSystem.ClearRegisteredNoteViews();
-
-            for (int noteIndex = 0; noteIndex < noteCount; noteIndex++)
-            {
-                int lineIndex = noteIndex % LineXPositions.Length;
-                double hitTimeMs = noteIndex * QuarterNoteMs;
-                double correctedHitTimeMs = hitTimeMs + noteCorrectionMs;
-                string noteId = $"test-quarter-{noteIndex:0000}";
-
-                GameObject noteObject = Instantiate(
-                    tapNotePrefab,
-                    noteField,
-                    false);
-                noteObject.name =
-                    $"Quarter Note {noteIndex:0000} - Line {lineIndex + 1}";
-                noteObject.transform.localPosition = new Vector3(
-                    LineXPositions[lineIndex],
-                    (float)MsToPosition(correctedHitTimeMs),
-                    0f);
-
-                Vector3 noteScale = noteObject.transform.localScale;
-                noteScale.y /= (float)EffectiveSpeedMultiplier;
-                noteObject.transform.localScale = noteScale;
-
-                long storedHitTimeMs = checked((long)Math.Round(
-                    hitTimeMs,
-                    MidpointRounding.AwayFromZero));
-                notes.Add(new NoteData(
-                    noteId,
-                    NoteType.Tap,
-                    lineIndex,
-                    storedHitTimeMs,
-                    0L));
-
-                if (!judgementSystem.RegisterNoteView(noteId, noteObject))
-                {
-                    Debug.LogError(
-                        $"Could not register demo note view '{noteId}'.",
-                        this);
-                    return false;
-                }
-            }
-
-            return judgementSystem.Initialize(
-                LineXPositions.Length,
-                notes,
-                noteCorrectionMs);
-        }
-
-        /// <summary>
-        /// DemoPlay currently owns only the four main-lane Tap visuals.  All note
-        /// families still enter judgement through the shared prepared Snapshot;
-        /// their dedicated presenters remain outside this Effect connection.
-        /// </summary>
+        /// <summary>Build one view per compiled note and preserve every point.</summary>
         private bool BuildPreparedChartViews()
         {
             if (preparedChart?.Snapshot == null)
@@ -292,26 +220,56 @@ namespace REmind.Gameplay.Demo
             for (int noteIndex = 0; noteIndex < notes.Count; noteIndex++)
             {
                 PlayableNoteSnapshot note = notes[noteIndex];
-                if (note.Kind != ChartNoteKind.Tap ||
-                    note.Lane < 0 || note.Lane >= LineXPositions.Length)
+                if (!ChartLaneLayout.IsValid(note.Lane))
                 {
                     continue;
                 }
-
-                GameObject noteObject = Instantiate(
-                    tapNotePrefab,
-                    noteField,
-                    false);
-                noteObject.name =
-                    $"Chart Tap {note.Id} - Line {note.Lane + 1}";
-                noteObject.transform.localPosition = new Vector3(
-                    LineXPositions[note.Lane],
-                    (float)note.StartFloorPosition,
-                    0f);
-
-                Vector3 noteScale = noteObject.transform.localScale;
-                noteScale.y /= (float)EffectiveSpeedMultiplier;
-                noteObject.transform.localScale = noteScale;
+                var noteObject = new GameObject($"{note.Kind} {note.Id}");
+                noteObject.transform.SetParent(noteField, false);
+                GameObject prefab = PrefabFor(note.Kind);
+                for (int pointIndex = 0; pointIndex < note.Points.Count;
+                     pointIndex++)
+                {
+                    PlayableNotePoint point = note.Points[pointIndex];
+                    GameObject marker = Instantiate(prefab,
+                        noteObject.transform, false);
+                    marker.name = point.Kind.ToString();
+                    marker.transform.localPosition = new Vector3(
+                        LaneX(note.Lane), (float)point.FloorPosition,
+                        note.Lane >= 4 && note.Lane < 8 ? -2f : 0f);
+                    Vector3 markerScale = marker.transform.localScale;
+                    markerScale.y /= (float)EffectiveSpeedMultiplier;
+                    marker.transform.localScale = markerScale;
+                }
+                for (int segmentIndex = 0;
+                     segmentIndex + 1 < note.Points.Count; segmentIndex++)
+                {
+                    PlayableNotePoint start = note.Points[segmentIndex];
+                    PlayableNotePoint end = note.Points[segmentIndex + 1];
+                    GameObject ribbon = Instantiate(prefab,
+                        noteObject.transform, false);
+                    ribbon.name = $"Segment {segmentIndex + 1}";
+                    ribbon.transform.localPosition = new Vector3(
+                        LaneX(note.Lane),
+                        (float)((start.FloorPosition +
+                            end.FloorPosition) * 0.5d),
+                        note.Lane >= 4 && note.Lane < 8 ? -2f : 0f);
+                    SpriteRenderer sprite = ribbon.GetComponent<SpriteRenderer>();
+                    if (sprite && sprite.sprite)
+                    {
+                        Color color = sprite.color;
+                        color.a *= 0.4f;
+                        sprite.color = color;
+                        sprite.sortingOrder--;
+                        Vector3 scale = ribbon.transform.localScale;
+                        scale.y = (float)Math.Max(0.01d,
+                            Math.Abs(end.FloorPosition -
+                                start.FloorPosition) /
+                            sprite.sprite.bounds.size.y /
+                            EffectiveSpeedMultiplier);
+                        ribbon.transform.localScale = scale;
+                    }
+                }
 
                 if (!judgementSystem.RegisterNoteView(
                         note.Id,
@@ -325,6 +283,29 @@ namespace REmind.Gameplay.Demo
             }
 
             return true;
+        }
+
+        private GameObject PrefabFor(ChartNoteKind kind)
+        {
+            switch (kind)
+            {
+                case ChartNoteKind.Scratch:
+                    return scratchNotePrefab ? scratchNotePrefab : tapNotePrefab;
+                case ChartNoteKind.Hold:
+                    return longTapNotePrefab ? longTapNotePrefab : tapNotePrefab;
+                case ChartNoteKind.LongScratch:
+                    return longScratchNotePrefab ? longScratchNotePrefab : tapNotePrefab;
+                case ChartNoteKind.Air:
+                    return airNotePrefab ? airNotePrefab : tapNotePrefab;
+                default: return tapNotePrefab;
+            }
+        }
+
+        private static float LaneX(int lane)
+        {
+            if (lane < 4) return LineXPositions[lane];
+            if (lane < 8) return LineXPositions[lane - 4];
+            return lane == 8 ? -15f : 15f;
         }
     }
 }

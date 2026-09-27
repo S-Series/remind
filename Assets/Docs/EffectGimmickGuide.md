@@ -164,6 +164,8 @@ Gameplay로 간주하지 않는다.
 1. 순수 parameter 타입과 `Effect` 구현을 Shared 영역에 추가한다.
 2. 안정적인 `typeId`, 기본값, 의미 검증, 필요한 capability, seek 지원 여부를
    `EffectRegistration`에 명시한다.
+   내장 타입 외의 parameter 객체를 쓰면 `copyParameters`를 등록해 원본과 각
+   실행 세션에 서로 다른 독립 복사본을 제공한다. 복사 함수가 없으면 준비를 거부한다.
 3. 현재 authoring adapter인 `ChartEffectJsonCodec`에 동일 필드의 decoder와 새 설정의
    기본 JSON을 추가한다.
 4. 절대 chart time, 지연 프레임, 종료/취소 정리, 겹침을 Core 테스트로 고정한다.
@@ -175,6 +177,7 @@ Gameplay로 간주하지 않는다.
 2. 파일에 저장할 안정적인 `gimmickId`와 `commandId`를 등록한다. C# 메서드명을
    문자열 reflection으로 호출하지 않는다.
 3. 설정이 있는 명령만 parameter 타입, 기본값, 검증, decoder를 등록한다.
+   사용자 정의 parameter 타입에는 명령 등록의 `copyParameters`도 제공한다.
 4. 필요한 서비스만 `EffectSessionContext`의 제한된 capability로 요구한다.
 5. ChartMaker에서 선택 가능한지, 한 세션에서 상태를 공유하는지, Restart/예외 때
    정리되는지 검사한다.

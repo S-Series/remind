@@ -73,7 +73,13 @@ public abstract class GameRule : MonoBehaviour
 
     public JudgeWindows GetJudgeWindows(RuleContext context)
     {
-        JudgeWindows windows = BaseJudgeWindows;
+        return GetJudgeWindows(context, BaseJudgeWindows);
+    }
+
+    public JudgeWindows GetJudgeWindows(RuleContext context,
+        JudgeWindows baseWindows)
+    {
+        JudgeWindows windows = baseWindows;
 
         for (int i = 0; i < modifiers.Count; i++)
         {
@@ -86,7 +92,13 @@ public abstract class GameRule : MonoBehaviour
 
     public JudgeResult Judge(double offsetMs, RuleContext context)
     {
-        JudgeResult result = GetJudgeWindows(context).Evaluate(offsetMs);
+        return Judge(offsetMs, context, BaseJudgeWindows);
+    }
+
+    public JudgeResult Judge(double offsetMs, RuleContext context,
+        JudgeWindows baseWindows)
+    {
+        JudgeResult result = GetJudgeWindows(context, baseWindows).Evaluate(offsetMs);
 
         for (int i = 0; i < modifiers.Count; i++)
         {

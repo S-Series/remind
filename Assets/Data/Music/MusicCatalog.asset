@@ -1,0 +1,29 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9c425e41864a4aa091cb2d4f2dd04710, type: 3}
+  m_Name: MusicCatalog
+  m_EditorClassIdentifier: REmind.Gameplay::REmind.Gameplay.Demo.MusicCatalog
+  songs:
+  - musicId: designant
+    songData: {fileID: 4900000, guid: c62a02aa3a5fb5a4482e5e0b125310da, type: 3}
+    jacket: {fileID: 21300000, guid: fd82148dbfdc3d748808e2d939ed91cb, type: 3}
+    audioClip: {fileID: 8300000, guid: 0c287d2ad5cc2ad42923bedbd263d7b4, type: 3}
+    difficulties:
+    - difficultyId: hard
+      level: 0
+  - musicId: i
+    songData: {fileID: 4900000, guid: acb9417978524aa5a2339ce0c8371270, type: 3}
+    jacket: {fileID: 21300000, guid: d795dff1441aa58479d92485ec0c970e, type: 3}
+    audioClip: {fileID: 8300000, guid: 78bbcd18f077b6e45a2a3165214242fd, type: 3}
+    difficulties:
+    - difficultyId: hard
+      level: 0

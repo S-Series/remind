@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using REmind.Charting;
-using REmind.Gameplay.Effects;
+using REmind.Presentation;
 using UnityEngine;
 using UnityEngine.Serialization;
 
@@ -803,21 +803,36 @@ public sealed class ChartTestPlay : MonoBehaviour
                     target.NoteId,
                     out ChartNoteViewBinding binding))
             {
-                noteObjects = target.Kind == JudgementTargetKind.HoldEnd
-                    ? binding.AllObjects
-                    : binding.StartObjects;
+                if (target.Kind == JudgementTargetKind.HoldEnd)
+                    noteObjects = binding.AllObjects;
+                else if (target.Kind == JudgementTargetKind.HoldMid)
+                {
+                    for (int pointIndex = 0; pointIndex < binding.Points.Count;
+                         pointIndex++)
+                    {
+                        ChartNoteViewPointBinding point =
+                            binding.Points[pointIndex];
+                        if (point.Position == target.Position)
+                        {
+                            noteObjects = point.NoteObjects;
+                            break;
+                        }
+                    }
+                }
+                else
+                    noteObjects = binding.StartObjects;
             }
 
             autoTestNotes.Add(new AutoTestNote(
                 target.TargetTimeMs,
                 noteObjects,
                 target.Lane,
-                target.Kind != JudgementTargetKind.HoldStart));
+                target.Kind == JudgementTargetKind.Tap ||
+                target.Kind == JudgementTargetKind.HoldEnd));
         }
 
-        autoTestNotes.Sort(
-            (left, right) =>
-                left.TargetTimeMs.CompareTo(right.TargetTimeMs));
+        // Snapshot targets are already sorted by time, lane, then stable ID.
+        // Preserve that order when several targets share a timestamp.
         nextAutoTestNoteIndex = 0;
         previousAutoTestTimeMs = double.NegativeInfinity;
     }

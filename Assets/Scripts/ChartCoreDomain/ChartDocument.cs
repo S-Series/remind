@@ -43,6 +43,46 @@ namespace REmind.Charting
         Air = 4
     }
 
+    public enum ChartNotePointKind
+    {
+        Tap = 0,
+        Start = 1,
+        Mid = 2,
+        End = 3
+    }
+
+    public enum ChartScratchMotionKind
+    {
+        None = 0,
+        Instant = 1,
+        Gradual = 2,
+        Release = 3
+    }
+
+    public static class ChartScratchMotionLimits
+    {
+        public const int MaximumMoveAmount = 99;
+    }
+
+    /// <summary>A stored note point, including the motion authored at a Scratch point.</summary>
+    public sealed class ChartNotePoint
+    {
+        public ChartNotePoint(int position, ChartNotePointKind kind,
+            ChartScratchMotionKind motion = ChartScratchMotionKind.None,
+            int moveAmount = 0)
+        {
+            Position = position;
+            Kind = kind;
+            Motion = motion;
+            MoveAmount = moveAmount;
+        }
+
+        public int Position { get; set; }
+        public ChartNotePointKind Kind { get; set; }
+        public ChartScratchMotionKind Motion { get; set; }
+        public int MoveAmount { get; set; }
+    }
+
     /// <summary>
     /// 편집 가능한 채보 모델입니다. Position이 편집 원본이며 컴파일 전에는 불완전한
     /// Long Note도 담을 수 있습니다.
@@ -194,6 +234,8 @@ namespace REmind.Charting
 
     public sealed class ChartDocumentNote
     {
+        private readonly List<ChartNotePoint> points = new List<ChartNotePoint>();
+
         public ChartDocumentNote(
             string id,
             ChartNoteKind kind,
@@ -206,6 +248,10 @@ namespace REmind.Charting
             Lane = lane;
             StartPosition = startPosition;
             EndPosition = endPosition;
+            points.Add(new ChartNotePoint(startPosition,
+                endPosition.HasValue ? ChartNotePointKind.Start : ChartNotePointKind.Tap));
+            if (endPosition.HasValue)
+                points.Add(new ChartNotePoint(endPosition.Value, ChartNotePointKind.End));
         }
 
         public string Id { get; set; }
@@ -213,5 +259,6 @@ namespace REmind.Charting
         public int Lane { get; set; }
         public int StartPosition { get; set; }
         public int? EndPosition { get; set; }
+        public IList<ChartNotePoint> Points => points;
     }
 }

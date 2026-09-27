@@ -52,6 +52,64 @@ namespace REmind.Charting.Tests
             Assert.That(EffectPreparation.Prepare(events, new Dictionary<string, object> { ["x"] = "wrong" }, registry, "sample").Succeeded, Is.False);
         }
         [Test]
+        public void PreparedPlan_CopiesMutableParametersForEverySession()
+        {
+            var registry = new EffectRegistry();
+            var seen = new List<int>();
+            registry.RegisterEffect(new EffectRegistration("mutable", "Mutable",
+                typeof(MutableParameters), true, null, _ => null,
+                value => new RecordingEffect(_ =>
+                {
+                    var parameters = (MutableParameters)value;
+                    seen.Add(parameters.Value);
+                    parameters.Value = 999;
+                }), copyParameters: value => new MutableParameters
+                {
+                    Value = ((MutableParameters)value).Value
+                }));
+            var source = new MutableParameters { Value = 7 };
+            var snapshot = Snapshot(new ChartEffectEvent(0, "x",
+                "mutable", "", 0));
+            PreparedEffectPlan plan = EffectPreparation.Prepare(
+                snapshot.EffectEvents,
+                new Dictionary<string, object> { ["x"] = source },
+                registry).Plan;
+            Assert.That(plan, Is.Not.Null);
+            source.Value = 100;
+
+            using (var first = new EffectRunner(plan,
+                new EffectSessionContext("test", "normal",
+                    EffectExecutionMode.Preview)))
+                Assert.That(first.AdvanceTo(0), Is.True);
+            using (var second = new EffectRunner(plan,
+                new EffectSessionContext("test", "normal",
+                    EffectExecutionMode.Preview)))
+                Assert.That(second.AdvanceTo(0), Is.True);
+
+            CollectionAssert.AreEqual(new[] { 7, 7 }, seen);
+        }
+
+        [Test]
+        public void Prepare_RejectsMutableParametersWithoutCopyContract()
+        {
+            var registry = new EffectRegistry();
+            registry.RegisterEffect(new EffectRegistration("mutable", "Mutable",
+                typeof(MutableParameters), true, null, _ => null,
+                _ => new RecordingEffect(_ => { })));
+            var snapshot = Snapshot(new ChartEffectEvent(0, "x",
+                "mutable", "", 0));
+            EffectPreparationResult result = EffectPreparation.Prepare(
+                snapshot.EffectEvents,
+                new Dictionary<string, object>
+                {
+                    ["x"] = new MutableParameters { Value = 7 }
+                }, registry);
+
+            Assert.That(result.Succeeded, Is.False);
+            Assert.That(result.Issues, Has.Some.Matches<CompileIssue>(
+                issue => issue.Code == "EFFECT_PARAMETERS_SNAPSHOT"));
+        }
+        [Test]
         public void DelayedFrame_PreservesScheduleOrderAndDoesNotRetrigger()
         {
             var seen = new List<string>();
@@ -507,6 +565,10 @@ namespace REmind.Charting.Tests
             private readonly Action<EffectExecutionContext> action;
             public RecordingEffect(Action<EffectExecutionContext> action) { this.action = action; }
             protected override void OnStart(EffectExecutionContext context) { action(context); Complete(); }
+        }
+        private sealed class MutableParameters
+        {
+            public int Value;
         }
         private sealed class TrackingEffect : Effect
         {

@@ -15,72 +15,45 @@ namespace REmind.Gameplay.Input.Judgement
         [SerializeField] private GameManager gameManager;
         [SerializeField] private GameRule gameRule;
         [SerializeField] private double userOffsetMs;
+        [SerializeField] private NoteJudgeWindowProfile[] noteWindowProfiles =
+            Array.Empty<NoteJudgeWindowProfile>();
 
         private readonly Dictionary<string, GameObject> noteViews =
-            new Dictionary<string, GameObject>();
-
-        private LaneNoteQueue[] laneQueues = Array.Empty<LaneNoteQueue>();
-        private double chartOffsetMs;
-        private readonly List<QueuedInput> pendingInputs = new List<QueuedInput>();
-        private long inputSequence;
+            new Dictionary<string, GameObject>(StringComparer.Ordinal);
+        private readonly List<QueuedInput> pendingInputs =
+            new List<QueuedInput>();
+        private PlayableChartSnapshot chart;
+        private PlayableJudgementSession session;
         private EffectRunner effectRunner;
         private long effectRunnerGeneration;
+        private long inputSequence;
+        private double chartOffsetMs;
         private double timelineTimeMs = double.NegativeInfinity;
+        private double lastCommittedEffectTimeMs = double.NegativeInfinity;
+        private double lastAutomaticTimeMs = double.NegativeInfinity;
         private double judgementTimeMs;
 
         public event Action<NoteJudgementEvent> NoteJudged;
-        // Called only after the chronological pump returns; transitions may be performed here.
         public event Action<EffectRunner> EffectFrameCompleted;
-        public string LastTimelineError { get; private set; }
-
-        public Func<NoteData, RuleContext> RuleContextFactory { get; set; }
-        public IReadOnlyList<LaneNoteQueue> LaneQueues => laneQueues;
-        public bool IsInitialized { get; private set; }
+        public Func<PlayableNoteSnapshot, RuleContext> RuleContextFactory
+            { get; set; }
+        public bool IsInitialized => session != null;
         public bool IsAutoPlayEnabled { get; private set; }
+        public int PendingNoteCount => session?.PendingNoteCount ?? 0;
         public double ChartOffsetMs => chartOffsetMs;
         public double UserOffsetMs => userOffsetMs;
-
-        public int PendingNoteCount
-        {
-            get
-            {
-                int count = 0;
-
-                for (int i = 0; i < laneQueues.Length; i++)
-                {
-                    count += laneQueues[i].PendingCount;
-                }
-
-                return count;
-            }
-        }
+        public string LastTimelineError { get; private set; }
+        public int DiscardedLateInputCount { get; private set; }
 
         private void Awake()
         {
-            if (inputRouter == null)
+            if (!inputRouter) inputRouter = GetComponent<RhythmInputRouter>();
+            if (!gameManager) gameManager =
+                GetComponentInParent<GameManager>() ?? GameManager.Instance;
+            if (!gameRule && gameManager) gameRule = gameManager.GameRule;
+            if (!gameManager || !gameRule)
             {
-                inputRouter = GetComponent<RhythmInputRouter>();
-            }
-
-            if (gameManager == null)
-            {
-                gameManager = GetComponentInParent<GameManager>();
-            }
-
-            if (gameManager == null)
-            {
-                gameManager = GameManager.Instance;
-            }
-
-            if (gameRule == null && gameManager != null)
-            {
-                gameRule = gameManager.GameRule;
-            }
-
-            if (gameManager == null || gameRule == null)
-            {
-                Debug.LogError(
-                    "NoteJudgementSystem requires an available GameManager and GameRule.",
+                Debug.LogError("NoteJudgementSystem needs GameManager and GameRule.",
                     this);
                 enabled = false;
             }
@@ -88,31 +61,44 @@ namespace REmind.Gameplay.Input.Judgement
 
         private void OnEnable()
         {
-            if (inputRouter != null)
-            {
-                inputRouter.InputPerformed += HandleInputPerformed;
-            }
+            if (!inputRouter) return;
+            inputRouter.InputPerformed += HandleInput;
+            inputRouter.InputReleased += HandleInput;
+            if (gameManager && gameManager.GamePlay)
+                gameManager.GamePlay.PlaybackStarted += HandlePlaybackStarted;
         }
 
         private void OnDisable()
         {
             pendingInputs.Clear();
-            if (inputRouter != null)
-            {
-                inputRouter.InputPerformed -= HandleInputPerformed;
-            }
+            if (!inputRouter) return;
+            inputRouter.InputPerformed -= HandleInput;
+            inputRouter.InputReleased -= HandleInput;
+            if (gameManager && gameManager.GamePlay)
+                gameManager.GamePlay.PlaybackStarted -= HandlePlaybackStarted;
         }
 
         private void LateUpdate()
         {
-            if (!IsInitialized || gameManager == null ||
+            if (!IsInitialized || !gameManager ||
                 (gameManager.PlaybackState != PlaybackState.Playing &&
-                 gameManager.PlaybackState != PlaybackState.Finished))
-            {
-                return;
-            }
-            if (gameManager.PlaybackState == PlaybackState.Playing && !gameManager.GamePlay.HasReachedScheduledStart) return;
+                 gameManager.PlaybackState != PlaybackState.Finished)) return;
+            if (gameManager.PlaybackState == PlaybackState.Playing &&
+                !gameManager.GamePlay.HasReachedScheduledStart) return;
             ProcessFrame(gameManager.CorePlayMs);
+        }
+
+        public bool Initialize(PlayableChartSnapshot snapshot,
+            double noteChartOffsetMs = 0d)
+        {
+            ClearInitialization();
+            if (snapshot == null || double.IsNaN(noteChartOffsetMs) ||
+                double.IsInfinity(noteChartOffsetMs) || !gameRule)
+                return false;
+            chart = snapshot;
+            chartOffsetMs = noteChartOffsetMs;
+            session = CreateSession(snapshot);
+            return true;
         }
 
         public void AttachEffectRunner(EffectRunner runner)
@@ -121,232 +107,100 @@ namespace REmind.Gameplay.Input.Judgement
             unchecked { effectRunnerGeneration++; }
             pendingInputs.Clear();
             timelineTimeMs = double.NegativeInfinity;
+            lastCommittedEffectTimeMs = double.NegativeInfinity;
+            lastAutomaticTimeMs = double.NegativeInfinity;
             judgementTimeMs = 0d;
             LastTimelineError = null;
+            DiscardedLateInputCount = 0;
         }
 
-        /// <summary>Effects -> inputs (arrival sequence) -> auto judgement at equal chart time.
-        /// Miss is strictly outside the window, so an input exactly on its deadline still wins.</summary>
+        /// <summary>
+        /// At equal chart time: Effect, input arrival order, automatic judgement.
+        /// Input exactly at the Miss deadline remains eligible.
+        /// </summary>
         public void ProcessFrame(double songTimeMs)
         {
-            if (!IsInitialized || double.IsNaN(songTimeMs) || double.IsInfinity(songTimeMs)) return;
+            if (!IsInitialized || double.IsNaN(songTimeMs) ||
+                double.IsInfinity(songTimeMs)) return;
             double currentTime = songTimeMs - chartOffsetMs;
             EffectRunner frameRunner = effectRunner;
-            long frameGeneration = effectRunnerGeneration;
+            long generation = effectRunnerGeneration;
             try
             {
                 if (LastTimelineError != null) return;
                 if (currentTime < timelineTimeMs)
                 {
-                    LastTimelineError =
-                        $"Timeline moved backwards from {timelineTimeMs} ms to {currentTime} ms. Restart with a fresh Effect session.";
+                    LastTimelineError = "Timeline moved backwards; restart the session.";
                     return;
                 }
                 pendingInputs.Sort((a, b) =>
                 {
-                    int comparison = a.ChartTimeMs.CompareTo(b.ChartTimeMs);
-                    return comparison != 0 ? comparison : a.Sequence.CompareTo(b.Sequence);
+                    int order = a.ChartTimeMs.CompareTo(b.ChartTimeMs);
+                    return order != 0 ? order : a.Sequence.CompareTo(b.Sequence);
                 });
-
-                while (frameGeneration == effectRunnerGeneration)
+                while (generation == effectRunnerGeneration)
                 {
-                    double effectTime = frameRunner?.NextEventTimeMs ?? double.PositiveInfinity;
-                    double inputTime = pendingInputs.Count > 0 ? pendingInputs[0].ChartTimeMs : double.PositiveInfinity;
-                    LaneNoteQueue autoQueue = null;
-                    NoteData autoNote = null;
-                    double autoTime = double.PositiveInfinity;
-                    for (int lane = 0; lane < laneQueues.Length; lane++)
-                    {
-                        if (!laneQueues[lane].TryPeek(out NoteData note)) continue;
-                        double candidate = note.TimelineTimeMs;
-                        if (!IsAutoPlayEnabled)
-                        {
-                            judgementTimeMs = Math.Max(
-                                note.TimelineTimeMs,
-                                timelineTimeMs);
-                            candidate += userOffsetMs + gameRule.GetJudgeWindows(CreateRuleContext(note)).MissWindowMs;
-                        }
-                        if (candidate < autoTime)
-                        {
-                            autoTime = candidate;
-                            autoQueue = laneQueues[lane];
-                            autoNote = note;
-                        }
-                    }
-
-                    double next = Math.Min(effectTime, Math.Min(inputTime, autoTime));
-                    if (double.IsPositiveInfinity(next) || next > currentTime) break;
-                    if (!IsAutoPlayEnabled && next == autoTime && next == currentTime &&
-                        next < effectTime && next < inputTime) break;
-
+                    double effectTime = frameRunner?.NextEventTimeMs ??
+                        double.PositiveInfinity;
+                    double inputTime = pendingInputs.Count > 0
+                        ? pendingInputs[0].ChartTimeMs : double.PositiveInfinity;
+                    double autoTime = session.NextAutomaticTime(
+                        IsAutoPlayEnabled);
+                    double next = Math.Min(effectTime,
+                        Math.Min(inputTime, autoTime));
+                    if (double.IsPositiveInfinity(next) || next > currentTime)
+                        break;
                     if (effectTime <= inputTime && effectTime <= autoTime)
                     {
                         timelineTimeMs = Math.Max(timelineTimeMs, effectTime);
-                        if (!frameRunner.TriggerThrough(effectTime, currentTime)) break;
+                        judgementTimeMs = effectTime;
+                        if (!frameRunner.TriggerThrough(effectTime, currentTime))
+                            break;
+                        lastCommittedEffectTimeMs = effectTime;
                         continue;
                     }
-
                     if (inputTime <= autoTime)
                     {
                         QueuedInput input = pendingInputs[0];
                         pendingInputs.RemoveAt(0);
-                        // A delivery older than an already committed effect frame cannot be reconstructed.
-                        if (frameRunner != null && input.ChartTimeMs < timelineTimeMs)
+                        // Input System can deliver an event in the next render
+                        // frame even though its device timestamp precedes the
+                        // previous frame's DSP position. The frame watermark is
+                        // not an Effect event. Accept that timestamp unless an
+                        // irreversible Effect or automatic result crossed it.
+                        if (input.ChartTimeMs < lastCommittedEffectTimeMs ||
+                            input.ChartTimeMs < lastAutomaticTimeMs)
                         {
-                            LastTimelineError = "Input arrived before the committed Effect timeline; playback stopped without replaying side effects.";
-                            break;
+                            DiscardedLateInputCount++;
+                            continue;
                         }
-                        timelineTimeMs = Math.Max(timelineTimeMs, input.ChartTimeMs);
+                        timelineTimeMs = Math.Max(timelineTimeMs,
+                            input.ChartTimeMs);
                         judgementTimeMs = input.ChartTimeMs;
-                        ProcessInput(input);
+                        session.Input(input.Lane, input.ChartTimeMs,
+                            input.Pressed);
                         continue;
                     }
-
                     timelineTimeMs = Math.Max(timelineTimeMs, autoTime);
                     judgementTimeMs = autoTime;
-                    ResolveCurrentNote(autoQueue, autoNote,
-                        IsAutoPlayEnabled ? JudgeResult.Perfect : JudgeResult.Miss,
-                        IsAutoPlayEnabled ? 0d : autoTime -
-                            autoNote.TimelineTimeMs - userOffsetMs,
-                        GetEffectiveHitTimeMs(autoNote), !IsAutoPlayEnabled);
+                    session.ProcessAutomatic(autoTime, IsAutoPlayEnabled);
+                    lastAutomaticTimeMs = autoTime;
                 }
-
-                if (frameGeneration == effectRunnerGeneration && frameRunner != null &&
-                    LastTimelineError == null && !frameRunner.TransitionRequested &&
+                if (generation == effectRunnerGeneration &&
+                    frameRunner != null && LastTimelineError == null &&
+                    !frameRunner.TransitionRequested &&
                     frameRunner.Failure == null)
                     frameRunner.AdvanceTo(currentTime);
-                if (frameGeneration == effectRunnerGeneration)
+                if (generation == effectRunnerGeneration)
                     timelineTimeMs = Math.Max(timelineTimeMs, currentTime);
             }
             catch (Exception exception)
             {
-                if (frameGeneration == effectRunnerGeneration)
-                    LastTimelineError = "Timeline processing failed: " + exception.Message;
+                if (generation == effectRunnerGeneration)
+                    LastTimelineError = "Timeline processing failed: " +
+                        exception.Message;
             }
-            finally
-            {
-                NotifyEffectFrameCompleted(frameRunner);
-            }
-        }
-
-        private void NotifyEffectFrameCompleted(EffectRunner completedRunner)
-        {
-            if (EffectFrameCompleted == null) return;
-            foreach (Delegate callback in EffectFrameCompleted.GetInvocationList())
-            {
-                try { ((Action<EffectRunner>)callback)(completedRunner); }
-                catch (Exception exception) { Debug.LogException(exception, this); }
-            }
-        }
-
-        public bool Initialize(ChartData chart)
-        {
-            if (chart == null)
-            {
-                ClearInitialization();
-                Debug.LogError("Cannot initialize NoteJudgementSystem with a null chart.", this);
-                return false;
-            }
-
-            return Initialize(chart.LaneCount, chart.Notes, chart.ChartOffsetMs);
-        }
-
-        public bool Initialize(
-            int laneCount,
-            IReadOnlyList<NoteData> notes,
-            double noteChartOffsetMs = 0d)
-        {
-            ClearInitialization();
-
-            if (laneCount <= 0)
-            {
-                Debug.LogError("Lane count must be greater than zero.", this);
-                return false;
-            }
-
-            if (notes == null)
-            {
-                Debug.LogError("Note list cannot be null.", this);
-                return false;
-            }
-
-            if (double.IsNaN(noteChartOffsetMs) || double.IsInfinity(noteChartOffsetMs))
-            {
-                Debug.LogError("Chart offset must be a finite number.", this);
-                return false;
-            }
-
-            LaneNoteQueue[] newQueues = new LaneNoteQueue[laneCount];
-            HashSet<string> noteIds = new HashSet<string>(StringComparer.Ordinal);
-            HashSet<(double TimeMs, int Lane)> occupiedSlots =
-                new HashSet<(double TimeMs, int Lane)>();
-
-            for (int lane = 0; lane < laneCount; lane++)
-            {
-                newQueues[lane] = new LaneNoteQueue(lane);
-            }
-
-            for (int i = 0; i < notes.Count; i++)
-            {
-                NoteData note = notes[i];
-                if (note == null ||
-                    !note.Type.IsGameplayNote() ||
-                    note.Lane < 0 ||
-                    note.Lane >= laneCount ||
-                    string.IsNullOrWhiteSpace(note.Id) ||
-                    note.TimeMs < 0 ||
-                    double.IsNaN(note.TimelineTimeMs) ||
-                    double.IsInfinity(note.TimelineTimeMs) ||
-                    note.TimelineTimeMs < 0d ||
-                    double.IsNaN(note.TimelineDurationMs) ||
-                    double.IsInfinity(note.TimelineDurationMs) ||
-                    (note.Type.IsLong()
-                        ? note.DurationMs <= 0 ||
-                          note.TimelineDurationMs <= 0d
-                        : note.DurationMs != 0 ||
-                          note.TimelineDurationMs != 0d) ||
-                    !noteIds.Add(note.Id) ||
-                    !occupiedSlots.Add((note.TimelineTimeMs, note.Lane)))
-                {
-                    Debug.LogError($"Invalid note at index {i}.", this);
-                    return false;
-                }
-
-                try
-                {
-                    checked
-                    {
-                        _ = note.TimeMs + note.DurationMs;
-                    }
-                }
-                catch (OverflowException)
-                {
-                    Debug.LogError($"Note time overflows at index {i}.", this);
-                    return false;
-                }
-
-                double timelineEndTimeMs = note.TimelineEndTimeMs;
-                if (double.IsNaN(timelineEndTimeMs) ||
-                    double.IsInfinity(timelineEndTimeMs))
-                {
-                    Debug.LogError(
-                        $"Note timeline overflows at index {i}.",
-                        this);
-                    return false;
-                }
-
-                newQueues[note.Lane].Add(note);
-            }
-
-            for (int lane = 0; lane < newQueues.Length; lane++)
-            {
-                newQueues[lane].Sort();
-            }
-
-            laneQueues = newQueues;
-            chartOffsetMs = noteChartOffsetMs;
-            IsInitialized = true;
-            return true;
+            finally { NotifyEffectFrameCompleted(frameRunner); }
         }
 
         public void ResetJudgements(bool reactivateRegisteredViews = true)
@@ -354,35 +208,28 @@ namespace REmind.Gameplay.Input.Judgement
             pendingInputs.Clear();
             inputSequence = 0;
             timelineTimeMs = double.NegativeInfinity;
+            lastCommittedEffectTimeMs = double.NegativeInfinity;
+            lastAutomaticTimeMs = double.NegativeInfinity;
             judgementTimeMs = 0d;
             LastTimelineError = null;
-            for (int lane = 0; lane < laneQueues.Length; lane++)
-            {
-                laneQueues[lane].ResetProgress();
-            }
-
-            if (!reactivateRegisteredViews)
-            {
-                return;
-            }
-
-            foreach (KeyValuePair<string, GameObject> pair in noteViews)
-            {
-                if (pair.Value != null)
-                {
-                    pair.Value.SetActive(true);
-                }
-            }
+            DiscardedLateInputCount = 0;
+            session?.Reset();
+            if (!reactivateRegisteredViews) return;
+            foreach (GameObject view in noteViews.Values)
+                if (view) view.SetActive(true);
         }
 
         public void SetUserOffsetMs(double value)
         {
             if (double.IsNaN(value) || double.IsInfinity(value))
-            {
                 throw new ArgumentOutOfRangeException(nameof(value));
-            }
-
+            if (gameManager && (gameManager.PlaybackState ==
+                    PlaybackState.Playing || gameManager.PlaybackState ==
+                    PlaybackState.Paused))
+                throw new InvalidOperationException(
+                    "Change judgement offset before starting playback.");
             userOffsetMs = value;
+            if (chart != null) session = CreateSession(chart);
         }
 
         public void SetAutoPlayEnabled(bool value)
@@ -392,42 +239,30 @@ namespace REmind.Gameplay.Input.Judgement
 
         public bool RegisterNoteView(string noteId, GameObject noteView)
         {
-            if (string.IsNullOrWhiteSpace(noteId) || noteView == null)
-            {
-                return false;
-            }
-
-            if (noteViews.TryGetValue(noteId, out GameObject currentView))
-            {
-                return currentView == noteView;
-            }
-
+            if (string.IsNullOrWhiteSpace(noteId) || !noteView) return false;
+            if (noteViews.TryGetValue(noteId, out GameObject current))
+                return current == noteView;
             noteViews.Add(noteId, noteView);
             return true;
         }
 
         public bool UnregisterNoteView(string noteId)
         {
-            return !string.IsNullOrWhiteSpace(noteId) && noteViews.Remove(noteId);
+            return !string.IsNullOrWhiteSpace(noteId) &&
+                noteViews.Remove(noteId);
         }
 
-        public bool TryGetRegisteredNoteView(string noteId, out GameObject noteView)
+        public bool TryGetRegisteredNoteView(string noteId,
+            out GameObject noteView)
         {
             if (!string.IsNullOrWhiteSpace(noteId) &&
-                noteViews.TryGetValue(noteId, out noteView) &&
-                noteView != null)
-            {
+                noteViews.TryGetValue(noteId, out noteView) && noteView)
                 return true;
-            }
-
             noteView = null;
             return false;
         }
 
-        public void ClearRegisteredNoteViews()
-        {
-            noteViews.Clear();
-        }
+        public void ClearRegisteredNoteViews() { noteViews.Clear(); }
 
         public void ClearInitialization()
         {
@@ -436,169 +271,113 @@ namespace REmind.Gameplay.Input.Judgement
             unchecked { effectRunnerGeneration++; }
             inputSequence = 0;
             timelineTimeMs = double.NegativeInfinity;
+            lastCommittedEffectTimeMs = double.NegativeInfinity;
+            lastAutomaticTimeMs = double.NegativeInfinity;
             judgementTimeMs = 0d;
             LastTimelineError = null;
-            laneQueues = Array.Empty<LaneNoteQueue>();
+            DiscardedLateInputCount = 0;
+            chart = null;
+            session = null;
             chartOffsetMs = 0d;
-            IsInitialized = false;
         }
 
-        private void HandleInputPerformed(RhythmInputEvent inputEvent)
+        private void HandleInput(RhythmInputEvent inputEvent)
         {
-            if (IsAutoPlayEnabled || !IsInitialized ||
+            if (IsAutoPlayEnabled || !IsInitialized || !gameManager ||
                 gameManager.PlaybackState != PlaybackState.Playing ||
                 !gameManager.GamePlay.HasReachedScheduledStart ||
-                inputEvent.Lane < 0 || inputEvent.Lane >= laneQueues.Length)
-            {
-                return;
-            }
-
-            if (gameManager.GamePlay.TryGetInputSongTimeMs(inputEvent.EventTime, out double inputSongTime))
-                pendingInputs.Add(new QueuedInput(inputEvent.Lane, inputSongTime - chartOffsetMs, inputSequence++));
+                !ChartLaneLayout.IsValid(inputEvent.Lane)) return;
+            if (gameManager.GamePlay.TryGetInputSongTimeMs(
+                    inputEvent.EventTime, out double songTime))
+                pendingInputs.Add(new QueuedInput(inputEvent.Lane,
+                    songTime - chartOffsetMs, inputSequence++,
+                    inputEvent.Pressed));
         }
 
-        private void ProcessInput(QueuedInput input)
+        private void HandlePlaybackStarted(double songTimeMs)
         {
-            LaneNoteQueue queue = laneQueues[input.Lane];
+            if (gameManager.GamePlay.StartReason == PlaybackStartReason.Resume &&
+                session != null && inputRouter != null)
+                session.BreakReleasedHolds(inputRouter.IsLanePressed);
+        }
 
-            if (!queue.TryPeek(out NoteData note))
-            {
-                return;
-            }
+        private PlayableJudgementSession CreateSession(
+            PlayableChartSnapshot snapshot)
+        {
+            return new PlayableJudgementSession(snapshot, JudgeOffset,
+                GetMissWindow, HandleResolution, userOffsetMs);
+        }
 
+        private ChartJudgementGrade JudgeOffset(PlayableNoteSnapshot note,
+            double offsetMs)
+        {
             RuleContext context = CreateRuleContext(note);
-            double effectiveHitTimeMs = GetEffectiveHitTimeMs(note);
-
-            double offsetMs = input.ChartTimeMs - userOffsetMs -
-                note.TimelineTimeMs;
-
-            JudgeResult result = gameRule.Judge(offsetMs, context);
-            if (result == JudgeResult.None)
-            {
-                return;
-            }
-
-            ResolveCurrentNote(
-                queue,
-                note,
-                result,
-                offsetMs,
-                effectiveHitTimeMs,
-                false);
+            return (ChartJudgementGrade)gameRule.Judge(offsetMs, context,
+                GetBaseWindows(note.Kind));
         }
 
-        private void ProcessAutoPlayNotes(double currentSongTimeMs)
+        private double GetMissWindow(PlayableNoteSnapshot note)
         {
-            while (true)
+            return gameRule.GetJudgeWindows(CreateRuleContext(note),
+                GetBaseWindows(note.Kind)).MissWindowMs;
+        }
+
+        private RuleContext CreateRuleContext(PlayableNoteSnapshot note)
+        {
+            return RuleContextFactory != null
+                ? RuleContextFactory(note).AtTime(judgementTimeMs)
+                : new RuleContext(0, 0, ToNoteType(note.Kind), false,
+                    false, false, judgementTimeMs);
+        }
+
+        private JudgeWindows GetBaseWindows(ChartNoteKind kind)
+        {
+            if (noteWindowProfiles != null)
+                foreach (NoteJudgeWindowProfile profile in noteWindowProfiles)
+                    if (profile && profile.NoteKind == kind)
+                        return profile.Windows;
+            return gameRule.BaseJudgeWindows;
+        }
+
+        private void HandleResolution(ChartJudgementResolution resolution)
+        {
+            PlayableNoteSnapshot note = resolution.Note;
+            bool final = resolution.SegmentIndex < 0 ||
+                resolution.SegmentIndex == note.Points.Count - 2;
+            if (final && noteViews.TryGetValue(note.Id, out GameObject view) &&
+                view) view.SetActive(false);
+            NoteJudged?.Invoke(new NoteJudgementEvent(note,
+                resolution.SegmentIndex, (JudgeResult)resolution.Grade,
+                gameRule.GetTimingSide(resolution.OffsetMs),
+                resolution.OffsetMs,
+                resolution.TargetTimeMs + chartOffsetMs,
+                resolution.EvaluationTimeMs,
+                resolution.IsAutomaticMiss));
+        }
+
+        private void NotifyEffectFrameCompleted(EffectRunner runner)
+        {
+            if (EffectFrameCompleted == null) return;
+            foreach (Delegate callback in
+                EffectFrameCompleted.GetInvocationList())
             {
-                LaneNoteQueue nextQueue = null;
-                NoteData nextNote = null;
-                double nextHitTimeMs = double.MaxValue;
-
-                for (int lane = 0; lane < laneQueues.Length; lane++)
-                {
-                    LaneNoteQueue queue = laneQueues[lane];
-                    if (!queue.TryPeek(out NoteData note))
-                    {
-                        continue;
-                    }
-
-                    double effectiveHitTimeMs = GetEffectiveHitTimeMs(note);
-                    if (effectiveHitTimeMs > currentSongTimeMs ||
-                        effectiveHitTimeMs >= nextHitTimeMs)
-                    {
-                        continue;
-                    }
-
-                    nextQueue = queue;
-                    nextNote = note;
-                    nextHitTimeMs = effectiveHitTimeMs;
-                }
-
-                if (nextQueue == null)
-                {
-                    return;
-                }
-
-                ResolveCurrentNote(
-                    nextQueue,
-                    nextNote,
-                    JudgeResult.Perfect,
-                    0d,
-                    nextHitTimeMs,
-                    false);
+                try { ((Action<EffectRunner>)callback)(runner); }
+                catch (Exception exception)
+                { Debug.LogException(exception, this); }
             }
         }
 
-        private void ProcessExpiredNotes(LaneNoteQueue queue, double currentSongTimeMs)
+        private static NoteType ToNoteType(ChartNoteKind kind)
         {
-            while (queue.TryPeek(out NoteData note))
+            switch (kind)
             {
-                RuleContext context = CreateRuleContext(note);
-                double effectiveHitTimeMs = GetEffectiveHitTimeMs(note);
-                int missWindowMs = gameRule.GetJudgeWindows(context).MissWindowMs;
-                double offsetMs = currentSongTimeMs - effectiveHitTimeMs;
-
-                if (offsetMs <= missWindowMs)
-                {
-                    return;
-                }
-
-                ResolveCurrentNote(
-                    queue,
-                    note,
-                    JudgeResult.Miss,
-                    offsetMs,
-                    effectiveHitTimeMs,
-                    true);
+                case ChartNoteKind.Tap: return NoteType.Tap;
+                case ChartNoteKind.Hold: return NoteType.LongTap;
+                case ChartNoteKind.Scratch: return NoteType.Scratch;
+                case ChartNoteKind.LongScratch: return NoteType.LongScratch;
+                case ChartNoteKind.Air: return NoteType.Air;
+                default: return NoteType.Unknown;
             }
-        }
-
-        private void ResolveCurrentNote(
-            LaneNoteQueue queue,
-            NoteData note,
-            JudgeResult result,
-            double offsetMs,
-            double effectiveHitTimeMs,
-            bool isAutomaticMiss)
-        {
-            if (!queue.TryAdvance(out NoteData advancedNote) || !ReferenceEquals(note, advancedNote))
-            {
-                Debug.LogError("Lane note queue changed during judgement.", this);
-                return;
-            }
-
-            if (noteViews.TryGetValue(note.Id, out GameObject noteView) && noteView != null)
-            {
-                noteView.SetActive(false);
-            }
-
-            NoteJudged?.Invoke(
-                new NoteJudgementEvent(
-                    note,
-                    result,
-                    gameRule.GetTimingSide(offsetMs),
-                    offsetMs,
-                    effectiveHitTimeMs,
-                    judgementTimeMs,
-                    isAutomaticMiss));
-        }
-
-        private RuleContext CreateRuleContext(NoteData note)
-        {
-            if (RuleContextFactory != null)
-            {
-                return RuleContextFactory(note).AtTime(judgementTimeMs);
-            }
-
-            return new RuleContext(
-                0,
-                0,
-                note.Type,
-                false,
-                false,
-                false,
-                judgementTimeMs);
         }
 
         private readonly struct QueuedInput
@@ -606,13 +385,17 @@ namespace REmind.Gameplay.Input.Judgement
             public readonly int Lane;
             public readonly double ChartTimeMs;
             public readonly long Sequence;
-            public QueuedInput(int lane, double chartTimeMs, long sequence)
-            { Lane = lane; ChartTimeMs = chartTimeMs; Sequence = sequence; }
-        }
-
-        private double GetEffectiveHitTimeMs(NoteData note)
-        {
-            return note.TimelineTimeMs + chartOffsetMs;
+            public readonly bool Pressed;
+            public QueuedInput(int lane, double timeMs, long sequence)
+                : this(lane, timeMs, sequence, true) { }
+            public QueuedInput(int lane, double timeMs, long sequence,
+                bool pressed)
+            {
+                Lane = lane;
+                ChartTimeMs = timeMs;
+                Sequence = sequence;
+                Pressed = pressed;
+            }
         }
     }
 }

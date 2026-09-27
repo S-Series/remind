@@ -17,7 +17,7 @@ namespace REmind.Gameplay
         [SerializeField] private NoteJudgementSystem judgementSystem;
         [SerializeField] private GameRule gameRule;
 
-        private Func<NoteData, RuleContext> contextFactory;
+        private Func<PlayableNoteSnapshot, RuleContext> contextFactory;
         private bool bound;
         private int totalNoteCount;
 
@@ -186,21 +186,29 @@ namespace REmind.Gameplay
             bound = false;
         }
 
-        private RuleContext CreateRuleContext(NoteData note)
+        private RuleContext CreateRuleContext(PlayableNoteSnapshot note)
         {
-            return new RuleContext(
-                ToRuleHealth(CurrentHealth),
-                CurrentCombo,
-                note != null ? note.Type : NoteType.Unknown,
-                false,
-                false,
-                HasPreparedChart && totalNoteCount > 0 &&
-                    JudgedNoteCount >= totalNoteCount);
+            NoteType type = NoteType.Unknown;
+            if (note != null)
+            {
+                switch (note.Kind)
+                {
+                    case ChartNoteKind.Tap: type = NoteType.Tap; break;
+                    case ChartNoteKind.Hold: type = NoteType.LongTap; break;
+                    case ChartNoteKind.Scratch: type = NoteType.Scratch; break;
+                    case ChartNoteKind.LongScratch:
+                        type = NoteType.LongScratch; break;
+                    case ChartNoteKind.Air: type = NoteType.Air; break;
+                }
+            }
+            return new RuleContext(ToRuleHealth(CurrentHealth), CurrentCombo,
+                type, false, false, HasPreparedChart &&
+                totalNoteCount > 0 && JudgedNoteCount >= totalNoteCount);
         }
 
         private void HandleNoteJudged(NoteJudgementEvent judgementEvent)
         {
-            if (!HasPreparedChart || judgementEvent.Note == null)
+            if (!HasPreparedChart || judgementEvent.ChartNote == null)
             {
                 return;
             }
@@ -210,7 +218,7 @@ namespace REmind.Gameplay
             RuleContext before = new RuleContext(
                 ToRuleHealth(CurrentHealth),
                 CurrentCombo,
-                judgementEvent.Note.Type,
+                CreateRuleContext(judgementEvent.ChartNote).NoteType,
                 false,
                 false,
                 completesChart,
@@ -241,7 +249,7 @@ namespace REmind.Gameplay
             RuleContext after = new RuleContext(
                 nextHealth,
                 nextCombo,
-                judgementEvent.Note.Type,
+                CreateRuleContext(judgementEvent.ChartNote).NoteType,
                 false,
                 false,
                 totalNoteCount > 0 && JudgedNoteCount >= totalNoteCount,

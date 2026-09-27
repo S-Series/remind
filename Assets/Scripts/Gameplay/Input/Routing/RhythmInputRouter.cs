@@ -33,6 +33,7 @@ namespace REmind.Gameplay.Input.Routing
         private bool isBound;
 
         public event Action<RhythmInputEvent> InputPerformed;
+        public event Action<RhythmInputEvent> InputReleased;
 
         public InputActionAsset InputActions => inputActions;
         public bool IsReady => isBound;
@@ -77,6 +78,14 @@ namespace REmind.Gameplay.Input.Routing
             }
         }
 
+        public bool IsLanePressed(int lane)
+        {
+            foreach (KeyValuePair<InputAction, ActionBinding> pair in
+                bindingByAction)
+                if (pair.Value.Lane == lane) return pair.Key.IsPressed();
+            return false;
+        }
+
         private bool TryBindActions()
         {
             if (isBound)
@@ -115,6 +124,7 @@ namespace REmind.Gameplay.Input.Routing
 
                 bindingByAction.Add(action, binding);
                 action.performed += HandleActionPerformed;
+                action.canceled += HandleActionCanceled;
             }
 
             isBound = true;
@@ -126,6 +136,7 @@ namespace REmind.Gameplay.Input.Routing
             foreach (KeyValuePair<InputAction, ActionBinding> pair in bindingByAction)
             {
                 pair.Key.performed -= HandleActionPerformed;
+                pair.Key.canceled -= HandleActionCanceled;
             }
 
             bindingByAction.Clear();
@@ -142,6 +153,13 @@ namespace REmind.Gameplay.Input.Routing
 
             InputPerformed?.Invoke(
                 new RhythmInputEvent(binding.Lane, context.time));
+        }
+
+        private void HandleActionCanceled(InputAction.CallbackContext context)
+        {
+            if (bindingByAction.TryGetValue(context.action, out ActionBinding binding))
+                InputReleased?.Invoke(new RhythmInputEvent(
+                    binding.Lane, context.time, false));
         }
 
         private readonly struct ActionBinding

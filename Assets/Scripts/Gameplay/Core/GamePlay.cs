@@ -16,6 +16,7 @@ public sealed class GamePlay : MonoBehaviour
     [SerializeField, Min(0.05f)] private float schedulingLeadTimeSeconds = 0.2f;
 
     private double heldSongTimeMs;
+    private double requiredCompletionTimeMs;
     private double scheduledSongTimeMs;
     private DspSongClock songClock;
     private bool startInProgress;
@@ -48,9 +49,20 @@ public sealed class GamePlay : MonoBehaviour
         get
         {
             AudioClip song = CurrentSong;
-            return song == null || song.frequency <= 0
+            double audioDurationMs = song == null || song.frequency <= 0
                 ? 0d
                 : song.samples / (double)song.frequency * 1000d;
+            return Math.Max(audioDurationMs, requiredCompletionTimeMs);
+        }
+    }
+
+    public double AudioDurationMs
+    {
+        get
+        {
+            AudioClip song = CurrentSong;
+            return song == null || song.frequency <= 0 ? 0d :
+                song.samples / (double)song.frequency * 1000d;
         }
     }
 
@@ -164,10 +176,22 @@ public sealed class GamePlay : MonoBehaviour
         audioSource.Stop();
         audioSource.clip = song;
         audioSource.volume = Mathf.Clamp01(volume);
+        requiredCompletionTimeMs = 0d;
 
         heldSongTimeMs = 0d;
         scheduledSongTimeMs = 0d;
         SetState(PlaybackState.Ready);
+        return true;
+    }
+
+    public bool SetCompletionTimeMs(double completionTimeMs)
+    {
+        if (CurrentSong == null || State == PlaybackState.Playing ||
+            State == PlaybackState.Paused || startInProgress ||
+            double.IsNaN(completionTimeMs) ||
+            double.IsInfinity(completionTimeMs) || completionTimeMs < 0d)
+            return false;
+        requiredCompletionTimeMs = completionTimeMs;
         return true;
     }
 

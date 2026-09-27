@@ -1,0 +1,14 @@
+{
+  "name": "REmind.NoteRules",
+  "rootNamespace": "REmind.Data",
+  "references": ["REmind.ChartCore"],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": true
+}

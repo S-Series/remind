@@ -294,6 +294,9 @@ public static class ChartHolderDocumentAdapter
 
             if (noteType == NoteType.Scratch)
             {
+                ScratchMotionData motion = ScratchMotionRules.NormalizeMotion(
+                    noteType, ScratchPointType.Tap,
+                    holder.scratchMotions[scratchIndex]);
                 AddScratchCameraTiltEvent(
                     holder,
                     scratchIndex,
@@ -309,7 +312,8 @@ public static class ChartHolderDocumentAdapter
                     lane,
                     position,
                     noteObjects,
-                    "scratch");
+                    "scratch",
+                    motion);
                 continue;
             }
 
@@ -324,6 +328,8 @@ public static class ChartHolderDocumentAdapter
 
             ScratchPointType pointType =
                 holder.scratchPointTypes[scratchIndex];
+            ScratchMotionData pointMotion = ScratchMotionRules.NormalizeMotion(
+                noteType, pointType, holder.scratchMotions[scratchIndex]);
             AddScratchCameraTiltEvent(
                 holder,
                 scratchIndex,
@@ -349,7 +355,8 @@ public static class ChartHolderDocumentAdapter
                     pendingScratch[scratchIndex] = new PendingLongNote(
                         lane,
                         position,
-                        noteObjects);
+                        noteObjects,
+                        pointMotion);
                     break;
                 case ScratchPointType.Mid:
                     if (pending == null)
@@ -361,7 +368,7 @@ public static class ChartHolderDocumentAdapter
                     }
                     else
                     {
-                        pending.Append(position, noteObjects);
+                        pending.Append(position, noteObjects, pointMotion);
                     }
 
                     break;
@@ -382,7 +389,8 @@ public static class ChartHolderDocumentAdapter
                         pending,
                         position,
                         noteObjects,
-                        "long-scratch");
+                        "long-scratch",
+                        pointMotion);
                     pendingScratch[scratchIndex] = null;
                     break;
                 default:
@@ -457,14 +465,21 @@ public static class ChartHolderDocumentAdapter
         int lane,
         int position,
         GameObject[] noteObjects,
-        string idPrefix)
+        string idPrefix,
+        ScratchMotionData motion = null)
     {
         string id = CreateNoteId(idPrefix, lane, position);
-        document.Notes.Add(new ChartDocumentNote(
+        var note = new ChartDocumentNote(
             id,
             kind,
             lane,
-            position));
+            position);
+        if (motion != null)
+        {
+            note.Points.Clear();
+            note.Points.Add(CreatePoint(position, ChartNotePointKind.Tap, motion));
+        }
+        document.Notes.Add(note);
         viewBindings.Add(
             id,
             new ChartNoteViewBinding(
@@ -483,18 +498,25 @@ public static class ChartHolderDocumentAdapter
         PendingLongNote pending,
         int endPosition,
         GameObject[] endObjects,
-        string idPrefix)
+        string idPrefix,
+        ScratchMotionData endMotion = null)
     {
         string id = CreateNoteId(
             idPrefix,
             pending.Lane,
             pending.StartPosition);
-        document.Notes.Add(new ChartDocumentNote(
+        var note = new ChartDocumentNote(
             id,
             kind,
             pending.Lane,
             pending.StartPosition,
-            endPosition));
+            endPosition);
+        note.Points.Clear();
+        foreach (ChartNotePoint point in pending.NotePoints)
+            note.Points.Add(point);
+        note.Points.Add(CreatePoint(endPosition,
+            ChartNotePointKind.End, endMotion));
+        document.Notes.Add(note);
         viewBindings.Add(
             id,
             new ChartNoteViewBinding(
@@ -579,7 +601,8 @@ public static class ChartHolderDocumentAdapter
         public PendingLongNote(
             int lane,
             int startPosition,
-            GameObject[] startObjects)
+            GameObject[] startObjects,
+            ScratchMotionData motion = null)
         {
             Lane = lane;
             StartPosition = startPosition;
@@ -591,6 +614,10 @@ public static class ChartHolderDocumentAdapter
                     startPosition,
                     startObjects)
             };
+            NotePoints = new List<ChartNotePoint>
+            {
+                CreatePoint(startPosition, ChartNotePointKind.Start, motion)
+            };
         }
 
         public int Lane { get; }
@@ -598,14 +625,47 @@ public static class ChartHolderDocumentAdapter
         public GameObject[] StartObjects { get; }
         public GameObject[] AllObjects { get; private set; }
         public List<ChartNoteViewPointBinding> Points { get; }
+        public List<ChartNotePoint> NotePoints { get; }
 
-        public void Append(int position, GameObject[] noteObjects)
+        public void Append(int position, GameObject[] noteObjects,
+            ScratchMotionData motion)
         {
             AllObjects = CombineObjects(AllObjects, noteObjects);
             Points.Add(new ChartNoteViewPointBinding(
                 position,
                 noteObjects));
+            NotePoints.Add(CreatePoint(position, ChartNotePointKind.Mid,
+                motion));
         }
+    }
+
+    private static ChartNotePoint CreatePoint(int position,
+        ChartNotePointKind kind, ScratchMotionData motion)
+    {
+        if (motion == null)
+            return new ChartNotePoint(position, kind);
+
+        ChartScratchMotionKind motionKind;
+        switch (motion.MotionType)
+        {
+            case ScratchMotionType.None:
+                motionKind = ChartScratchMotionKind.None;
+                break;
+            case ScratchMotionType.Instant:
+                motionKind = ChartScratchMotionKind.Instant;
+                break;
+            case ScratchMotionType.Gradual:
+                motionKind = ChartScratchMotionKind.Gradual;
+                break;
+            case ScratchMotionType.Release:
+                motionKind = ChartScratchMotionKind.Release;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(motion));
+        }
+
+        return new ChartNotePoint(position, kind, motionKind,
+            motion.MoveAmount);
     }
 
     private static GameObject[] CloneObjects(GameObject[] noteObjects)

@@ -1,0 +1,23 @@
+{
+  "format": "REmindSong",
+  "formatVersion": 2,
+  "metadataStatus": "test",
+  "musicId": "i",
+  "songSeason": 0,
+  "title": "I",
+  "artist": "Chroma",
+  "previewStartMs": 0.0,
+  "previewDurationMs": 15000.0,
+  "hiddenType": "NotHidden",
+  "requiresPurchase": false,
+  "audioFile": "audio/music.mp3",
+  "jacketFile": "jackets/hard.jpg",
+  "charts": [
+    {
+      "difficultyId": "hard",
+      "level": 0,
+      "chartAuthor": "Unknown",
+      "chartFile": "charts/hard.rd"
+    }
+  ]
+}

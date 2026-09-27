@@ -150,7 +150,8 @@ namespace REmind.Charting
                 scrollMap,
                 issues,
                 out List<PlayableNoteSnapshot> playableNotes,
-                out List<JudgementTarget> judgementTargets);
+                out List<JudgementTarget> judgementTargets,
+                out List<JudgementSegment> judgementSegments);
 
             List<PlayableEffectEvent> effects = CompileEffects(document, timingMap, issues);
 
@@ -161,6 +162,7 @@ namespace REmind.Charting
 
             playableNotes.Sort(CompareNotes);
             judgementTargets.Sort(CompareTargets);
+            judgementSegments.Sort(CompareSegments);
 
             PlayableChartSnapshot snapshot = new PlayableChartSnapshot(
                 timingMap,
@@ -169,6 +171,7 @@ namespace REmind.Charting
                 scratchCameraTiltMap,
                 playableNotes.ToArray(),
                 judgementTargets.ToArray(),
+                judgementSegments.ToArray(),
                 effects.ToArray());
             return new ChartCompileResult(snapshot, issues.ToArray());
         }
@@ -775,14 +778,18 @@ namespace REmind.Charting
             ScrollMap scrollMap,
             List<CompileIssue> issues,
             out List<PlayableNoteSnapshot> playableNotes,
-            out List<JudgementTarget> judgementTargets)
+            out List<JudgementTarget> judgementTargets,
+            out List<JudgementSegment> judgementSegments)
         {
             playableNotes = new List<PlayableNoteSnapshot>(
                 document.Notes.Count);
             judgementTargets = new List<JudgementTarget>(
                 document.Notes.Count * 2);
+            judgementSegments = new List<JudgementSegment>();
             HashSet<string> noteIds =
                 new HashSet<string>(StringComparer.Ordinal);
+            HashSet<(double TimeMs, int Lane)> occupiedStarts =
+                new HashSet<(double TimeMs, int Lane)>();
 
             for (int i = 0; i < document.Notes.Count; i++)
             {
@@ -795,6 +802,13 @@ namespace REmind.Charting
 
                 double startTimeMs =
                     timingMap.TimeAtPosition(note.StartPosition);
+                if (!occupiedStarts.Add((startTimeMs, note.Lane)))
+                {
+                    issues.Add(new CompileIssue("NOTE_LANE_TIME_COLLISION",
+                        $"Notes collide in lane {note.Lane + 1} at " +
+                        $"{startTimeMs:R} ms."));
+                    continue;
+                }
                 bool isLong = IsLong(note.Kind);
                 double? endTimeMs = isLong
                     ? timingMap.TimeAtPosition(note.EndPosition.Value)
@@ -804,7 +818,15 @@ namespace REmind.Charting
                 double? endFloorPosition = isLong
                     ? scrollMap.FloorPositionAtTime(endTimeMs.Value)
                     : (double?)null;
-                playableNotes.Add(new PlayableNoteSnapshot(
+                var points = new PlayableNotePoint[note.Points.Count];
+                for (int pointIndex = 0; pointIndex < points.Length; pointIndex++)
+                {
+                    ChartNotePoint point = note.Points[pointIndex];
+                    double pointTimeMs = timingMap.TimeAtPosition(point.Position);
+                    points[pointIndex] = new PlayableNotePoint(point,
+                        pointTimeMs, scrollMap.FloorPositionAtTime(pointTimeMs));
+                }
+                var playableNote = new PlayableNoteSnapshot(
                     note.Id,
                     note.Kind,
                     note.Lane,
@@ -813,7 +835,9 @@ namespace REmind.Charting
                     startTimeMs,
                     endTimeMs,
                     startFloorPosition,
-                    endFloorPosition));
+                    endFloorPosition,
+                    points);
+                playableNotes.Add(playableNote);
 
                 if (!isLong)
                 {
@@ -829,24 +853,32 @@ namespace REmind.Charting
                     continue;
                 }
 
-                judgementTargets.Add(new JudgementTarget(
-                    note.Id + "@start",
-                    note.Id,
-                    note.Kind,
-                    JudgementTargetKind.HoldStart,
-                    note.Lane,
-                    note.StartPosition,
-                    startTimeMs,
-                    startFloorPosition));
-                judgementTargets.Add(new JudgementTarget(
-                    note.Id + "@end",
-                    note.Id,
-                    note.Kind,
-                    JudgementTargetKind.HoldEnd,
-                    note.Lane,
-                    note.EndPosition.Value,
-                    endTimeMs.Value,
-                    endFloorPosition.Value));
+                for (int pointIndex = 0; pointIndex < points.Length; pointIndex++)
+                {
+                    PlayableNotePoint point = points[pointIndex];
+                    JudgementTargetKind kind = pointIndex == 0
+                        ? JudgementTargetKind.HoldStart
+                        : pointIndex == points.Length - 1
+                            ? JudgementTargetKind.HoldEnd
+                            : JudgementTargetKind.HoldMid;
+                    string suffix = kind == JudgementTargetKind.HoldStart
+                        ? "@start"
+                        : kind == JudgementTargetKind.HoldEnd
+                            ? "@end"
+                            : "@mid:" + point.Position;
+                    judgementTargets.Add(new JudgementTarget(
+                        note.Id + suffix,
+                        note.Id,
+                        note.Kind,
+                        kind,
+                        note.Lane,
+                        point.Position,
+                        point.TimeMs,
+                        point.FloorPosition));
+                    if (pointIndex > 0)
+                        judgementSegments.Add(new JudgementSegment(
+                            playableNote, pointIndex - 1));
+                }
             }
         }
 
@@ -920,6 +952,46 @@ namespace REmind.Charting
                 valid = false;
             }
 
+            if ((isLong ? note.Points.Count < 2 : note.Points.Count != 1) ||
+                note.Points[0] == null ||
+                note.Points[0].Position != note.StartPosition ||
+                note.Points[0].Kind != (isLong
+                    ? ChartNotePointKind.Start : ChartNotePointKind.Tap))
+            {
+                issues.Add(new CompileIssue("NOTE_POINTS",
+                    $"Note '{note.Id}' has an invalid start point."));
+                valid = false;
+            }
+            else
+            {
+                for (int pointIndex = 0; pointIndex < note.Points.Count; pointIndex++)
+                {
+                    ChartNotePoint point = note.Points[pointIndex];
+                    bool isLast = pointIndex == note.Points.Count - 1;
+                    if (point == null ||
+                        point.Position < note.StartPosition ||
+                        (pointIndex > 0 && point.Position <=
+                            note.Points[pointIndex - 1].Position) ||
+                        (isLong && (isLast
+                            ? point.Kind != ChartNotePointKind.End ||
+                              point.Position != note.EndPosition
+                            : pointIndex > 0 && point.Kind != ChartNotePointKind.Mid)) ||
+                        !Enum.IsDefined(typeof(ChartScratchMotionKind), point.Motion) ||
+                        point.MoveAmount < 0 ||
+                        point.MoveAmount > ChartScratchMotionLimits.MaximumMoveAmount ||
+                        (note.Kind != ChartNoteKind.Scratch &&
+                         note.Kind != ChartNoteKind.LongScratch &&
+                         (point.Motion != ChartScratchMotionKind.None ||
+                          point.MoveAmount != 0)))
+                    {
+                        issues.Add(new CompileIssue("NOTE_POINTS",
+                            $"Note '{note.Id}' has an invalid point at index {pointIndex}."));
+                        valid = false;
+                        break;
+                    }
+                }
+            }
+
             return valid;
         }
 
@@ -956,6 +1028,17 @@ namespace REmind.Charting
             return laneComparison != 0
                 ? laneComparison
                 : string.CompareOrdinal(left.Id, right.Id);
+        }
+
+        private static int CompareSegments(JudgementSegment left,
+            JudgementSegment right)
+        {
+            int timeComparison = left.StartTimeMs.CompareTo(right.StartTimeMs);
+            if (timeComparison != 0) return timeComparison;
+            int laneComparison = left.Lane.CompareTo(right.Lane);
+            if (laneComparison != 0) return laneComparison;
+            int idComparison = string.CompareOrdinal(left.NoteId, right.NoteId);
+            return idComparison != 0 ? idComparison : left.Index.CompareTo(right.Index);
         }
 
         private static ChartCompileResult Failed(

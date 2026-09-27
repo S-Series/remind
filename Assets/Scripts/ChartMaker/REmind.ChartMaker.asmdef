@@ -1,0 +1,22 @@
+{
+  "name": "REmind.ChartMaker",
+  "rootNamespace": "REmind.ChartMaker",
+  "references": [
+    "REmind.ChartCore",
+    "REmind.NoteRules",
+    "REmind.Presentation",
+    "REmind.Common",
+    "Unity.InputSystem",
+    "Unity.TextMeshPro",
+    "UnityEngine.UI"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": ["UNITY_EDITOR || REMIND_CHARTMAKER"],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

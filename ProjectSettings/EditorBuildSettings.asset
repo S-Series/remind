@@ -11,6 +11,30 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Scenes/Home.unity
     guid: 3f713db28951ea44e99d91be43c73d02
+  - enabled: 1
+    path: Assets/Scenes/Story.unity
+    guid: de9955f087ef4804bf6f64e4fdd6ab50
+  - enabled: 1
+    path: Assets/Scenes/Music.unity
+    guid: 91c06b3d2f7a4e649d64c49b52ee2e1a
+  - enabled: 1
+    path: Assets/Scenes/Character.unity
+    guid: e5af156c7b0d4d87a72066c0b487e21e
+  - enabled: 1
+    path: Assets/Scenes/ReMind.unity
+    guid: 3e82cda611a1494cb4bbd3df0a519784
+  - enabled: 1
+    path: Assets/Scenes/Option.unity
+    guid: 49e230a2a52e4452adee1b0f98549efb
+  - enabled: 1
+    path: Assets/Scenes/Settings.unity
+    guid: 4671c73ddf964db4ac00b98eb624312c
+  - enabled: 1
+    path: Assets/Scenes/Game.unity
+    guid: 50631281b26a3f941a57e8666356a98f
+  - enabled: 1
+    path: Assets/Scenes/MusicSelect.unity
+    guid: 9001c1085fea3244c9fd7aa1a0f74cdd
   m_configObjects:
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   m_UseUCBPForAssetBundles: 0

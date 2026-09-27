@@ -37,6 +37,7 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
     private Button openMusicButton;
     private Button saveChartButton;
     private Button saveAsChartButton;
+    private Button exportRuntimeButton;
     private Button exitButton;
     private Button undoButton;
     private Button redoButton;
@@ -203,6 +204,7 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
         openMusicButton = QueryButton("open-music-menu-item");
         saveChartButton = QueryButton("save-chart-menu-item");
         saveAsChartButton = QueryButton("save-as-chart-menu-item");
+        exportRuntimeButton = QueryButton("export-runtime-menu-item");
         exitButton = QueryButton("exit-chart-maker-menu-item");
         undoButton = QueryButton("undo-menu-item");
         redoButton = QueryButton("redo-menu-item");
@@ -251,6 +253,7 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
         openMusicButton.clicked += HandleOpenMusicRequested;
         saveChartButton.clicked += HandleSaveRequested;
         saveAsChartButton.clicked += HandleSaveAsRequested;
+        exportRuntimeButton.clicked += HandleExportRuntimeRequested;
         exitButton.clicked += HandleExitRequested;
         undoButton.clicked += HandleUndoRequested;
         redoButton.clicked += HandleRedoRequested;
@@ -313,6 +316,7 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
         openMusicButton.clicked -= HandleOpenMusicRequested;
         saveChartButton.clicked -= HandleSaveRequested;
         saveAsChartButton.clicked -= HandleSaveAsRequested;
+        exportRuntimeButton.clicked -= HandleExportRuntimeRequested;
         exitButton.clicked -= HandleExitRequested;
         undoButton.clicked -= HandleUndoRequested;
         redoButton.clicked -= HandleRedoRequested;
@@ -365,6 +369,7 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
                openMusicButton != null &&
                saveChartButton != null &&
                saveAsChartButton != null &&
+               exportRuntimeButton != null &&
                exitButton != null &&
                undoButton != null &&
                redoButton != null &&
@@ -600,6 +605,7 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
         openMusicButton?.SetEnabled(canEdit);
         saveChartButton?.SetEnabled(canEdit);
         saveAsChartButton?.SetEnabled(canEdit);
+        exportRuntimeButton?.SetEnabled(canEdit);
     }
 
     private void RefreshEditMenuState()
@@ -701,6 +707,38 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
             return;
         }
         TrySaveChartAs();
+    }
+
+    private void HandleExportRuntimeRequested()
+    {
+        HideMenus();
+        if (!TryRequireDocumentEditing("export the chart"))
+            return;
+        if (!chartToFile)
+        {
+            SetStatus("Export failed: ChartToFile was not found.", true);
+            return;
+        }
+        string initialPath = chartToFile.HasSavePath
+            ? chartToFile.CurrentFilePath
+            : Path.Combine(Application.persistentDataPath,
+                "Charts", ChartToFile.DefaultChartFileName);
+        initialPath = Path.Combine(Path.GetDirectoryName(initialPath),
+            Path.GetFileNameWithoutExtension(initialPath) + ".rmp.json");
+        string output = ChartFileDialog.SaveRuntimePackage(initialPath);
+        if (string.IsNullOrWhiteSpace(output))
+            return;
+        try
+        {
+            chartToFile.ExportRuntimePackageToPath(output);
+            SetStatus("Exported: " + Path.GetFileName(output), false);
+        }
+        catch (Exception exception)
+        {
+            SetStatus("Export failed: " + exception.Message, true);
+            Debug.LogError("Runtime package export failed: " + exception,
+                this);
+        }
     }
 
     private void HandleExitRequested()

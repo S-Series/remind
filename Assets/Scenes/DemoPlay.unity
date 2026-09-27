@@ -3945,8 +3945,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: d858a8d95b934e8ab8ef03e89769108e, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::REmind.Gameplay.Effects.LaneHitEffectPlayer
-  judgementSystem: {fileID: 1721417054}
+  m_EditorClassIdentifier: REmind.Presentation::REmind.Presentation.LaneHitEffectPlayer
   laneAnimators:
   - {fileID: 893603642}
   - {fileID: 553831418}
@@ -4254,9 +4253,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e36aea3d03c642dcbec37428e6e25f41, type: 3}
   m_Name:
   m_EditorClassIdentifier: Assembly-CSharp::REmind.Gameplay.Chart.GameplayChartSessionController
-  chartAsset: {fileID: 6727790516650051051, guid: dce71dddbf6e41f1a49a90b4c7eb58a5, type: 3}
-  effectParameterAsset: {fileID: 4900000, guid: 5c4b98f906124ae8ad8ecd771a10d020, type: 3}
-  beatsPerMeasure: 4
+  chartAsset: {fileID: 4900000, guid: 56c855444e969894d91c66ae24415e8b, type: 3}
   bundledMusicId: effect_gameplay_sample
   bundledSong: {fileID: 8300000, guid: 78bbcd18f077b6e45a2a3165214242fd, type: 3}
   bundledSongVolume: 0.5
@@ -4264,6 +4261,7 @@ MonoBehaviour:
   judgementSystem: {fileID: 1721417054}
   effectController: {fileID: 2200000005}
   sessionState: {fileID: 2200000004}
+  laneHitEffectPlayer: {fileID: 2025788887}
 --- !u!114 &2200000004
 MonoBehaviour:
   m_ObjectHideFlags: 0

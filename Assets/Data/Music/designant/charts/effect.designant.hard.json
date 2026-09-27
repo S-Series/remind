@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "musicId": "designant",
+  "difficultyId": "hard",
+  "revision": "e11177f93356444e9647c06aaa8ff3cb",
+  "parameters": [
+    {
+      "effectId": "fx_4ec3fd1261244e959635a929297449de",
+      "data": {
+        "durationMs": 400,
+        "offsetX": 0,
+        "offsetY": 0,
+        "rollDegrees": 0
+      }
+    }
+  ]
+}

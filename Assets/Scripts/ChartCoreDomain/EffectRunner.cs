@@ -22,6 +22,7 @@ namespace REmind.Charting
         private readonly PreparedEffectPlan plan;
         private readonly EffectSessionContext session;
         private readonly Effect[] effects;
+        private readonly object[] sessionParameters;
         private readonly List<int> active = new List<int>();
         private MusicGimmick gimmick;
         private int next;
@@ -45,6 +46,7 @@ namespace REmind.Charting
             this.plan = plan ?? throw new ArgumentNullException(nameof(plan));
             this.session = session ?? throw new ArgumentNullException(nameof(session));
             effects = new Effect[plan.Count];
+            sessionParameters = new object[plan.Count];
             try
             {
                 if (!EffectParameterValidation.Finite(startTimeMs)) throw new ArgumentOutOfRangeException(nameof(startTimeMs));
@@ -53,10 +55,12 @@ namespace REmind.Charting
                 this.startTimeMs = startTimeMs;
                 previousObservedTimeMs = startTimeMs;
                 // Check every capability/transition target before creating or running any effect.
-                foreach (PreparedEffectEntry entry in plan.Entries)
+                for (int i = 0; i < plan.Count; i++)
                 {
-                    entry.Registration.ValidateServices?.Invoke(session, entry.Parameters);
-                    entry.Command?.ValidateServices?.Invoke(session, entry.Parameters);
+                    PreparedEffectEntry entry = plan.Entries[i];
+                    sessionParameters[i] = entry.CreateSessionParameters();
+                    entry.Registration.ValidateServices?.Invoke(session, sessionParameters[i]);
+                    entry.Command?.ValidateServices?.Invoke(session, sessionParameters[i]);
                 }
                 if (plan.Gimmick != null)
                 {
@@ -67,8 +71,8 @@ namespace REmind.Charting
                 {
                     PreparedEffectEntry entry = plan.Entries[i];
                     effects[i] = entry.Command != null
-                        ? new CallMusicGimmickEffect(gimmick, entry.Command, entry.Parameters)
-                        : entry.Registration.Factory(entry.Parameters);
+                        ? new CallMusicGimmickEffect(gimmick, entry.Command, sessionParameters[i])
+                        : entry.Registration.Factory(sessionParameters[i]);
                     if (effects[i] == null) throw new InvalidOperationException("Effect factory returned null.");
                 }
             }

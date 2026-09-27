@@ -1,10 +1,13 @@
-using REmind.Data;
+using REmind.Charting;
 
 namespace REmind.Gameplay.Input.Judgement
 {
     public readonly struct NoteJudgementEvent
     {
-        public NoteData Note { get; }
+        public PlayableNoteSnapshot ChartNote { get; }
+        public int SegmentIndex { get; }
+        public string NoteId => ChartNote?.Id;
+        public int Lane => ChartNote?.Lane ?? -1;
         public JudgeResult Result { get; }
         public TimingSide TimingSide { get; }
         public double OffsetMs { get; }
@@ -16,16 +19,13 @@ namespace REmind.Gameplay.Input.Judgement
         public double EvaluationTimeMs { get; }
         public bool IsAutomaticMiss { get; }
 
-        public NoteJudgementEvent(
-            NoteData note,
-            JudgeResult result,
-            TimingSide timingSide,
-            double offsetMs,
-            double effectiveHitTimeMs,
-            double evaluationTimeMs,
+        public NoteJudgementEvent(PlayableNoteSnapshot note, int segmentIndex,
+            JudgeResult result, TimingSide timingSide, double offsetMs,
+            double effectiveHitTimeMs, double evaluationTimeMs,
             bool isAutomaticMiss)
         {
-            Note = note;
+            ChartNote = note;
+            SegmentIndex = segmentIndex;
             Result = result;
             TimingSide = timingSide;
             OffsetMs = offsetMs;

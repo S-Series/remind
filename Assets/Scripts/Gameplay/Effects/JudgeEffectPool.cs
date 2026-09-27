@@ -85,13 +85,15 @@ namespace REmind.Gameplay.Effects
             }
 
             if (!judgementSystem.TryGetRegisteredNoteView(
-                    judgementEvent.Note.Id,
+                    judgementEvent.NoteId,
                     out GameObject noteView))
             {
                 return;
             }
 
-            float noteX = noteView.transform.localPosition.x;
+            float noteX = noteView.transform.childCount > 0
+                ? noteView.transform.GetChild(0).localPosition.x
+                : noteView.transform.localPosition.x;
             JudgeEffect effect = pool.Get();
             effect.PlayAnimation(
                 judgementEvent.OffsetMs,

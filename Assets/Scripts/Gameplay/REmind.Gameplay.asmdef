@@ -1,0 +1,22 @@
+{
+  "name": "REmind.Gameplay",
+  "rootNamespace": "REmind.Gameplay",
+  "references": [
+    "REmind.ChartCore",
+    "REmind.NoteRules",
+    "REmind.Common",
+    "REmind.Presentation",
+    "Unity.InputSystem",
+    "Unity.TextMeshPro",
+    "UnityEngine.UI"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": ["UNITY_EDITOR || REMIND_GAME"],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

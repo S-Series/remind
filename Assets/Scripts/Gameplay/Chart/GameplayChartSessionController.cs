@@ -2,6 +2,7 @@ using System;
 using REmind.Charting;
 using REmind.Gameplay.Effects;
 using REmind.Gameplay.Input.Judgement;
+using REmind.Presentation;
 using UnityEngine;
 
 namespace REmind.Gameplay.Chart
@@ -14,10 +15,8 @@ namespace REmind.Gameplay.Chart
     [DisallowMultipleComponent]
     public sealed class GameplayChartSessionController : MonoBehaviour
     {
-        [Header("Bundled Chart")]
+        [Header("Bundled Runtime Package")]
         [SerializeField] private TextAsset chartAsset;
-        [SerializeField] private TextAsset effectParameterAsset;
-        [SerializeField, Min(1)] private int beatsPerMeasure = 4;
 
         [Header("Bundled Song")]
         [SerializeField] private string bundledMusicId;
@@ -29,8 +28,10 @@ namespace REmind.Gameplay.Chart
         [SerializeField] private NoteJudgementSystem judgementSystem;
         [SerializeField] private GameplayChartEffectController effectController;
         [SerializeField] private GameplaySessionState sessionState;
+        [SerializeField] private LaneHitEffectPlayer laneHitEffectPlayer;
 
         private bool playbackGuardBound;
+        private bool hitEffectBound;
 
         public PreparedGameplayChart CurrentChart { get; private set; }
         public string LastError { get; private set; }
@@ -56,23 +57,18 @@ namespace REmind.Gameplay.Chart
 
             return TryPrepareInternal(
                 chartAsset.text,
-                effectParameterAsset ? effectParameterAsset.text : null,
                 validateBundledSong: true);
         }
 
-        public bool TryPrepare(
-            string chartJson,
-            string effectParameterJson)
+        public bool TryPrepare(string runtimePackageJson)
         {
             return TryPrepareInternal(
-                chartJson,
-                effectParameterJson,
+                runtimePackageJson,
                 validateBundledSong: false);
         }
 
         private bool TryPrepareInternal(
-            string chartJson,
-            string effectParameterJson,
+            string runtimePackageJson,
             bool validateBundledSong)
         {
             if (!ResolveReferences(out string referenceError))
@@ -92,9 +88,7 @@ namespace REmind.Gameplay.Chart
             try
             {
                 prepared = GameplayChartPreparation.Prepare(
-                    chartJson,
-                    effectParameterJson,
-                    beatsPerMeasure);
+                    runtimePackageJson);
             }
             catch (Exception exception)
             {
@@ -137,20 +131,32 @@ namespace REmind.Gameplay.Chart
             }
 
             if (!sessionState.TryConfigureChart(
-                    prepared.Notes.Count,
+                    prepared.Snapshot.Notes.Count +
+                        prepared.Snapshot.JudgementSegments.Count -
+                        CountLongNotes(prepared.Snapshot),
                     out string stateError))
             {
                 return FailInvalidating(stateError);
             }
 
             if (!judgementSystem.Initialize(
-                    ChartLaneLayout.LaneCount,
-                    prepared.Notes,
+                    prepared.Snapshot,
                     prepared.ChartOffsetMs))
             {
                 return FailInvalidating(
                     "The prepared Snapshot could not initialize judgement.");
             }
+
+            double lastJudgementMs = 0d;
+            foreach (JudgementTarget target in
+                prepared.Snapshot.JudgementTargets)
+                lastJudgementMs = Math.Max(lastJudgementMs,
+                    target.TargetTimeMs + prepared.ChartOffsetMs);
+            if (gameManager.GamePlay.CurrentSong != null &&
+                !gameManager.GamePlay.SetCompletionTimeMs(
+                    lastJudgementMs + 1000d))
+                return FailInvalidating(
+                    "Could not extend playback through the final chart note.");
 
             effectController.GameState = sessionState;
             if (!effectController.Prepare(
@@ -172,10 +178,16 @@ namespace REmind.Gameplay.Chart
         private void OnEnable()
         {
             ResolveReferences(out _);
+            if (judgementSystem && laneHitEffectPlayer && !hitEffectBound)
+            {
+                judgementSystem.NoteJudged += HandleNoteJudged;
+                hitEffectBound = true;
+            }
         }
 
         private void OnDisable()
         {
+            UnbindHitEffect();
             // Disabling the chart owner is a session boundary. Keep the start
             // guard subscribed (until destruction) so a stale Effect plan can
             // never start while this owner is disabled.
@@ -194,12 +206,35 @@ namespace REmind.Gameplay.Chart
 
         private void OnDestroy()
         {
+            UnbindHitEffect();
             if (playbackGuardBound && gameManager && gameManager.GamePlay)
             {
                 gameManager.GamePlay.PlaybackStarting -=
                     HandlePlaybackStarting;
             }
             playbackGuardBound = false;
+        }
+
+        private void HandleNoteJudged(NoteJudgementEvent judgementEvent)
+        {
+            if (!judgementEvent.IsAutomaticMiss && laneHitEffectPlayer)
+                laneHitEffectPlayer.Play(judgementEvent.Lane);
+        }
+
+        private static int CountLongNotes(PlayableChartSnapshot snapshot)
+        {
+            int count = 0;
+            foreach (PlayableNoteSnapshot note in snapshot.Notes)
+                if (note.Points.Count > 1) count++;
+            return count;
+        }
+
+        private void UnbindHitEffect()
+        {
+            if (!hitEffectBound) return;
+            if (judgementSystem)
+                judgementSystem.NoteJudged -= HandleNoteJudged;
+            hitEffectBound = false;
         }
 
         private bool ResolveReferences(out string error)

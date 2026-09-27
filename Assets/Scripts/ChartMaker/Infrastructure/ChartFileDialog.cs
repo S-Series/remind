@@ -89,6 +89,22 @@ internal static class ChartFileDialog
 #endif
     }
 
+    public static string SaveRuntimePackage(string initialPath)
+    {
+#if UNITY_EDITOR
+        return EditorUtility.SaveFilePanel("Export Runtime Package",
+            GetInitialDirectory(initialPath),
+            Path.GetFileName(initialPath), "json");
+#elif UNITY_STANDALONE_WIN
+        return ShowWindowsDialog(true, initialPath,
+            "Export Runtime Package",
+            "REmind Runtime Package (*.json)\0*.json\0\0", "json");
+#else
+        Debug.LogError("Runtime file dialogs are supported on Windows only.");
+        return null;
+#endif
+    }
+
     private static string GetInitialDirectory(string initialPath)
     {
         if (!string.IsNullOrWhiteSpace(initialPath))

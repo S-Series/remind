@@ -24,6 +24,21 @@ using UnityEngine.SceneManagement;
 /// </summary>
 public static class REmindBaselineChecks
 {
+    private static object DecodeRuntimeEffect(RuntimeChartPackage package,
+        string effectId)
+    {
+        foreach (PlayableEffectEvent effect in package.Snapshot.EffectEvents)
+            if (effect.EffectId == effectId &&
+                package.EffectParameterJson.TryGetValue(effectId,
+                    out string json) &&
+                ChartEffectParameterCodec.TryDecode(effect.EffectTypeId,
+                    effect.CommandId, package.GimmickId, json,
+                    out object parameters, out _))
+                return parameters;
+        throw new InvalidOperationException(
+            "Runtime Effect is missing or invalid: " + effectId);
+    }
+
     public static void Run(string name)
     {
         if (EditorApplication.isPlaying) throw new InvalidOperationException("Run these checks in EditMode only.");
@@ -49,6 +64,43 @@ public static class REmindBaselineChecks
         Require(compiled.Snapshot.Notes.Count == 5, "Expected Hold, LongScratch, Air, Tap and Scratch.");
         Require(compiled.Snapshot.JudgementTargets.Count == 7, "Hold/Scratch start/end targets changed.");
         Require(compiled.Snapshot.EffectEvents.Count == 0, "Ordinary legacy chart acquired executable effects.");
+    }
+
+    private static void LongScratchAdapter_PreservesIntermediatePoint()
+    {
+        var start = new ChartHolder(0, 0);
+        start.noteTypes[ChartHolder.MainLineCount] = NoteType.LongScratch;
+        start.scratchPointTypes[0] = ScratchPointType.Start;
+        start.scratchMotions[0] = new ScratchMotionData(12,
+            ScratchMotionType.Gradual);
+
+        var middle = new ChartHolder(0, 2400);
+        middle.noteTypes[ChartHolder.MainLineCount] = NoteType.LongScratch;
+        middle.scratchPointTypes[0] = ScratchPointType.Mid;
+        middle.scratchMotions[0] = new ScratchMotionData(7,
+            ScratchMotionType.Release);
+
+        var end = new ChartHolder(1, 0);
+        end.noteTypes[ChartHolder.MainLineCount] = NoteType.LongScratch;
+        end.scratchPointTypes[0] = ScratchPointType.End;
+
+        ChartHolderDocumentBuildResult built = ChartHolderDocumentAdapter.Build(
+            new[] { start, middle, end }, 120d, 4);
+        Require(built.Succeeded, "Long Scratch adapter conversion failed.");
+        ChartCompileResult compiled = ChartCompiler.Compile(built.Document);
+        Require(compiled.Succeeded && compiled.Snapshot.Notes.Count == 1,
+            "Long Scratch point chain did not compile.");
+        PlayableNoteSnapshot note = compiled.Snapshot.Notes[0];
+        Require(note.Points.Count == 3 &&
+                compiled.Snapshot.JudgementTargets.Count == 3 &&
+                compiled.Snapshot.JudgementSegments.Count == 2 &&
+                compiled.Snapshot.JudgementTargets[1].Kind ==
+                    JudgementTargetKind.HoldMid &&
+                note.Points[1].Kind == ChartNotePointKind.Mid &&
+                note.Points[1].Motion == ChartScratchMotionKind.Release &&
+                note.Points[1].MoveAmount == 7 &&
+                Math.Abs(note.Points[1].TimeMs - 1000d) < 0.000001d,
+            "Long Scratch Mid motion or chart time was lost.");
     }
 
     private static void LegacyEffect_RemainsUnresolved()
@@ -429,7 +481,7 @@ public static class REmindBaselineChecks
     {
         WithJudgement((system, rule) =>
         {
-            Require(system.Initialize(10, new[] { Note("tap", 0, 100) }), "Initialization failed.");
+            Require(InitializeJudgement(system, new[] { Note("tap", 0, 100) }), "Initialization failed.");
             var results = new List<NoteJudgementEvent>();
             system.NoteJudged += results.Add;
             Enqueue(system, 0, 100, 0);
@@ -439,11 +491,69 @@ public static class REmindBaselineChecks
         });
     }
 
+    private static void Judgement_InputDeliveredAfterPreviousFrame()
+    {
+        WithJudgement((system, rule) =>
+        {
+            Require(InitializeJudgement(system,
+                new[] { Note("late-delivery", 0, 100) }),
+                "Initialization failed.");
+            var plan = EffectPreparation.Prepare(
+                Array.Empty<PlayableEffectEvent>(), null,
+                EffectRegistry.CreateDefault()).Plan;
+            using var runner = new EffectRunner(plan,
+                new EffectSessionContext("test", "default",
+                    EffectExecutionMode.Gameplay));
+            system.AttachEffectRunner(runner);
+            var results = new List<NoteJudgementEvent>();
+            system.NoteJudged += results.Add;
+
+            system.ProcessFrame(120d);
+            Enqueue(system, 0, 100d, 0);
+            system.ProcessFrame(140d);
+            Require(system.LastTimelineError == null &&
+                    system.DiscardedLateInputCount == 0 &&
+                    results.Count == 1 &&
+                    results[0].Result == JudgeResult.Perfect,
+                "A device input delivered after the previous frame " +
+                "incorrectly stopped playback or lost its original time.");
+        });
+
+        WithJudgement((system, rule) =>
+        {
+            Require(InitializeJudgement(system,
+                new[] { Note("effect-boundary", 0, 100) }),
+                "Initialization failed.");
+            var registry = new EffectRegistry();
+            registry.RegisterEffect(new EffectRegistration("record",
+                "Record", null, false, null, null,
+                _ => new RecordingEffect(() => { })));
+            var document = new ChartDocument(4800, 4, 120);
+            document.EffectEvents.Add(new ChartEffectEvent(264,
+                "boundary", "record", "", 0));
+            var plan = EffectPreparation.Prepare(
+                ChartCompiler.Compile(document).Snapshot.EffectEvents,
+                null, registry).Plan;
+            using var runner = new EffectRunner(plan,
+                new EffectSessionContext("test", "default",
+                    EffectExecutionMode.Gameplay));
+            system.AttachEffectRunner(runner);
+            system.ProcessFrame(120d);
+            Enqueue(system, 0, 100d, 0);
+            system.ProcessFrame(140d);
+            Require(system.LastTimelineError == null &&
+                    system.DiscardedLateInputCount == 1 &&
+                    system.PendingNoteCount == 1,
+                "An input older than a committed Effect was replayed " +
+                "or stopped the entire song.");
+        });
+    }
+
     private static void Judgement_OffsetsAndExactMissBoundary()
     {
         WithJudgement((system, rule) =>
         {
-            system.Initialize(10, new[] { Note("tap", 0, 100) }, 100);
+            InitializeJudgement(system, new[] { Note("tap", 0, 100) }, 100);
             system.SetUserOffsetMs(25);
             system.ProcessFrame(375); // 100 note + 100 chart offset + 25 input offset + 150 miss window.
             Require(system.PendingNoteCount == 1, "Automatic Miss must be strictly outside its window.");
@@ -462,7 +572,7 @@ public static class REmindBaselineChecks
     {
         WithJudgement((system, rule) =>
         {
-            system.Initialize(10, new[] { Note("tap", 0, 100) });
+            InitializeJudgement(system, new[] { Note("tap", 0, 100) });
             var order = new List<string>();
             var registry = new EffectRegistry();
             registry.RegisterEffect(new EffectRegistration("record", "Record", null, false, null, null,
@@ -483,7 +593,7 @@ public static class REmindBaselineChecks
     {
         WithJudgement((system, rule) =>
         {
-            Require(system.Initialize(10, new[]
+            Require(InitializeJudgement(system, new[]
             {
                 Note("input-second", 0, 100),
                 Note("input-first", 1, 100),
@@ -515,7 +625,7 @@ public static class REmindBaselineChecks
                     EffectExecutionMode.Gameplay));
             system.AttachEffectRunner(runner);
             system.NoteJudged += value => order.Add(
-                value.IsAutomaticMiss ? "automatic" : value.Note.Id);
+                value.IsAutomaticMiss ? "automatic" : value.NoteId);
             // Same timestamp: sequence zero must win even though its lane is higher.
             Enqueue(system, 1, 250, 0);
             Enqueue(system, 0, 250, 1);
@@ -571,7 +681,7 @@ public static class REmindBaselineChecks
     {
         WithJudgement((system, rule) =>
         {
-            Require(system.Initialize(10, new[] { Note("tap", 0, 100) }),
+            Require(InitializeJudgement(system, new[] { Note("tap", 0, 100) }),
                 "Initialization failed.");
             var plan = EffectPreparation.Prepare(
                 Array.Empty<PlayableEffectEvent>(), null,
@@ -661,7 +771,7 @@ public static class REmindBaselineChecks
             var system = go.AddComponent<NoteJudgementSystem>();
             SetField(system, "gameManager", manager);
             SetField(system, "gameRule", rule);
-            Require(system.Initialize(10, Array.Empty<NoteData>()),
+            Require(InitializeJudgement(system, Array.Empty<ChartDocumentNote>()),
                 "Judgement initialization failed.");
             controller = go.AddComponent<GameplayChartEffectController>();
             SetField(controller, "gameManager", manager);
@@ -1145,7 +1255,7 @@ public static class REmindBaselineChecks
     {
         WithJudgement((system, rule) =>
         {
-            system.Initialize(10, new[] { Note("a", 0, 0), Note("b", 1, 100), Note("c", 2, 200) });
+            InitializeJudgement(system, new[] { Note("a", 0, 0), Note("b", 1, 100), Note("c", 2, 200) });
             var document = new ChartDocument(4800, 4, 120);
             document.EffectEvents.Add(new ChartEffectEvent(240, "begin", "music.call", "begin-section", 0));
             document.EffectEvents.Add(new ChartEffectEvent(480, "end", "music.call", "end-section", 0));
@@ -1157,7 +1267,7 @@ public static class REmindBaselineChecks
             system.AttachEffectRunner(runner);
             var deltas = new List<int>();
             system.NoteJudged += result => deltas.Add(rule.GetHealthDelta(result.Result,
-                new RuleContext(100, 0, result.Note.Type, false, false, false, result.EffectiveHitTimeMs + result.OffsetMs)));
+                new RuleContext(100, 0, NoteType.Tap, false, false, false, result.EffectiveHitTimeMs + result.OffsetMs)));
             Enqueue(system, 0, 80, 0);
             Enqueue(system, 1, 180, 1);
             Enqueue(system, 2, 280, 2);
@@ -1170,10 +1280,10 @@ public static class REmindBaselineChecks
     {
         WithJudgement((system, rule) =>
         {
-            system.Initialize(10, new[] { Note("late", 0, 200), Note("early", 1, 100) });
+            InitializeJudgement(system, new[] { Note("late", 0, 200), Note("early", 1, 100) });
             system.SetAutoPlayEnabled(true);
             var ids = new List<string>();
-            system.NoteJudged += value => ids.Add(value.Note.Id);
+            system.NoteJudged += value => ids.Add(value.NoteId);
             system.ProcessFrame(300);
             Require(string.Join(",", ids) == "early,late", "AutoPlay stopped processing in chronological order.");
             system.ResetJudgements(false);
@@ -1431,15 +1541,36 @@ public static class REmindBaselineChecks
             "\"musicStartCorrectionMs\": -125.0");
 
         PreparedGameplayChart prepared = GameplayChartPreparation.Prepare(
-            correctedChartText,
-            parameterText,
-            4);
+            ChartMakerRuntimePackageExporter.Export(correctedChartText,
+                parameterText, 4));
+        RuntimeChartPackage runtimePackage = RuntimeChartPackageCodec.Import(
+            ChartMakerRuntimePackageExporter.Export(correctedChartText,
+                parameterText, 4));
+        Require(runtimePackage.MusicId == prepared.Metadata.MusicId &&
+                runtimePackage.DifficultyId ==
+                prepared.Metadata.DifficultyId &&
+                Math.Abs(runtimePackage.ChartOffsetMs -
+                    prepared.ChartOffsetMs) < 0.000001d &&
+                runtimePackage.Snapshot.Notes.Count ==
+                prepared.Snapshot.Notes.Count &&
+                runtimePackage.Snapshot.EffectEvents.Count ==
+                prepared.Snapshot.EffectEvents.Count,
+            "Runtime package changed the chart metadata or compiled event count.");
+        for (int index = 0; index < prepared.Snapshot.Notes.Count; index++)
+            Require(Math.Abs(runtimePackage.Snapshot.Notes[index].StartTimeMs -
+                    prepared.Snapshot.Notes[index].StartTimeMs) < 0.000001d,
+                "Runtime package changed a note's chart time.");
+        for (int index = 0;
+             index < prepared.Snapshot.EffectEvents.Count; index++)
+            Require(Math.Abs(runtimePackage.Snapshot.EffectEvents[index].TimeMs -
+                    prepared.Snapshot.EffectEvents[index].TimeMs) < 0.000001d,
+                "Runtime package changed an Effect's chart time.");
         Require(prepared.Snapshot.EffectEvents.Count == 4,
             "Gameplay did not compile every Effect from the shared Snapshot.");
-        Require(prepared.Notes.Count == 2 &&
-                prepared.Notes[0].Type == NoteType.Tap &&
-                prepared.Notes[1].Type == NoteType.Tap,
-            "Gameplay judgement notes did not come from the compiled Snapshot.");
+        Require(prepared.Snapshot.Notes.Count == 2 &&
+                prepared.Snapshot.Notes[0].Kind == ChartNoteKind.Tap &&
+                prepared.Snapshot.Notes[1].Kind == ChartNoteKind.Tap,
+            "Gameplay judgement contract did not preserve the compiled Snapshot.");
         Require(Math.Abs(prepared.ChartOffsetMs - 125d) < 0.000001,
             "Gameplay did not invert ChartMaker's music-start correction.");
         Require(prepared.Metadata.MusicId == "effect_gameplay_sample" &&
@@ -1447,21 +1578,24 @@ public static class REmindBaselineChecks
                 prepared.Metadata.GimmickId == "sample",
             "Gameplay metadata changed while preparing the matching pair.");
 
-        NoteData alignedNote = prepared.Notes[1];
+        PlayableNoteSnapshot alignedNote = prepared.Snapshot.Notes[1];
         PlayableEffectEvent alignedEffect =
             prepared.Snapshot.EffectEvents[2];
         Require(alignedEffect.EffectId == "fx_stage6_count" &&
-                Math.Abs(alignedNote.TimelineTimeMs -
+                Math.Abs(alignedNote.StartTimeMs -
                     alignedEffect.TimeMs) < 0.000000001d &&
-                Math.Abs(alignedNote.TimelineTimeMs -
-                    alignedNote.TimeMs) > 0.1d,
-            "Gameplay rounded a Snapshot note away from its same-position Effect.");
+                alignedNote.Points.Count == 1,
+            "Gameplay moved a Snapshot note away from its same-position Effect.");
 
         WithJudgement((system, rule) =>
         {
+            var document = new ChartDocument(4800, 4, 225);
+            document.Notes.Add(new ChartDocumentNote(
+                alignedNote.Id, ChartNoteKind.Tap, alignedNote.Lane, 8400));
+            document.EffectEvents.Add(new ChartEffectEvent(
+                8400, "fractional-effect", "fractional-record", "", 0));
             Require(system.Initialize(
-                    ChartLaneLayout.LaneCount,
-                    new[] { alignedNote }),
+                    ChartCompiler.Compile(document).Snapshot),
                 "Could not initialize the fractional Snapshot note.");
             system.SetAutoPlayEnabled(true);
             var order = new List<string>();
@@ -1474,13 +1608,6 @@ public static class REmindBaselineChecks
                 null,
                 null,
                 _ => new RecordingEffect(() => order.Add("effect"))));
-            var document = new ChartDocument(4800, 4, 225);
-            document.EffectEvents.Add(new ChartEffectEvent(
-                8400,
-                "fractional-effect",
-                "fractional-record",
-                "",
-                0));
             PreparedEffectPlan plan = EffectPreparation.Prepare(
                 ChartCompiler.Compile(document).Snapshot.EffectEvents,
                 null,
@@ -1501,7 +1628,7 @@ public static class REmindBaselineChecks
         bool mismatchRejected = false;
         try
         {
-            GameplayChartPreparation.Prepare(
+            ChartMakerRuntimePackageExporter.Export(
                 chartText,
                 parameterText.Replace(
                     "stage6_demo_004",
@@ -1564,7 +1691,9 @@ public static class REmindBaselineChecks
             SetField(chartSession, "effectController", effects);
             SetField(chartSession, "sessionState", state);
 
-            Require(chartSession.TryPrepare(chartText, parameterText),
+            string packageText = ChartMakerRuntimePackageExporter.Export(
+                chartText, parameterText);
+            Require(chartSession.TryPrepare(packageText),
                 "The valid gameplay chart could not establish the fixture: " +
                 chartSession.LastError);
             Require(chartSession.IsPrepared && judgement.IsInitialized &&
@@ -1578,7 +1707,7 @@ public static class REmindBaselineChecks
                 LogType.Error,
                 "GameplaySessionState requires GameManager, GamePlay, " +
                 "NoteJudgementSystem and GameRule references.");
-            Require(!chartSession.TryPrepare(chartText, parameterText),
+            Require(!chartSession.TryPrepare(packageText),
                 "A replacement with incomplete live state unexpectedly succeeded.");
             Require(!chartSession.IsPrepared && !judgement.IsInitialized &&
                     !state.HasPreparedChart &&
@@ -1644,7 +1773,9 @@ public static class REmindBaselineChecks
             SetField(chartSession, "sessionState", state);
 
             go.SetActive(true);
-            Require(chartSession.TryPrepare(chartText, parameterText),
+            Require(chartSession.TryPrepare(
+                    ChartMakerRuntimePackageExporter.Export(chartText,
+                        parameterText)),
                 "The valid gameplay chart could not establish the disabled-service fixture: " +
                 chartSession.LastError);
             song = AudioClip.Create(
@@ -1730,10 +1861,8 @@ public static class REmindBaselineChecks
             SetField(state, "judgementSystem", judgement);
             SetField(state, "gameRule", rule);
 
-            Require(judgement.Initialize(
-                    ChartLaneLayout.LaneCount,
-                    new[] { Note("stage6-state-note", 0, 100) },
-                    0d),
+            Require(InitializeJudgement(judgement,
+                    new[] { Note("stage6-state-note", 0, 100) }),
                 "Could not initialize the Stage 6 state judgement fixture.");
             judgement.SetAutoPlayEnabled(true);
             Require(state.TryConfigureChart(1, out string error),
@@ -1773,6 +1902,30 @@ public static class REmindBaselineChecks
                     Math.Abs(state.CurrentHealth - rule.BaseInitialHealth) <
                         0.000001,
                 "Restart did not create fresh gameplay rule state.");
+
+            var longChart = new ChartDocument(4800, 4, 120);
+            var longScratch = new ChartDocumentNote("segments",
+                ChartNoteKind.LongScratch,
+                (int)ChartLane.GroundLeft, 2400, 9600);
+            longScratch.Points.Insert(1, new ChartNotePoint(4800,
+                ChartNotePointKind.Mid));
+            longScratch.Points.Insert(2, new ChartNotePoint(7200,
+                ChartNotePointKind.Mid));
+            longChart.Notes.Add(longScratch);
+            ChartCompileResult compiled = ChartCompiler.Compile(longChart);
+            Require(compiled.Succeeded &&
+                    compiled.Snapshot.JudgementSegments.Count == 3 &&
+                    judgement.Initialize(compiled.Snapshot) &&
+                    state.TryConfigureChart(3, out error),
+                "Could not prepare three Long Scratch scoring intervals: " +
+                error);
+            judgement.SetAutoPlayEnabled(true);
+            judgement.ProcessFrame(4500d);
+            Require(state.JudgedNoteCount == 3 &&
+                    state.CurrentCombo == 3 && state.IsCleared &&
+                    Math.Abs(state.CurrentScore - rule.MaxScore) < 1d,
+                "Long Scratch intervals were not each counted in " +
+                "score, combo and clear state.");
         }
         finally
         {
@@ -1820,22 +1973,17 @@ public static class REmindBaselineChecks
             var chartAsset = (TextAsset)GetFieldValue(
                 chartSession,
                 "chartAsset");
-            var parameterAsset = (TextAsset)GetFieldValue(
-                chartSession,
-                "effectParameterAsset");
-            Require(chartAsset && parameterAsset,
-                "DemoPlay does not reference its bundled .rd/Effect JSON pair.");
+            Require(chartAsset,
+                "DemoPlay does not reference a bundled runtime package.");
             PreparedGameplayChart prepared = GameplayChartPreparation.Prepare(
-                chartAsset.text,
-                parameterAsset.text,
-                (int)GetFieldValue(chartSession, "beatsPerMeasure"));
+                chartAsset.text);
             Require(prepared.Snapshot.EffectEvents.Count == 4 &&
-                    prepared.Notes.Count == 2,
+                    prepared.Snapshot.Notes.Count == 2,
                 "The pair wired into DemoPlay is not actually gameplay-ready.");
             PlayableEffectEvent cameraEvent = null;
-            foreach (NoteData note in prepared.Notes)
+            foreach (PlayableNoteSnapshot note in prepared.Snapshot.Notes)
             {
-                Require(note.TimelineTimeMs > 1000d,
+                Require(note.StartTimeMs > 1000d,
                     "The bundled sample contains a gameplay note at or before " +
                     "the one-second loading guard.");
             }
@@ -1850,14 +1998,10 @@ public static class REmindBaselineChecks
                     cameraEvent = effectEvent;
                 }
             }
-            ChartFile inspectedChart = ChartFileCodec.Parse(chartAsset.text);
-            ChartEffectFileStore.ApplyParameters(
-                inspectedChart,
-                parameterAsset.text);
+            RuntimeChartPackage inspectedChart =
+                RuntimeChartPackageCodec.Import(chartAsset.text);
             var cameraParameters = (CameraEffectParameters)
-                ChartEffectJsonCodec.BuildParameterMap(
-                    inspectedChart.chartDatas,
-                    prepared.Metadata.GimmickId)["fx_stage6_camera"];
+                DecodeRuntimeEffect(inspectedChart, "fx_stage6_camera");
             Require(cameraEvent != null &&
                     cameraEvent.TimeMs >= 1500d &&
                     cameraEvent.TimeMs <= 2500d &&
@@ -1925,6 +2069,68 @@ public static class REmindBaselineChecks
             {
                 EditorSceneManager.CloseScene(scene, true);
             }
+        }
+    }
+
+    private static void GameScene_WiresFullSongAndFlow()
+    {
+        const string scenePath = "Assets/Scenes/Game.unity";
+        Scene scene = SceneManager.GetSceneByPath(scenePath);
+        bool opened = !scene.IsValid() || !scene.isLoaded;
+        if (opened)
+            scene = EditorSceneManager.OpenScene(scenePath,
+                OpenSceneMode.Additive);
+        try
+        {
+            GameFlowController flow = FindSingleInScene<GameFlowController>(
+                scene);
+            DemoPlayController presenter =
+                FindSingleInScene<DemoPlayController>(scene);
+            GameplayChartSessionController charts =
+                FindSingleInScene<GameplayChartSessionController>(scene);
+            GameplaySessionState state =
+                FindSingleInScene<GameplaySessionState>(scene);
+            NoteJudgementSystem judgement =
+                FindSingleInScene<NoteJudgementSystem>(scene);
+            GameManager manager = FindSingleInScene<GameManager>(scene);
+            Test oldUi = FindSingleInScene<Test>(scene);
+            Require(flow && flow.gameObject.activeInHierarchy &&
+                flow.enabled && oldUi && !oldUi.enabled &&
+                !(bool)GetFieldValue(presenter, "playOnReady"),
+                "Game scene still starts as the old DemoPlay harness.");
+            Require(ReferenceEquals(GetFieldValue(flow, "gameManager"),
+                    manager) &&
+                ReferenceEquals(GetFieldValue(flow, "notePresenter"),
+                    presenter) &&
+                ReferenceEquals(GetFieldValue(flow, "chartSession"),
+                    charts) &&
+                ReferenceEquals(GetFieldValue(flow, "sessionState"),
+                    state) &&
+                ReferenceEquals(GetFieldValue(flow, "judgementSystem"),
+                    judgement),
+                "Game menu, playback, judgement and result state are disconnected.");
+            var asset = (TextAsset)GetFieldValue(charts, "chartAsset");
+            Require(asset != null &&
+                (string)GetFieldValue(charts, "bundledMusicId") == "chroma-i",
+                "The bundled playable chart and song ID are not paired.");
+            PreparedGameplayChart prepared =
+                GameplayChartPreparation.Prepare(asset.text);
+            Require(prepared.Snapshot.Notes.Count == 302 &&
+                prepared.Snapshot.JudgementTargets.Count == 302 &&
+                prepared.Metadata.MusicId == "chroma-i" &&
+                prepared.ChartOffsetMs == 1024d,
+                "The full sample chart was not compiled into the Game scene.");
+            var profiles = (NoteJudgeWindowProfile[])GetFieldValue(
+                judgement, "noteWindowProfiles");
+            Require(profiles.Length == 5 &&
+                profiles[3] &&
+                profiles[3].NoteKind == ChartNoteKind.LongScratch,
+                "Long Scratch does not have a separate window asset.");
+        }
+        finally
+        {
+            if (opened && scene.IsValid() && scene.isLoaded)
+                EditorSceneManager.CloseScene(scene, true);
         }
     }
 
@@ -2077,8 +2283,23 @@ public static class REmindBaselineChecks
         return matches[0];
     }
 
-    private static NoteData Note(string id, int lane, long time) => (NoteData)Activator.CreateInstance(typeof(NoteData),
-        BindingFlags.Instance | BindingFlags.NonPublic, null, new object[] { id, NoteType.Tap, lane, time, 0L, null }, null);
+    private static ChartDocumentNote Note(string id, int lane, long time)
+    {
+        int position = checked((int)(time * 12L / 5L));
+        Require(position * 5L == time * 12L,
+            "Fixture note time cannot be represented exactly.");
+        return new ChartDocumentNote(id, ChartNoteKind.Tap, lane, position);
+    }
+
+    private static bool InitializeJudgement(NoteJudgementSystem system,
+        IReadOnlyList<ChartDocumentNote> notes, double offsetMs = 0d)
+    {
+        var document = new ChartDocument(4800, 4, 120);
+        foreach (ChartDocumentNote note in notes) document.Notes.Add(note);
+        ChartCompileResult compiled = ChartCompiler.Compile(document);
+        return compiled.Succeeded && system.Initialize(compiled.Snapshot,
+            offsetMs);
+    }
     private static void Enqueue(NoteJudgementSystem system, int lane, double chartTime, long sequence)
     {
         var queue = (IList)typeof(NoteJudgementSystem).GetField("pendingInputs", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(system);

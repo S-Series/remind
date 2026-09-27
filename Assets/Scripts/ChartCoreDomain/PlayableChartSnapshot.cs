@@ -7,7 +7,29 @@ namespace REmind.Charting
     {
         Tap = 0,
         HoldStart = 1,
-        HoldEnd = 2
+        HoldEnd = 2,
+        HoldMid = 3
+    }
+
+    public sealed class PlayableNotePoint
+    {
+        internal PlayableNotePoint(ChartNotePoint source, double timeMs,
+            double floorPosition)
+        {
+            Position = source.Position;
+            Kind = source.Kind;
+            Motion = source.Motion;
+            MoveAmount = source.MoveAmount;
+            TimeMs = timeMs;
+            FloorPosition = floorPosition;
+        }
+
+        public int Position { get; }
+        public ChartNotePointKind Kind { get; }
+        public ChartScratchMotionKind Motion { get; }
+        public int MoveAmount { get; }
+        public double TimeMs { get; }
+        public double FloorPosition { get; }
     }
 
     public sealed class PlayableNoteSnapshot
@@ -21,7 +43,8 @@ namespace REmind.Charting
             double startTimeMs,
             double? endTimeMs,
             double startFloorPosition,
-            double? endFloorPosition)
+            double? endFloorPosition,
+            PlayableNotePoint[] points)
         {
             Id = id;
             Kind = kind;
@@ -32,6 +55,7 @@ namespace REmind.Charting
             EndTimeMs = endTimeMs;
             StartFloorPosition = startFloorPosition;
             EndFloorPosition = endFloorPosition;
+            Points = Array.AsReadOnly((PlayableNotePoint[])points.Clone());
         }
 
         public string Id { get; }
@@ -43,6 +67,7 @@ namespace REmind.Charting
         public double? EndTimeMs { get; }
         public double StartFloorPosition { get; }
         public double? EndFloorPosition { get; }
+        public IReadOnlyList<PlayableNotePoint> Points { get; }
     }
 
     public sealed class JudgementTarget
@@ -77,6 +102,31 @@ namespace REmind.Charting
         public double FloorPosition { get; }
     }
 
+    /// <summary>One independently scored interval of a Long note.</summary>
+    public sealed class JudgementSegment
+    {
+        internal JudgementSegment(PlayableNoteSnapshot note, int index)
+        {
+            NoteId = note.Id;
+            NoteKind = note.Kind;
+            Lane = note.Lane;
+            Index = index;
+            StartPosition = note.Points[index].Position;
+            EndPosition = note.Points[index + 1].Position;
+            StartTimeMs = note.Points[index].TimeMs;
+            EndTimeMs = note.Points[index + 1].TimeMs;
+        }
+
+        public string NoteId { get; }
+        public ChartNoteKind NoteKind { get; }
+        public int Lane { get; }
+        public int Index { get; }
+        public int StartPosition { get; }
+        public int EndPosition { get; }
+        public double StartTimeMs { get; }
+        public double EndTimeMs { get; }
+    }
+
     public sealed class PlayableChartSnapshot
     {
         internal PlayableChartSnapshot(
@@ -86,6 +136,7 @@ namespace REmind.Charting
             ScratchCameraTiltMap scratchCameraTiltMap,
             PlayableNoteSnapshot[] notes,
             JudgementTarget[] judgementTargets,
+            JudgementSegment[] judgementSegments,
             PlayableEffectEvent[] effectEvents = null)
         {
             TimingMap = timingMap ??
@@ -105,6 +156,10 @@ namespace REmind.Charting
                 judgementTargets != null
                     ? (JudgementTarget[])judgementTargets.Clone()
                     : Array.Empty<JudgementTarget>());
+            JudgementSegments = Array.AsReadOnly(
+                judgementSegments != null
+                    ? (JudgementSegment[])judgementSegments.Clone()
+                    : Array.Empty<JudgementSegment>());
             EffectEvents = Array.AsReadOnly(effectEvents != null
                 ? (PlayableEffectEvent[])effectEvents.Clone()
                 : Array.Empty<PlayableEffectEvent>());
@@ -116,6 +171,7 @@ namespace REmind.Charting
         public ScratchCameraTiltMap ScratchCameraTiltMap { get; }
         public IReadOnlyList<PlayableNoteSnapshot> Notes { get; }
         public IReadOnlyList<JudgementTarget> JudgementTargets { get; }
+        public IReadOnlyList<JudgementSegment> JudgementSegments { get; }
         public IReadOnlyList<PlayableEffectEvent> EffectEvents { get; }
     }
 

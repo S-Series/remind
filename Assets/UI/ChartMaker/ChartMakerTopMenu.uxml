@@ -74,6 +74,7 @@
                 <ui:VisualElement class="menu-separator" />
                 <ui:Button name="save-chart-menu-item" text="Save" class="menu-item" />
                 <ui:Button name="save-as-chart-menu-item" text="Save As..." class="menu-item" />
+                <ui:Button name="export-runtime-menu-item" text="Export for Game..." class="menu-item" />
                 <ui:VisualElement class="menu-separator" />
                 <ui:Button name="exit-chart-maker-menu-item" text="Exit" class="menu-item" />
             </ui:VisualElement>

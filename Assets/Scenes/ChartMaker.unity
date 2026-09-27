@@ -12492,7 +12492,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: d858a8d95b934e8ab8ef03e89769108e, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::REmind.Gameplay.Effects.LaneHitEffectPlayer
+  m_EditorClassIdentifier: REmind.Presentation::REmind.Presentation.LaneHitEffectPlayer
   judgementSystem: {fileID: 0}
   laneAnimators:
   - {fileID: 1469990812}

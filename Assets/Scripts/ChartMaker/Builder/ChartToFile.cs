@@ -140,6 +140,7 @@ public sealed class ChartToFile : MonoBehaviour
         string chartText = ChartFileCodec.Serialize(ChartManager.ChartHolders,
             chartCore.Bpm, chartCore.StartCorrectionMs, metadata);
         string parameterText = ChartEffectFileStore.SerializeParameters(ChartManager.ChartHolders, metadata);
+        SongContentFileStore.ValidateChart(fullPath, ChartFileCodec.Parse(chartText));
         ChartEffectFileStore.Save(fullPath, chartText, parameterText);
         ChartEffectDocumentState.Restore(metadata);
         ApplySaveNormalization(
@@ -158,6 +159,31 @@ public sealed class ChartToFile : MonoBehaviour
     public void Save()
     {
         SaveToPath(GetSavePath());
+    }
+
+    /// <summary>Exports the current validated document for a Game build.</summary>
+    public void ExportRuntimePackageToPath(string filePath)
+    {
+        ResolveChartCore();
+        if (chartCore && chartCore.IsTestPlaying)
+            throw new InvalidOperationException(
+                "Stop Preview before exporting a runtime package.");
+        if (string.IsNullOrWhiteSpace(filePath))
+            throw new ArgumentException("An export path is required.",
+                nameof(filePath));
+        string fullPath = Path.GetFullPath(filePath);
+        if (!string.Equals(Path.GetExtension(fullPath), ".json",
+                StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Runtime package must use .json.",
+                nameof(filePath));
+
+        // Build and validate the complete package before touching the output.
+        string package = ChartMakerRuntimePackageExporter.Export(
+            BuildText(), BuildParameterText());
+        string directory = Path.GetDirectoryName(fullPath);
+        if (!string.IsNullOrEmpty(directory))
+            Directory.CreateDirectory(directory);
+        File.WriteAllText(fullPath, package, new UTF8Encoding(false));
     }
 
     public void SetSavePath(string filePath)
