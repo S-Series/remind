@@ -18,7 +18,7 @@ public static class PlayableGameSceneBuilder
     {
         const string scenePath = "Assets/Scenes/Game.unity";
         var chart = AssetDatabase.LoadAssetAtPath<TextAsset>(
-            "Assets/Data/Music/i/charts/hard.rmp.json");
+            "Assets/Data/Music/i/rmp/hard.rmp.json");
         if (!chart) throw new InvalidOperationException(
             "Export the playable sample package first.");
         var songAsset = AssetDatabase.LoadAssetAtPath<TextAsset>(
@@ -51,11 +51,12 @@ public static class PlayableGameSceneBuilder
 
         var chartFields = new SerializedObject(chartSession);
         chartFields.FindProperty("chartAsset").objectReferenceValue = chart;
-        chartFields.FindProperty("bundledMusicId").stringValue = "i";
+        chartFields.FindProperty("bundledMusicId").stringValue = song.MusicId;
         chartFields.ApplyModifiedPropertiesWithoutUndo();
 
         var presenterFields = new SerializedObject(presenter);
         presenterFields.FindProperty("playOnReady").boolValue = false;
+        SetPrefab(presenterFields, "tapNotePrefab", "Tap");
         SetPrefab(presenterFields, "scratchNotePrefab", "Scratch");
         SetPrefab(presenterFields, "longTapNotePrefab", "Long Tap");
         SetPrefab(presenterFields, "longScratchNotePrefab", "Long Scratch");

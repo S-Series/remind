@@ -723,8 +723,9 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
             ? chartToFile.CurrentFilePath
             : Path.Combine(Application.persistentDataPath,
                 "Charts", ChartToFile.DefaultChartFileName);
-        initialPath = Path.Combine(Path.GetDirectoryName(initialPath),
-            Path.GetFileNameWithoutExtension(initialPath) + ".rmp.json");
+        initialPath = ChartMakerRuntimePackageExporter
+            .DefaultOutputPath(initialPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(initialPath));
         string output = ChartFileDialog.SaveRuntimePackage(initialPath);
         if (string.IsNullOrWhiteSpace(output))
             return;

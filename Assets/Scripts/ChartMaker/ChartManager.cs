@@ -450,6 +450,12 @@ public static class ChartManager
                 out _);
         }
 
+        if (noteType == NoteType.Speed)
+        {
+            return EditSpeedNote(noteObject, targetAbsolutePosition,
+                holder.targetLineSpeed, out _);
+        }
+
         if (noteType == NoteType.Effect)
         {
             return MoveEffectNote(noteObject, targetAbsolutePosition, out _);
@@ -476,6 +482,72 @@ public static class ChartManager
             null,
             null,
             out _);
+    }
+
+    internal static bool EditSpeedNote(GameObject noteObject,
+        int targetAbsolutePosition, float multiplier, out string error)
+    {
+        if (!TryGetNoteData(noteObject, out ChartHolder sourceHolder,
+                out _, out NoteType noteType, out _, out _) ||
+            noteType != NoteType.Speed)
+        {
+            error = "Selected Speed event could not be found.";
+            return false;
+        }
+
+        if (targetAbsolutePosition < 0 ||
+            targetAbsolutePosition > ChartHolder.MaximumAbsolutePosition ||
+            !float.IsFinite(multiplier) || multiplier <= 0f)
+        {
+            error = "Speed position or multiplier is invalid.";
+            return false;
+        }
+
+        if (sourceHolder.AbsoluteChartPosition == targetAbsolutePosition)
+        {
+            sourceHolder.targetLineSpeed = multiplier;
+            NotifyChartChanged();
+            error = null;
+            return true;
+        }
+
+        ChartHolder targetHolder = GetHolder(targetAbsolutePosition);
+        if (targetHolder != null && targetHolder.hasLineSpeedChange)
+        {
+            error = "Another Speed event already exists at the target position.";
+            return false;
+        }
+
+        if (!sourceHolder.TryDetachSpeedNote(noteObject,
+                out GameObject[] noteObjects, out float sourceMultiplier))
+        {
+            error = "Selected Speed event could not be detached.";
+            return false;
+        }
+
+        bool createdTarget = targetHolder == null;
+        targetHolder ??= GetOrCreateHolder(
+            targetAbsolutePosition / ChartHolder.PositionUnitsPerMeasure,
+            targetAbsolutePosition % ChartHolder.PositionUnitsPerMeasure);
+        if (!targetHolder.AddSpeedNote(noteObjects, multiplier))
+        {
+            sourceHolder.AddSpeedNote(noteObjects, sourceMultiplier);
+            if (createdTarget && !targetHolder.HasChartData)
+            {
+                ChartHolderList.Remove(targetHolder);
+            }
+            error = "Speed event target could not be updated.";
+            return false;
+        }
+
+        if (!sourceHolder.HasChartData)
+        {
+            ChartHolderList.Remove(sourceHolder);
+        }
+
+        NotifyChartChanged();
+        error = null;
+        return true;
     }
 
     /// <summary>Effect 이동은 고유 ID와 JSON 설정 연결을 그대로 보존합니다.</summary>

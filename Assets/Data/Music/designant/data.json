@@ -1,23 +1,21 @@
 {
   "format": "REmindSong",
-  "formatVersion": 2,
+  "formatVersion": 1,
   "metadataStatus": "test",
   "musicId": "designant",
   "songSeason": 0,
   "title": "Designant",
   "artist": "Tag X Juggernaut",
-  "previewStartMs": 0.0,
-  "previewDurationMs": 15000.0,
+  "musicVolumeMultiplier": 1.0,
+  "previewStartMs": 1200.0,
+  "previewDurationMs": 25000.0,
   "hiddenType": "NotHidden",
   "requiresPurchase": false,
-  "audioFile": "audio/music.mp3",
-  "jacketFile": "jackets/hard.jpg",
   "charts": [
     {
       "difficultyId": "hard",
       "level": 0,
-      "chartAuthor": "Unknown",
-      "chartFile": "charts/hard.rd"
+      "chartAuthor": "Unknown"
     }
   ]
 }

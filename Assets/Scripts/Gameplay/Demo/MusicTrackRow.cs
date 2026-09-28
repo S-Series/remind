@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using REmind.Charting;
 using TMPro;
 using UnityEngine;
@@ -38,6 +39,8 @@ namespace REmind.Gameplay.Demo
         private MusicCatalogEntry catalogEntry;
 
         public string Title => title;
+        public string MusicId => catalogEntry?.MusicId;
+        public string DifficultyId => difficultyId;
         public string Artist => artist;
         public string Description => description;
         public int Level => level;
@@ -50,6 +53,7 @@ namespace REmind.Gameplay.Demo
         public AudioClip PreviewAudio => catalogEntry?.AudioClip;
         public double PreviewStartMs { get; private set; }
         public double PreviewDurationMs { get; private set; }
+        public float PreviewVolume { get; private set; } = 0.5f;
 
         public bool TryGetLevel(string id, out int chartLevel)
         {
@@ -63,6 +67,7 @@ namespace REmind.Gameplay.Demo
             if (!TryGetLevel(id, out int chartLevel)) return false;
             difficultyId = id;
             level = chartLevel;
+            artwork = catalogEntry.GetJacket(id);
             return true;
         }
 
@@ -83,6 +88,7 @@ namespace REmind.Gameplay.Demo
                     throw new FormatException("Catalog musicId does not match data.json: " + entry.MusicId);
                 PreviewStartMs = song.PreviewStartMs;
                 PreviewDurationMs = song.PreviewDurationMs;
+                PreviewVolume = song.PlaybackVolume;
                 title = song.Title;
                 artist = song.Artist;
                 if (!SelectDifficulty(difficultyId))
@@ -133,5 +139,14 @@ namespace REmind.Gameplay.Demo
         }
 
         public void ToggleFavorite() => Favorite = !Favorite;
+
+        public void ApplyPlayerData(bool favorite, bool hasRecord,
+            double score, RankGrade grade)
+        {
+            Favorite = favorite;
+            rank = hasRecord ? grade.ToString() : "-";
+            bestScore = hasRecord ? Math.Round(score).ToString("N0",
+                CultureInfo.InvariantCulture) : "-";
+        }
     }
 }

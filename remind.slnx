@@ -5,6 +5,7 @@
   <Project Path="REmind.ChartMaker.csproj" />
   <Project Path="Assembly-CSharp-Editor.csproj" />
   <Project Path="REmind.NoteRules.csproj" />
+  <Project Path="REmind.Gameplay.Tests.csproj" />
   <Project Path="REmind.EffectIntegration.Tests.csproj" />
   <Project Path="REmind.ChartCore.Tests.csproj" />
   <Project Path="REmind.Presentation.csproj" />

@@ -68,12 +68,12 @@ namespace REmind.Charting.Tests
         {
             var results = new List<ChartJudgementResolution>();
             var session = new PlayableJudgementSession(LongScratchChart(),
-                (_, offset) => Math.Abs(offset) <= 30d
+                (_, _, offset) => Math.Abs(offset) <= 30d
                     ? ChartJudgementGrade.Perfect
                     : Math.Abs(offset) <= 100d
                         ? ChartJudgementGrade.Good
                         : ChartJudgementGrade.None,
-                _ => 150d, results.Add);
+                (_, _) => 150d, results.Add);
             session.ProcessAutomatic(1000d, false);
             session.ProcessAutomatic(2000d, false);
             session.Input((int)ChartLane.GroundLeft, 2070d, true);
@@ -97,17 +97,60 @@ namespace REmind.Charting.Tests
                 Is.EqualTo(ChartJudgementGrade.Miss));
         }
 
+        [Test]
+        public void LongScratch_UsesPointSpecificTimingAndEndDeadline()
+        {
+            var results = new List<ChartJudgementResolution>();
+            var session = new PlayableJudgementSession(LongScratchChart(),
+                (_, point, offset) =>
+                {
+                    double distance = Math.Abs(offset);
+                    if (point == 0)
+                        return distance <= 50d ? ChartJudgementGrade.Perfect :
+                            distance <= 100d ? ChartJudgementGrade.Good :
+                            ChartJudgementGrade.None;
+                    return distance <= (point == 3 ? 75d : 100d)
+                        ? ChartJudgementGrade.Perfect :
+                        ChartJudgementGrade.None;
+                },
+                (_, point) => point == 3 ? 75d : 100d,
+                results.Add);
+
+            session.Input((int)ChartLane.GroundLeft, 100d, true);
+            session.ProcessAutomatic(1000d, false);
+            session.Input((int)ChartLane.GroundLeft, 1500d, false);
+            session.ProcessAutomatic(2000d, false);
+            session.Input((int)ChartLane.GroundLeft, 2100d, true);
+            session.Input((int)ChartLane.GroundLeft, 3075d, false);
+
+            Assert.That(results.Count, Is.EqualTo(3));
+            Assert.That(results[0].Grade, Is.EqualTo(ChartJudgementGrade.Good));
+            Assert.That(results[1].Grade, Is.EqualTo(ChartJudgementGrade.Miss));
+            Assert.That(results[2].Grade, Is.EqualTo(ChartJudgementGrade.Perfect));
+            Assert.That(session.PendingNoteCount, Is.Zero);
+
+            results.Clear();
+            session.Reset();
+            session.Input((int)ChartLane.GroundLeft, 0d, true);
+            session.ProcessAutomatic(1000d, false);
+            session.ProcessAutomatic(2000d, false);
+            session.ProcessAutomatic(3075d, false);
+            Assert.That(results.Count, Is.EqualTo(2));
+            session.ProcessAutomatic(session.NextAutomaticTime(false), false);
+            Assert.That(results[2].Grade, Is.EqualTo(ChartJudgementGrade.Miss));
+        }
+
         private static PlayableJudgementSession Create(
             PlayableChartSnapshot chart,
             List<ChartJudgementResolution> results)
         {
             return new PlayableJudgementSession(chart,
-                (_, offset) => Math.Abs(offset) <= 100d
+                (_, _, offset) => Math.Abs(offset) <= 100d
                     ? ChartJudgementGrade.Perfect
                     : Math.Abs(offset) <= 150d
                         ? ChartJudgementGrade.Miss
                         : ChartJudgementGrade.None,
-                _ => 150d, results.Add);
+                (_, _) => 150d, results.Add);
         }
 
         private static PlayableChartSnapshot LongScratchChart()

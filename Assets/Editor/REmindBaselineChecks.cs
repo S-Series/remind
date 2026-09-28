@@ -5,6 +5,7 @@ using System.IO;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 using REmind.Charting;
 using REmind.Data;
 using REmind.Gameplay;
@@ -64,6 +65,35 @@ public static class REmindBaselineChecks
         Require(compiled.Snapshot.Notes.Count == 5, "Expected Hold, LongScratch, Air, Tap and Scratch.");
         Require(compiled.Snapshot.JudgementTargets.Count == 7, "Hold/Scratch start/end targets changed.");
         Require(compiled.Snapshot.EffectEvents.Count == 0, "Ordinary legacy chart acquired executable effects.");
+    }
+
+    private static void ChartJacket_RoundTripAndRejectsNested()
+    {
+        var metadata = new ChartEffectDocumentState.Metadata(
+            "song", "hard", "", "");
+        string standard = ChartFileCodec.Serialize(
+            Array.Empty<ChartHolder>(), 120, 0, metadata);
+        ChartFile standardChart = ChartFileCodec.Parse(standard);
+        Require(standardChart.FormatVersion == 1,
+            "New chart saves must use format version 1.");
+        Require(standardChart.EffectiveJacketFile == "hard.jpg",
+            "Chart jacket default did not follow the difficulty ID.");
+
+        string custom = ChartFileCodec.Serialize(
+            Array.Empty<ChartHolder>(), 120, 0, metadata, "custom.png");
+        ChartFile reopened = ChartFileCodec.Parse(custom);
+        Require(reopened.JacketFile == "custom.png" &&
+                reopened.EffectiveJacketFile == "custom.png",
+            "Chart jacket override did not survive serialization.");
+
+        bool rejected = false;
+        try
+        {
+            ChartFileCodec.Serialize(Array.Empty<ChartHolder>(), 120, 0,
+                metadata, "jackets/custom.png");
+        }
+        catch (FormatException) { rejected = true; }
+        Require(rejected, "Chart jacket accepted a nested path.");
     }
 
     private static void LongScratchAdapter_PreservesIntermediatePoint()
@@ -137,7 +167,10 @@ public static class REmindBaselineChecks
             WritePair(path, "song", "revision2", 2);
             ChartFile current = ChartEffectFileStore.Load(path, out bool recovered, out _);
             Require(!recovered && current.EffectRevision == "revision2", "Latest matching pair did not load.");
-            Require(current.chartDatas[0].effectId == "fx_sample", "Effect identity changed across saves.");
+            Require(current.FormatVersion == 8 &&
+                    current.chartDatas[0].effectId == "fx_sample" &&
+                    current.chartDatas[0].effectTypeId == "camera.offset",
+                "Older paired chart lost its executable Effect definition.");
             Require(((CameraEffectParameters)ChartEffectJsonCodec.BuildParameterMap(current.chartDatas, "")["fx_sample"]).OffsetX == 2,
                 "The ID no longer points to its settings.");
             string parameterPath = ChartEffectFileStore.GetParameterPath(path, "song", "default");
@@ -169,6 +202,55 @@ public static class REmindBaselineChecks
             Require(!File.Exists(otherPath) && !File.Exists(parameterPath) &&
                     File.ReadAllText(backupPath) == originalBackup,
                 "Protecting a backup-only sidecar changed the existing recovery data.");
+        });
+    }
+
+    private static void InlineEffect_RoundTripInOneChartFile()
+    {
+        WithTemporaryDirectory(directory =>
+        {
+            string path = Path.Combine(directory, "hard.rd");
+            var metadata = new ChartEffectDocumentState.Metadata(
+                "song", "hard", "", "inline-revision");
+            string text = ChartFileCodec.Serialize(
+                new[] { EffectHolder(4) }, 120, 0, metadata);
+            Require(text.Contains("\"formatVersion\": 1") &&
+                    text.Contains("\"parameters\": {") &&
+                    !text.Contains("\"hasEffectParameters\"") &&
+                    text.IndexOf("\"musicId\"", StringComparison.Ordinal) <
+                        text.IndexOf("\"notes\"", StringComparison.Ordinal) &&
+                    text.IndexOf("\"notes\"", StringComparison.Ordinal) <
+                        text.IndexOf("\"eventDictionary\"", StringComparison.Ordinal),
+                "Version 1 chart did not put metadata before the renamed arrays.");
+            ChartEffectFileStore.Save(path, text, null);
+            ChartFile loaded = ChartEffectFileStore.Load(path,
+                out bool recovered, out _);
+            Require(!recovered && loaded.FormatVersion == 1 &&
+                    !loaded.HasEffectParameterFile &&
+                    loaded.chartDatas[0].effectTypeId == "camera.offset" &&
+                    GetCameraOffset(loaded) == 4 &&
+                    !File.Exists(ChartEffectFileStore.GetParameterPath(
+                        path, "song", "hard")),
+                "Version 1 chart did not reload its Effect from one .rd file.");
+            RuntimeChartPackage package = RuntimeChartPackageCodec.Import(
+                ChartMakerRuntimePackageExporter.Export(text));
+            Require(package.Snapshot.EffectEvents.Count == 1 &&
+                    ((CameraEffectParameters)DecodeRuntimeEffect(
+                        package, "fx_sample")).OffsetX == 4,
+                "Runtime export lost the inline Effect parameters.");
+
+            string changed = ChartFileCodec.Serialize(
+                new[] { EffectHolder(6) }, 120, 0, metadata);
+            ChartEffectFileStore.Save(path, changed, null);
+            string invalid = changed.Replace("\"durationMs\": 400",
+                "\"durationMs\": -1");
+            Require(invalid != changed,
+                "Synthetic invalid Effect did not change the chart text.");
+            File.WriteAllText(path, invalid);
+            ChartFile backup = ChartEffectFileStore.Load(path,
+                out recovered, out _);
+            Require(recovered && GetCameraOffset(backup) == 4,
+                "An invalid inline Effect did not recover the previous .rd backup.");
         });
     }
 
@@ -555,9 +637,9 @@ public static class REmindBaselineChecks
         {
             InitializeJudgement(system, new[] { Note("tap", 0, 100) }, 100);
             system.SetUserOffsetMs(25);
-            system.ProcessFrame(375); // 100 note + 100 chart offset + 25 input offset + 150 miss window.
+            system.ProcessFrame(325); // 100 note + 100 chart offset + 25 input offset + 100 miss window.
             Require(system.PendingNoteCount == 1, "Automatic Miss must be strictly outside its window.");
-            system.ProcessFrame(375.01);
+            system.ProcessFrame(325.01);
             Require(system.PendingNoteCount == 0, "Automatic Miss did not advance beyond its boundary.");
             system.ResetJudgements(false);
             JudgeResult received = JudgeResult.None;
@@ -565,6 +647,37 @@ public static class REmindBaselineChecks
             Enqueue(system, 0, 125, 0); // queued chart time = input song time 225 - chart offset 100.
             system.ProcessFrame(300);
             Require(received == JudgeResult.Perfect, "Chart/input offsets were double-applied or reversed.");
+        });
+    }
+
+    private static void Judgement_DirectAndIndirectWindows()
+    {
+        WithJudgement((system, rule) =>
+        {
+            Require(InitializeJudgement(system,
+                    new[] { Note("tap", 0, 100) }),
+                "Judgement initialization failed.");
+            JudgeResult received = JudgeResult.None;
+            system.NoteJudged += value => received = value.Result;
+            foreach (var sample in new[]
+            {
+                (Time: 50d, Expected: JudgeResult.Perfect),
+                (Time: 49d, Expected: JudgeResult.Good),
+                (Time: 0d, Expected: JudgeResult.Good),
+                (Time: 150d, Expected: JudgeResult.Perfect),
+                (Time: 151d, Expected: JudgeResult.Good),
+                (Time: 200d, Expected: JudgeResult.Good),
+                (Time: 201d, Expected: JudgeResult.Miss)
+            })
+            {
+                system.ResetJudgements(false);
+                received = JudgeResult.None;
+                Enqueue(system, 0, sample.Time, 0);
+                system.ProcessFrame(Math.Max(sample.Time, 201d));
+                Require(received == sample.Expected,
+                    "Direct/indirect judgement boundary changed at " +
+                    sample.Time + "ms.");
+            }
         });
     }
 
@@ -595,9 +708,9 @@ public static class REmindBaselineChecks
         {
             Require(InitializeJudgement(system, new[]
             {
-                Note("input-second", 0, 100),
-                Note("input-first", 1, 100),
-                Note("automatic", 2, 100)
+                Note("input-second", 0, 250),
+                Note("input-first", 1, 250),
+                Note("automatic", 2, 150)
             }), "Initialization failed.");
             var order = new List<string>();
             var times = new List<string>();
@@ -1424,10 +1537,10 @@ public static class REmindBaselineChecks
                 string savedRevision = ChartEffectDocumentState.Revision;
                 string parameterPath = ChartEffectFileStore.GetParameterPath(
                     chartPath, "stage5_flow", "manual");
-                Require(File.Exists(chartPath) && File.Exists(parameterPath) &&
+                Require(File.Exists(chartPath) && !File.Exists(parameterPath) &&
                         !string.IsNullOrWhiteSpace(savedRevision) &&
                         !saver.HasUnsavedChanges,
-                    "Save did not produce a clean matching chart/Effect pair.");
+                    "Save did not produce one clean chart file with its Effect.");
                 Require((string)recentFiles.GetProperty("LastChartPath")
                             .GetValue(null) == Path.GetFullPath(chartPath),
                     "Save did not make its .rd path available for the next ChartMaker session.");
@@ -1526,26 +1639,301 @@ public static class REmindBaselineChecks
         });
     }
 
+    private static void ChartMaker_CompositeChartRoundTripsToGame()
+    {
+        WithTemporaryDirectory(directory =>
+        {
+            Require(ChartManager.ChartHolders.Count == 0,
+                "Do not replace a live ChartMaker document during the composite cycle check.");
+            Type history = typeof(ChartManager).Assembly.GetType(
+                "ChartEditHistory", true);
+            Type recentFiles = typeof(ChartManager).Assembly.GetType(
+                "ChartMakerRecentFiles", true);
+            string previousRecent = (string)recentFiles.GetProperty(
+                "LastChartPath").GetValue(null);
+            var previousMetadata = ChartEffectDocumentState.Capture();
+            var go = new GameObject("Composite ChartMaker cycle (inactive)");
+            go.SetActive(false);
+            GameObject gameGo = null;
+            GameRuleConfig gameConfig = null;
+            AudioClip song = null;
+
+            try
+            {
+                var audio = go.AddComponent<AudioSource>();
+                var core = go.AddComponent<ChartCore>();
+                var saver = go.AddComponent<ChartToFile>();
+                var loader = go.AddComponent<FileToChart>();
+                var scroll = go.AddComponent<ChartScroll>();
+                var preview = go.AddComponent<ChartTestPlay>();
+                SetField(core, "audioSource", audio);
+                SetField(saver, "chartCore", core);
+                SetField(loader, "chartCore", core);
+                SetField(loader, "chartToFile", saver);
+                SetField(preview, "chartCore", core);
+                SetField(preview, "chartScroll", scroll);
+                core.SetBpm(120d);
+                core.SetStartCorrectionMs(-125d);
+                ChartEffectDocumentState.Restore(
+                    new ChartEffectDocumentState.Metadata(
+                        "composite_cycle", "hard", "", ""));
+
+                ChartHolder tap = ChartManager.GetOrCreateHolder(1, 0);
+                tap.noteTypes[0] = NoteType.Tap;
+                tap.noteHandles[0] = NoteHandleType.Left;
+                ChartHolder longStart = ChartManager.GetOrCreateHolder(1, 1200);
+                longStart.noteTypes[1] = NoteType.LongTap;
+                longStart.noteHandles[1] = NoteHandleType.Left;
+                ChartHolder scratch = ChartManager.GetOrCreateHolder(1, 2400);
+                scratch.noteTypes[ChartHolder.MainLineCount + 1] = NoteType.Scratch;
+                scratch.scratchMotions[1] = new ScratchMotionData(10,
+                    ScratchMotionType.Instant);
+                ChartHolder bpm = ChartManager.GetOrCreateHolder(1, 3000);
+                bpm.targetBpm = 180f;
+                ChartHolder longEnd = ChartManager.GetOrCreateHolder(1, 3600);
+                longEnd.noteTypes[1] = NoteType.LongTap;
+                longEnd.noteHandles[1] = NoteHandleType.Left;
+                ChartHolder scratchStart = ChartManager.GetOrCreateHolder(2, 0);
+                scratchStart.noteTypes[ChartHolder.MainLineCount] =
+                    NoteType.LongScratch;
+                scratchStart.scratchPointTypes[0] = ScratchPointType.Start;
+                scratchStart.scratchMotions[0] = new ScratchMotionData(12,
+                    ScratchMotionType.Gradual);
+                ChartHolder scratchMid = ChartManager.GetOrCreateHolder(2, 1200);
+                scratchMid.noteTypes[ChartHolder.MainLineCount] =
+                    NoteType.LongScratch;
+                scratchMid.scratchPointTypes[0] = ScratchPointType.Mid;
+                scratchMid.scratchMotions[0] = new ScratchMotionData(7,
+                    ScratchMotionType.Release);
+                scratchMid.hasLineSpeedChange = true;
+                scratchMid.targetLineSpeed = 1.5f;
+                ChartHolder scratchEnd = ChartManager.GetOrCreateHolder(2, 2400);
+                scratchEnd.noteTypes[ChartHolder.MainLineCount] =
+                    NoteType.LongScratch;
+                scratchEnd.scratchPointTypes[0] = ScratchPointType.End;
+                scratchEnd.isEffect = true;
+                scratchEnd.effectId = "fx_composite_camera";
+                scratchEnd.effectTypeId = "camera.offset";
+                scratchEnd.effectCommandId = string.Empty;
+                scratchEnd.effectParametersJson =
+                    "{\"durationMs\":1000,\"offsetX\":2," +
+                    "\"offsetY\":0,\"rollDegrees\":5}";
+
+                string chartPath = Path.Combine(directory, "hard.rd");
+                saver.SaveToPath(chartPath);
+                string savedRevision = ChartEffectDocumentState.Revision;
+                Require(File.Exists(chartPath) &&
+                        !string.IsNullOrWhiteSpace(savedRevision) &&
+                        !saver.HasUnsavedChanges,
+                    "The composite chart was not saved as a clean .rd document.");
+                ChartManager.ClearChart(false);
+                ChartEffectDocumentState.Reset();
+                ChartFile reopened = loader.LoadFromPath(chartPath);
+                Require(reopened.FormatVersion == 1 &&
+                        !reopened.HasEffectParameterFile &&
+                        reopened.EffectRevision == savedRevision &&
+                        Math.Abs(core.Bpm - 120d) < 0.000001d &&
+                        Math.Abs(core.StartCorrectionMs + 125d) < 0.000001d &&
+                        !saver.HasUnsavedChanges,
+                    "Reopening changed the composite chart's format or timing metadata.");
+                ChartHolderDocumentBuildResult built =
+                    ChartHolderDocumentAdapter.Build(
+                        ChartManager.ChartHolders, core.Bpm, 4);
+                Require(built.Succeeded,
+                    "The reopened composite chart could not build a runtime document.");
+                ChartCompileResult compiled = ChartCompiler.Compile(
+                    built.Document,
+                    1d / ChartHolder.PositionUnitsPerWorldUnit);
+                Require(compiled.Succeeded &&
+                        compiled.Snapshot.Notes.Count == 4 &&
+                        compiled.Snapshot.EffectEvents.Count == 1 &&
+                        compiled.Snapshot.JudgementSegments.Count == 3,
+                    "The composite chart lost notes, Long intervals, or Effect at compile time.");
+
+                song = AudioClip.Create("Composite cycle preview", 44100 * 8,
+                    1, 44100, false);
+                audio.clip = song;
+                Invoke(typeof(ChartTestPlay).GetMethod("BindEvents",
+                    BindingFlags.Instance | BindingFlags.NonPublic), preview);
+                core.StartTestPlay(0d);
+                Require(core.IsTestPlaying && preview.CurrentSnapshot != null &&
+                        preview.CurrentSnapshot.Notes.Count == 4 &&
+                        preview.CurrentSnapshot.EffectEvents.Count == 1,
+                    "The reopened composite chart could not start Preview.");
+                PlayableChartSnapshot previewSnapshot = preview.CurrentSnapshot;
+                core.EndTestPlay();
+                Require(!core.IsTestPlaying,
+                    "The composite Preview session remained active after stop.");
+
+                string packagePath =
+                    ChartMakerRuntimePackageExporter.DefaultOutputPath(chartPath);
+                saver.ExportRuntimePackageToPath(packagePath);
+                Require(File.Exists(packagePath) &&
+                        Path.GetDirectoryName(packagePath) ==
+                        Path.Combine(directory, "rmp"),
+                    "The Game package was not exported beside the chart in rmp/.");
+                string packageText = File.ReadAllText(packagePath);
+                PreparedGameplayChart game = GameplayChartPreparation.Prepare(
+                    packageText);
+                Require(game.Metadata.MusicId == "composite_cycle" &&
+                        game.Metadata.DifficultyId == "hard" &&
+                        game.Metadata.Revision == savedRevision &&
+                        Math.Abs(game.ChartOffsetMs - 125d) < 0.000001d,
+                    "The Game package changed the chart identity or song offset.");
+                PlayableChartSnapshot gameSnapshot = game.Snapshot;
+                Require(gameSnapshot.Notes.Count == previewSnapshot.Notes.Count &&
+                        gameSnapshot.EffectEvents.Count ==
+                        previewSnapshot.EffectEvents.Count &&
+                        gameSnapshot.JudgementTargets.Count ==
+                        previewSnapshot.JudgementTargets.Count &&
+                        gameSnapshot.JudgementSegments.Count ==
+                        previewSnapshot.JudgementSegments.Count,
+                    "Preview and Game compiled different event counts.");
+                for (int i = 0; i < gameSnapshot.Notes.Count; i++)
+                {
+                    PlayableNoteSnapshot left = previewSnapshot.Notes[i];
+                    PlayableNoteSnapshot right = gameSnapshot.Notes[i];
+                    Require(left.Id == right.Id && left.Kind == right.Kind &&
+                            left.Lane == right.Lane &&
+                            left.Points.Count == right.Points.Count,
+                        "Preview and Game assigned different note identities or lifecycles.");
+                    for (int point = 0; point < left.Points.Count; point++)
+                        Require(left.Points[point].Position ==
+                                    right.Points[point].Position &&
+                                left.Points[point].Kind ==
+                                    right.Points[point].Kind &&
+                                Math.Abs(left.Points[point].TimeMs -
+                                    right.Points[point].TimeMs) < 0.000001d &&
+                                Math.Abs(left.Points[point].FloorPosition -
+                                    right.Points[point].FloorPosition) < 0.000001d,
+                            "Preview and Game interpreted a note point differently.");
+                }
+                foreach (int position in new[] { 4800, 7800, 9600, 10800,
+                             12000 })
+                {
+                    Require(Math.Abs(previewSnapshot.TimingMap
+                                .TimeAtPosition(position) - gameSnapshot.TimingMap
+                                .TimeAtPosition(position)) < 0.000001d &&
+                            Math.Abs(previewSnapshot.ScrollMap
+                                .FloorPositionAtChartPosition(position) -
+                                gameSnapshot.ScrollMap
+                                .FloorPositionAtChartPosition(position)) <
+                            0.000001d,
+                        "Preview and Game disagreed on BPM or scroll conversion.");
+                }
+                Require(Math.Abs(gameSnapshot.TimingMap.TimeAtPosition(
+                            12000) - 4416.666666666667d) < 0.000001d &&
+                        gameSnapshot.ScrollMap.FloorPositionAtChartPosition(
+                            12000) > 12000d /
+                        ChartHolder.PositionUnitsPerWorldUnit,
+                    "The sample did not actually apply its BPM and scroll changes.");
+                var editorCamera = (CameraEffectParameters)
+                    ChartEffectJsonCodec.BuildParameterMap(
+                        reopened.chartDatas, "")["fx_composite_camera"];
+                var gameCamera = (CameraEffectParameters)
+                    DecodeRuntimeEffect(RuntimeChartPackageCodec.Import(
+                        packageText), "fx_composite_camera");
+                Require(editorCamera.DurationMs == gameCamera.DurationMs &&
+                        Math.Abs(editorCamera.OffsetX - gameCamera.OffsetX) <
+                        0.000001d,
+                    "Preview and Game decoded different Effect settings.");
+                Require(gameSnapshot.Notes[0].Kind == ChartNoteKind.Tap &&
+                        gameSnapshot.Notes[1].Kind == ChartNoteKind.Hold &&
+                        gameSnapshot.Notes[2].Kind == ChartNoteKind.Scratch &&
+                        gameSnapshot.Notes[3].Kind == ChartNoteKind.LongScratch &&
+                        gameSnapshot.Notes[3].Points.Count == 3 &&
+                        gameSnapshot.EffectEvents[0].EffectId ==
+                        "fx_composite_camera" &&
+                        Math.Abs(gameSnapshot.EffectEvents[0].TimeMs -
+                            gameSnapshot.Notes[3].Points[2].TimeMs) < 0.000001d,
+                    "The composite sample did not preserve the intended note families and same-time Effect.");
+
+                gameGo = new GameObject("Composite Game session (inactive)");
+                gameGo.SetActive(false);
+                gameConfig = ScriptableObject.CreateInstance<GameRuleConfig>();
+                var gameAudio = gameGo.AddComponent<AudioSource>();
+                var gamePlay = gameGo.AddComponent<GamePlay>();
+                SetField(gamePlay, "audioSource", gameAudio);
+                var gameRule = gameGo.AddComponent<DefaultGameRule>();
+                typeof(GameRule).GetField("config",
+                    BindingFlags.Instance | BindingFlags.NonPublic)
+                    .SetValue(gameRule, gameConfig);
+                var gameManager = gameGo.AddComponent<GameManager>();
+                SetField(gameManager, "gamePlay", gamePlay);
+                SetField(gameManager, "gameRule", gameRule);
+                var gameJudgement = gameGo.AddComponent<NoteJudgementSystem>();
+                SetField(gameJudgement, "gameManager", gameManager);
+                SetField(gameJudgement, "gameRule", gameRule);
+                var gameState = gameGo.AddComponent<GameplaySessionState>();
+                SetField(gameState, "gameManager", gameManager);
+                SetField(gameState, "judgementSystem", gameJudgement);
+                SetField(gameState, "gameRule", gameRule);
+                var gameEffects = gameGo.AddComponent<
+                    GameplayChartEffectController>();
+                SetField(gameEffects, "gameManager", gameManager);
+                SetField(gameEffects, "judgementSystem", gameJudgement);
+                SetField(gameEffects, "gameStateProvider", gameState);
+                var pivot = new GameObject("Composite camera Effect pivot");
+                pivot.transform.SetParent(gameGo.transform, false);
+                SetField(gameEffects, "cameraEffectPivot", pivot.transform);
+                SetField(gamePlay, "cameraTransform", pivot.transform);
+                var gameChart = gameGo.AddComponent<
+                    GameplayChartSessionController>();
+                SetField(gameChart, "gameManager", gameManager);
+                SetField(gameChart, "judgementSystem", gameJudgement);
+                SetField(gameChart, "effectController", gameEffects);
+                SetField(gameChart, "sessionState", gameState);
+                gameGo.SetActive(true);
+                Require(gamePlay.PrepareSong(song) &&
+                        gameChart.TryPrepare(packageText),
+                    "The composite package could not prepare a live Game session: " +
+                    gameChart.LastError);
+                Require(gameManager.StartGame(),
+                    "The composite Game session could not start playback.");
+                gameJudgement.SetAutoPlayEnabled(true);
+                gameJudgement.ProcessFrame(gamePlay.SongDurationMs + 1000d);
+                Require(gameJudgement.LastTimelineError == null &&
+                        gameJudgement.PendingNoteCount == 0 &&
+                        gameState.JudgedNoteCount == gameState.TotalNoteCount &&
+                        gameState.IsCleared && gameState.CurrentScore > 0d,
+                    "The composite Game session did not finish its notes and Effect cleanly.");
+                gameManager.StopGame();
+            }
+            finally
+            {
+                if (gameGo) UnityEngine.Object.DestroyImmediate(gameGo);
+                if (gameConfig) UnityEngine.Object.DestroyImmediate(gameConfig);
+                if (go)
+                {
+                    ChartCore core = go.GetComponent<ChartCore>();
+                    if (core && core.IsTestPlaying) core.EndTestPlay();
+                }
+                ChartManager.ClearChart(false);
+                Invoke(history.GetMethod("Clear"), null);
+                ChartEffectDocumentState.Restore(previousMetadata);
+                RestoreRecentChartPath(recentFiles, previousRecent);
+                UnityEngine.Object.DestroyImmediate(go);
+                if (song != null) UnityEngine.Object.DestroyImmediate(song);
+            }
+        });
+    }
+
     private static void GameplayPreparation_UsesSharedPairAndOffset()
     {
         string chartPath = Path.Combine(
             Application.dataPath,
-            "Chart/EffectGameplaySample.rd");
-        string parameterPath = Path.Combine(
-            Application.dataPath,
-            "Chart/effect.effect_gameplay_sample.demo.json");
+            "Tests/Fixtures/EffectGameplaySample.rd");
         string chartText = File.ReadAllText(chartPath);
-        string parameterText = File.ReadAllText(parameterPath);
         string correctedChartText = chartText.Replace(
             "\"musicStartCorrectionMs\": 0.0",
             "\"musicStartCorrectionMs\": -125.0");
+        Require(correctedChartText != chartText,
+            "The sample did not contain the expected music-start correction.");
 
         PreparedGameplayChart prepared = GameplayChartPreparation.Prepare(
-            ChartMakerRuntimePackageExporter.Export(correctedChartText,
-                parameterText, 4));
+            ChartMakerRuntimePackageExporter.Export(correctedChartText, 4));
         RuntimeChartPackage runtimePackage = RuntimeChartPackageCodec.Import(
-            ChartMakerRuntimePackageExporter.Export(correctedChartText,
-                parameterText, 4));
+            ChartMakerRuntimePackageExporter.Export(correctedChartText, 4));
         Require(runtimePackage.MusicId == prepared.Metadata.MusicId &&
                 runtimePackage.DifficultyId ==
                 prepared.Metadata.DifficultyId &&
@@ -1576,7 +1964,7 @@ public static class REmindBaselineChecks
         Require(prepared.Metadata.MusicId == "effect_gameplay_sample" &&
                 prepared.Metadata.DifficultyId == "demo" &&
                 prepared.Metadata.GimmickId == "sample",
-            "Gameplay metadata changed while preparing the matching pair.");
+                "Gameplay metadata changed while preparing the chart.");
 
         PlayableNoteSnapshot alignedNote = prepared.Snapshot.Notes[1];
         PlayableEffectEvent alignedEffect =
@@ -1626,14 +2014,13 @@ public static class REmindBaselineChecks
         });
 
         bool mismatchRejected = false;
+        string mismatchedChartText = chartText.Replace(
+            "\"position\": 8400", "\"position\": 9999");
+        Require(mismatchedChartText != chartText,
+            "The sample did not contain the expected Effect row position.");
         try
         {
-            ChartMakerRuntimePackageExporter.Export(
-                chartText,
-                parameterText.Replace(
-                    "stage6_demo_004",
-                    "stage6_demo_wrong"),
-                4);
+            ChartMakerRuntimePackageExporter.Export(mismatchedChartText, 4);
         }
         catch (FormatException)
         {
@@ -1641,17 +2028,14 @@ public static class REmindBaselineChecks
         }
 
         Require(mismatchRejected,
-            "Gameplay accepted an Effect JSON owned by another revision.");
+            "Gameplay accepted an Effect definition without a matching chart row.");
     }
 
     private static void GameplayChartSession_FailedReplacementInvalidatesAll()
     {
         string chartText = File.ReadAllText(Path.Combine(
             Application.dataPath,
-            "Chart/EffectGameplaySample.rd"));
-        string parameterText = File.ReadAllText(Path.Combine(
-            Application.dataPath,
-            "Chart/effect.effect_gameplay_sample.demo.json"));
+            "Tests/Fixtures/EffectGameplaySample.rd"));
         var go = new GameObject(
             "Stage 6 failed replacement acceptance (inactive)");
         go.SetActive(false);
@@ -1691,8 +2075,7 @@ public static class REmindBaselineChecks
             SetField(chartSession, "effectController", effects);
             SetField(chartSession, "sessionState", state);
 
-            string packageText = ChartMakerRuntimePackageExporter.Export(
-                chartText, parameterText);
+            string packageText = ChartMakerRuntimePackageExporter.Export(chartText);
             Require(chartSession.TryPrepare(packageText),
                 "The valid gameplay chart could not establish the fixture: " +
                 chartSession.LastError);
@@ -1728,10 +2111,7 @@ public static class REmindBaselineChecks
     {
         string chartText = File.ReadAllText(Path.Combine(
             Application.dataPath,
-            "Chart/EffectGameplaySample.rd"));
-        string parameterText = File.ReadAllText(Path.Combine(
-            Application.dataPath,
-            "Chart/effect.effect_gameplay_sample.demo.json"));
+            "Tests/Fixtures/EffectGameplaySample.rd"));
         var go = new GameObject(
             "Stage 6 disabled service start guard (inactive)");
         go.SetActive(false);
@@ -1774,8 +2154,7 @@ public static class REmindBaselineChecks
 
             go.SetActive(true);
             Require(chartSession.TryPrepare(
-                    ChartMakerRuntimePackageExporter.Export(chartText,
-                        parameterText)),
+                    ChartMakerRuntimePackageExporter.Export(chartText)),
                 "The valid gameplay chart could not establish the disabled-service fixture: " +
                 chartSession.LastError);
             song = AudioClip.Create(
@@ -2109,17 +2488,32 @@ public static class REmindBaselineChecks
                 ReferenceEquals(GetFieldValue(flow, "judgementSystem"),
                     judgement),
                 "Game menu, playback, judgement and result state are disconnected.");
-            var asset = (TextAsset)GetFieldValue(charts, "chartAsset");
-            Require(asset != null &&
-                (string)GetFieldValue(charts, "bundledMusicId") == "chroma-i",
-                "The bundled playable chart and song ID are not paired.");
-            PreparedGameplayChart prepared =
-                GameplayChartPreparation.Prepare(asset.text);
-            Require(prepared.Snapshot.Notes.Count == 302 &&
-                prepared.Snapshot.JudgementTargets.Count == 302 &&
-                prepared.Metadata.MusicId == "chroma-i" &&
-                prepared.ChartOffsetMs == 1024d,
-                "The full sample chart was not compiled into the Game scene.");
+            var catalog = (MusicCatalog)GetFieldValue(presenter,
+                "musicCatalog");
+            Require(catalog && catalog.Songs.Count >= 2 &&
+                (string)GetFieldValue(presenter, "defaultMusicId") == "i" &&
+                (string)GetFieldValue(presenter, "defaultDifficultyId") == "hard",
+                "Game scene does not resolve a selected song from the catalog.");
+            foreach (MusicCatalogEntry songEntry in catalog.Songs)
+            {
+                Require(songEntry.SongData && songEntry.AudioClip,
+                    "A playable catalog song is missing data or audio.");
+                SongContent song = SongContentCodec.Parse(songEntry.SongData.text);
+                Require(song.MusicId == songEntry.MusicId,
+                    "Catalog and song data IDs differ.");
+                foreach (MusicDifficultyEntry difficulty in songEntry.Difficulties)
+                {
+                    Require(difficulty.RuntimePackage,
+                        "A selected difficulty has no runtime package.");
+                    PreparedGameplayChart prepared = GameplayChartPreparation.Prepare(
+                        difficulty.RuntimePackage.text);
+                    Require(prepared.Metadata.MusicId == songEntry.MusicId &&
+                        prepared.Metadata.DifficultyId == difficulty.DifficultyId &&
+                        prepared.Snapshot.Notes.Count > 0 &&
+                        song.FindChart(difficulty.DifficultyId) != null,
+                        "Catalog selection does not match a playable chart.");
+                }
+            }
             var profiles = (NoteJudgeWindowProfile[])GetFieldValue(
                 judgement, "noteWindowProfiles");
             Require(profiles.Length == 5 &&
@@ -2179,7 +2573,17 @@ public static class REmindBaselineChecks
     {
         var holders = new[] { EffectHolder(x) };
         var metadata = new ChartEffectDocumentState.Metadata(music, "default", "", revision);
-        chartText = ChartFileCodec.Serialize(holders, 120, 0, metadata);
+        XElement legacy = ChartEffectParameterCodec.ReadObject(
+            ChartFileCodec.Serialize(holders, 120, 0, metadata));
+        legacy.Element("formatVersion").Value = "8";
+        legacy.Element("notes").Name = "events";
+        XElement dictionary = legacy.Element("eventDictionary");
+        dictionary.Name = "effectDefinitions";
+        foreach (XElement entry in dictionary.Elements())
+            entry.Element("parameters")?.Remove();
+        legacy.Add(new XElement("hasEffectParameters",
+            new XAttribute("type", "boolean"), "true"));
+        chartText = ChartEffectParameterCodec.WriteObject(legacy);
         parameterText = ChartEffectFileStore.SerializeParameters(holders,
             metadata);
     }

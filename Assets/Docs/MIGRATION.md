@@ -8,11 +8,19 @@
 
 ReMind는 현재 구조 개편 중이다.
 
-`Assets/Data/Music/i/data.json`은 v2 곡 목록과 `hard` 채보 참조를 가진다.
-ChartMaker의 파일 경계는 목록의 곡·난이도 ID와 경로를 검사하고, `i`의 Effect
-sidecar를 원래 revision에 맞춰 복구했다. Music Select의 기존 행은 곡명·아티스트·
-레벨을 이 목록에서 읽는다. Game의 현재 샘플은 여전히 별도 번들 실행 패키지를
-사용하며, `i` 패키지 출력 및 곡 선택에서 플레이로 넘어가는 연결은 남아 있다.
+`Assets/Data/Music/i/data.json`은 형식 버전 1 곡 목록과 `hard` 채보 참조를 가진다.
+ChartMaker의 파일 경계는 목록의 곡·난이도 ID와 경로를 검사한다. `i`와
+`designant`의 Effect 파라미터는 이제 각 `.rd` 안에 있다. Music Select의 행은 곡명·아티스트·
+레벨을 이 목록에서 읽는다. 카탈로그 생성은 등록된 각 `.rd`를 검증해 난이도별
+채보 폴더의 `rmp/`에 `.rmp.json`을 출력하고 Unity 에셋 참조를 연결한다.
+Game 빌드의 첫 씬은 `Bootstrap`이다. 이 씬의 `AppRoot`가 Home 진입과
+Music Select에서 고른 곡/난이도 ID를 보유한다. Game 씬은 카탈로그에서 해당
+실행 패키지와 음원을 찾아 ID·곡 데이터를 확인한 뒤 세션을 준비한다.
+Music Select의 Play는 AppRoot 자식의 `SceneTransitionController`를 통해
+기존 `MusicSelected` 애니메이션을 전체 화면에 표시한 후 Game 씬을 연다.
+현재 Animator Controller의 2배속·빈 상태 복귀 설정과 무관하게, 기존 클립을
+12fps 원래 속도로 직접 샘플링한다.
+전환 표시와 씬 로드는 Game 전용이며 판정·재생 세션은 Game 씬에 남는다.
 
 현재 존재하는 코드의 폴더명이나 클래스명만으로 장기 Source of Truth를 판단하지 않는다.
 
@@ -24,8 +32,11 @@ sidecar를 원래 revision에 맞춰 복구했다. Music Select의 기존 행은
 
 Effect vertical slice는 ChartMaker Preview와 기존 `DemoPlay`에서 같은 실행 의미를
 검증한다. `DemoPlay`는 최종 Game 씬이 아니라 레거시 구성요소를 연결한 과도기 통합
-하네스다. 별도 `Game.unity`는 첫 곡의 선택·플레이·일시정지·결과·재시도
-흐름을 연결한다. 이후 여러 곡, 영구 진행과 최종 UI는 별도 작업이다.
+하네스다. 별도 `Game.unity`는 `i`와 `designant`의 선택·플레이·일시정지·
+실패·결과·재시도 흐름을 연결한다. 로컬 최고 점수·클리어·플레이 횟수·최고 콤보와
+즐겨찾기를 저장하고, Result에 기록 기반 진행을 표시한다. Game 설정도 별도 파일에
+저장한다. 첫 클리어 기억 조각 보상도 기록에서 계산한다. 정식 콘텐츠와 최종 UI
+시각 검수는 후속 작업이다.
 
 ## 3. Legacy Gameplay
 
@@ -88,9 +99,12 @@ Preview / Game
   표시기에 연결하고 ChartMaker는 표시기만 호출한다.
 - `REmind.ChartMaker`, `REmind.Gameplay`, `REmind.Common` assembly를 추가했다.
   공용 assembly와 두 제품 assembly는 서로의 제품 구현을 참조하지 않는다.
-- ChartMaker는 `.rd`와 Effect sidecar를 검증한 후 버전이 있는 `.rmp.json`
+- ChartMaker는 Effect 파라미터를 포함한 `.rd`를 검증한 후 버전이 있는 `.rmp.json`
   실행 패키지를 내보낸다. Game은 이 패키지를 다시 컴파일·검증해 Snapshot과
-  Effect 계획을 준비한다. DemoPlay의 번들 샘플도 실행 패키지로 바꿨다.
+  Effect 계획을 준비한다. DemoPlay의 통합 검사 샘플은
+  `Assets/Tests/Fixtures/EffectGameplaySample.rd`와 같은 폴더의
+  `rmp/EffectGameplaySample.rmp.json`을 사용한다. 샘플 Effect 설정은 `.rd`에
+  포함되며 별도 설정 JSON은 필요하지 않다.
 - 제품별 빌드 명령은 `Game.unity`와 ChartMaker 씬을 각각 선택하고 전용
   assembly define을 지정한다. 두 Windows 빌드는 컴파일에 성공했으며 각
   산출물의 Managed 폴더에 상대 제품 assembly가 없음을 확인했다.
@@ -102,15 +116,29 @@ Preview / Game
 - Long Scratch 입력 규칙은 Start=양입력, Mid=유지 중인지 확인, End=음입력으로
   정했다. 앞 구간을 놓치면 그 구간은 Miss로 확정하며 각 Mid의 양입력으로 이후
   구간에 다시 합류할 수 있다. 구간마다 점수·콤보·체력을 개별 집계한다.
-  노트 종류별 `NoteJudgeWindowProfile` 파일을 만들었다. 전용 수치가 미정이므로
-  현재 모든 파일은 기존 기본값 30/60/100/150ms로 시작한다. Long Scratch의
-  최종 수치와 일반 노트 간접 판정 정책은 정해진 뒤 설정·테스트를 갱신해야 한다.
-- `Game.unity`는 초안 채보에서 검증·출력한 `ChromaIPlay.rmp.json`과 기존
-  `I.mp3`를 번들로 읽는다. 302개 Tap의 점수/체력과 결과를 Game 세션이 관리한다.
-  원본 초안 `.rd`는 변경하지 않았다.
-- Game 장면의 PlayMode smoke는 채보 준비, 302개 표시 객체, Play/Pause/Resume/
-  Restart/Stop과 마지막 노트 이후 종료 시간을 확인했다. 실제 키 입력과 화면 결과는
-  아직 수동 검증하지 않았다.
+  노트 종류별 `NoteJudgeWindowProfile` 파일을 사용한다. 일반 노트와 Long
+  Scratch Start는 같은 레인 입력 ±50ms Perfect, ±100ms Good이다. 간접 판정은
+  같은 레인의 50ms 밖~100ms 입력을 뜻한다. Long Scratch Mid는 ±100ms,
+  End는 ±75ms에서 Perfect 입력만 받는다. End 미입력은 +75ms를 넘으면 Miss다.
+  공용 판정 세션은 지점 인덱스를 Game 규칙에 전달해 구간별 창을 적용한다.
+- `Game.unity`는 선택한 곡/난이도의 카탈로그 패키지와 음원을 준비한다. 직접
+  Game 씬을 여는 개발 흐름에서는 `i/hard`를 기본 선택으로 사용한다. 원본 `.rd`는
+  실행 중 읽지 않는다.
+- 복합 채보 EditMode 검사는 ChartMaker 저장·재열기·Preview·패키지 출력 후
+  Game 구성요소에서 같은 Tap/Long/Scratch, BPM·스크롤·Effect 시각과 설정으로
+  준비·실행되는지 확인한다. PlayMode smoke는 두 곡의 선택, 음원·볼륨·노트
+  표시 등록, 실패→결과→재시도, 완주·결과 복귀와 로컬 기록을 확인한다.
+  실제 화면·청음·물리 키 입력은 별도 수동 검수 대상이다.
+- Game 플레이어 설정은 진행 기록과 별도 `player-settings-v1.json`에 저장한다.
+  사용자 음악 음량은 곡별 볼륨에 곱하고, 판정 보정은 차트 준비 전에 판정
+  세션에, 레인 키 경로는 Game 입력 액션의 런타임 복제본에 적용한다.
+  ChartMaker의 입력 액션과 데이터는 이 설정을 읽지 않는다.
+- Game의 `player-progress-v1.json`은 곡·난이도별 최고 점수·랭크,
+  클리어 이력, 플레이 횟수, 최고 콤보와 곡 즐겨찾기를 소유한다. 실패한 플레이도
+  횟수에 포함하고 첫 클리어는 저장 전 기록과 비교한다. Auto Play는 저장하지 않는다.
+  Result의 기억 영역은 이 사실 기반 기록을 표시한다. 첫 클리어마다 기억 조각
+  1개를 획득하며 보유 수량은 클리어한 곡·난이도 기록의 개수에서 계산한다.
+  그 외 보상과 곡별 서사 데이터는 아직 없다.
 
 ## 5. Known Transitional Risks
 
@@ -121,7 +149,7 @@ Preview / Game
 - 레거시 API를 신규 구조가 따라가게 되는 문제
 - 같은 규칙이 서로 다른 폴더에 중복되는 문제
 - 임시 Adapter가 영구 구조로 굳어지는 문제
-- 여러 곡 콘텐츠·진행 저장과 최종 UI가 아직 없는 문제
+- 곡별 서사·정식 콘텐츠와 최종 UI 시각 검수가 남은 문제
 - 사용하지 않는 구형 `ChartLoader`/`NoteData` 파일의 정리 여부
 
 ### 현재 남은 동작 경계
@@ -159,7 +187,7 @@ Preview / Game
 - `TempLoader` 및 구형 임시 chart 경로. 현재 DemoPlay 씬에서는 제거됨
 
 ### UNKNOWN / Mixed
-- GameRule 수치와 Long Scratch 전용 시간 창의 최종값
+- 실제 키 입력·청음에서 확정 판정 창의 체감 검증
 - `LaneHitEffectPlayer`의 공용 presenter와 Gameplay event binding 책임
 
 ## 7. Migration Goal
@@ -182,10 +210,11 @@ Game과 ChartMaker가 서로 직접 의존하지 않고,
 2. Shared Runtime Package 입력 계약을 정하고 `GameplayChartPreparation`의
    ChartMaker 저장 의존을 제거한다 — **완료**.
 3. `LaneHitEffectPlayer`를 공용 Unity presenter와 앱별 판정 event adapter로 분리한다 — **완료**.
-4. 공용 판정 세션과 Game의 Snapshot 입력 연결 — **완료**. 전용 수치와 실제
-   입력 수동 검증은 후속 작업이다.
+4. 공용 판정 세션과 Game의 Snapshot 입력 연결 — **완료**. 지점별 판정 창도
+   연결했다. 실제 입력·청음 수동 검증은 후속 작업이다.
 5. Game/ChartMaker assembly로 직접 의존을 컴파일 단계에서 막는다 — **완료**.
-   첫 곡 Game/ChartMaker 빌드까지 확인했다. 배포용 Build Profile은 후속 작업이다.
+   `Play`·`Chart` Build Profile에 제품별 씬·define을 저장하고 두 Windows 빌드의
+   상대 제품 DLL 제외를 확인했다.
 
 ### 과도기 adapter 제거 조건
 

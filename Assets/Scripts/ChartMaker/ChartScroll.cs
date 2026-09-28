@@ -781,6 +781,7 @@ public sealed class ChartScroll : MonoBehaviour
         }
 
         float chartY = -ScrollY * guideGenerate.ScrollToChartRatio;
+        float floorY = GetPreviewFloorPosition(chartY);
 
         if (!externalTimelineControl)
         {
@@ -794,7 +795,7 @@ public sealed class ChartScroll : MonoBehaviour
         else
         {
             Vector3 worldLineOffset =
-                previewFloorRenderer.EvaluateWorldCenterOffset(chartY);
+                previewFloorRenderer.EvaluateWorldCenterOffset(floorY);
             previewCameraLineLocalOffset = previewCameraTransform.parent
                 ? previewCameraTransform.parent.InverseTransformVector(
                     worldLineOffset)
@@ -907,8 +908,14 @@ public sealed class ChartScroll : MonoBehaviour
 
     private float GetPreviewCameraZOffset(float viewportOffsetY)
     {
-        return viewportOffsetY *
-            guideGenerate.ScrollToChartRatio *
-            previewHighSpeedScale;
+        float chartY = viewportOffsetY * guideGenerate.ScrollToChartRatio;
+        return GetPreviewFloorPosition(chartY) * previewHighSpeedScale;
+    }
+
+    private float GetPreviewFloorPosition(float chartY)
+    {
+        return !externalTimelineControl && previewFloorRenderer
+            ? previewFloorRenderer.EvaluateFloorPositionAtChartY(chartY)
+            : chartY;
     }
 }

@@ -4,7 +4,7 @@ using System.IO;
 using System.Text;
 using System.Xml.Linq;
 
-/// <summary>Paired chart/parameter persistence. Never assumes two replacements are atomic.</summary>
+/// <summary>Current single-file chart persistence and older paired-file recovery.</summary>
 public static class ChartEffectFileStore
 {
     public static string GetParameterPath(string chartPath, string musicId, string difficultyId)
@@ -132,7 +132,7 @@ public static class ChartEffectFileStore
             }
             catch (Exception exception) { failures.Add(chartCandidate + ": " + exception.Message); }
         }
-        throw new IOException("Could not load a matching chart/effect pair. " + string.Join("\n", failures));
+        throw new IOException("Could not load a valid chart or backup. " + string.Join("\n", failures));
     }
 
     public static void Save(string chartPath, string chartText, string parameterText)
@@ -141,6 +141,8 @@ public static class ChartEffectFileStore
         ChartFile next = ChartFileCodec.Parse(chartText);
         string parameterPath = next.HasEffectParameterFile
             ? GetParameterPath(path, next.MusicId, next.DifficultyId) : null;
+        if (parameterPath == null && !string.IsNullOrWhiteSpace(parameterText))
+            throw new FormatException("Version 1 charts contain Effect parameters in the .rd file.");
         if (parameterPath != null)
         {
             ApplyParameters(next, parameterText);

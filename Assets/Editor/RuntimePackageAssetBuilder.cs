@@ -8,19 +8,18 @@ using UnityEngine;
 public static class RuntimePackageAssetBuilder
 {
     private const string ISongData = "Assets/Data/Music/i/data.json";
-    private const string SourceChart = "Assets/Chart/EffectGameplaySample.rd";
-    private const string SourceParameters =
-        "Assets/Chart/effect.effect_gameplay_sample.demo.json";
+    private const string SourceChart =
+        "Assets/Tests/Fixtures/EffectGameplaySample.rd";
     private const string Output =
-        "Assets/Chart/EffectGameplaySample.rmp.json";
+        "Assets/Tests/Fixtures/rmp/EffectGameplaySample.rmp.json";
 
     [MenuItem("REmind/Build Demo Runtime Package")]
     public static void BuildDemoPackage()
     {
         string root = Directory.GetParent(Application.dataPath).FullName;
         string package = ChartMakerRuntimePackageExporter.Export(
-            File.ReadAllText(Path.Combine(root, SourceChart)),
-            File.ReadAllText(Path.Combine(root, SourceParameters)));
+            File.ReadAllText(Path.Combine(root, SourceChart)));
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(root, Output)));
         File.WriteAllText(Path.Combine(root, Output), package,
             new UTF8Encoding(false));
         AssetDatabase.ImportAsset(Output, ImportAssetOptions.ForceUpdate);
@@ -44,14 +43,10 @@ public static class RuntimePackageAssetBuilder
             dataPath, entry.ChartFile);
         ChartFile chart = ChartEffectFileStore.Load(chartPath, out _, out string chartText);
         SongContentFileStore.ValidateChart(chartPath, chart);
-        string parameters = chart.HasEffectParameterFile
-            ? ChartEffectFileStore.SerializeParameters(chart.chartDatas,
-                new ChartEffectDocumentState.Metadata(chart.MusicId,
-                    chart.DifficultyId, chart.GimmickId, chart.EffectRevision))
-            : null;
-        string package = ChartMakerRuntimePackageExporter.Export(
-            chartText, parameters);
-        string outputPath = Path.ChangeExtension(chartPath, ".rmp.json");
+        string package = ChartMakerRuntimePackageExporter.Export(chartText);
+        string outputPath = ChartMakerRuntimePackageExporter
+            .DefaultOutputPath(chartPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
         File.WriteAllText(outputPath, package, new UTF8Encoding(false));
         string assetPath = outputPath.Substring(root.Length + 1).Replace('\\', '/');
         AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate);

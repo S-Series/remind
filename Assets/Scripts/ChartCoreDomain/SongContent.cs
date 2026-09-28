@@ -17,8 +17,9 @@ namespace REmind.Charting
             SongSeason = source.SongSeason;
             Title = source.Title;
             Artist = source.Artist;
-            AudioFile = source.AudioFile;
-            JacketFile = source.JacketFile;
+            MusicVolumeMultiplier = source.MusicVolumeMultiplier ?? 1d;
+            AudioFile = source.AudioFile ?? SongContentCodec.DefaultAudioFile;
+            JacketFile = source.JacketFile ?? SongContentCodec.DefaultJacketFile;
             JacketIllustrator = source.JacketIllustrator ?? string.Empty;
             PreviewStartMs = source.PreviewStartMs;
             PreviewDurationMs = source.PreviewDurationMs;
@@ -32,6 +33,8 @@ namespace REmind.Charting
         public int SongSeason { get; }
         public string Title { get; }
         public string Artist { get; }
+        public double MusicVolumeMultiplier { get; }
+        public float PlaybackVolume => (float)(MusicVolumeMultiplier * 0.5d);
         public string AudioFile { get; }
         public string JacketFile { get; }
         public string JacketIllustrator { get; }
@@ -70,7 +73,9 @@ namespace REmind.Charting
     /// <summary>Unity-independent song metadata and chart-reference contract.</summary>
     public static class SongContentCodec
     {
-        public const int CurrentFormatVersion = 2;
+        public const int CurrentFormatVersion = 1;
+        public const string DefaultAudioFile = "audio.mp3";
+        public const string DefaultJacketFile = "art.jpg";
         private const string FormatName = "REmindSong";
 
         public static SongContent Parse(string json)
@@ -90,14 +95,18 @@ namespace REmind.Charting
             }
             if (source == null || source.Format != FormatName ||
                 source.FormatVersion != CurrentFormatVersion)
-                throw new FormatException("Expected REmindSong format version 2.");
+                throw new FormatException("Expected REmindSong format version 1.");
             ValidateId(source.MusicId, "musicId");
             RequireText(source.Title, "title");
             RequireText(source.Artist, "artist");
+            double musicVolumeMultiplier = source.MusicVolumeMultiplier ?? 1d;
+            if (!IsFinite(musicVolumeMultiplier) ||
+                musicVolumeMultiplier < 0d || musicVolumeMultiplier > 2d)
+                throw new FormatException("musicVolumeMultiplier must be between 0 and 2.");
             if (source.SongSeason < 0)
                 throw new FormatException("songSeason cannot be negative.");
-            ValidateReference(source.AudioFile, "audioFile");
-            ValidateReference(source.JacketFile, "jacketFile");
+            ValidateFileName(source.AudioFile ?? DefaultAudioFile, "audioFile");
+            ValidateFileName(source.JacketFile ?? DefaultJacketFile, "jacketFile");
             if (!IsFinite(source.PreviewStartMs) || source.PreviewStartMs < 0 ||
                 !IsFinite(source.PreviewDurationMs) || source.PreviewDurationMs <= 0)
                 throw new FormatException("Preview start and duration must be valid milliseconds.");
@@ -116,23 +125,24 @@ namespace REmind.Charting
                 if (chart.Level < 0)
                     throw new FormatException("level cannot be negative.");
                 RequireText(chart.ChartAuthor, "chartAuthor");
-                ValidateReference(chart.ChartFile, "chartFile");
-                if (!chart.ChartFile.EndsWith(".rd", StringComparison.OrdinalIgnoreCase))
+                string chartFile = chart.ChartFile ?? chart.DifficultyId + ".rd";
+                ValidateFileName(chartFile, "chartFile");
+                if (!chartFile.EndsWith(".rd", StringComparison.OrdinalIgnoreCase))
                     throw new FormatException("chartFile must point to a .rd file.");
-                if (!paths.Add(chart.ChartFile))
-                    throw new FormatException("Duplicate chartFile: " + chart.ChartFile);
+                if (!paths.Add(chartFile))
+                    throw new FormatException("Duplicate chartFile: " + chartFile);
                 charts.Add(new SongChartEntry(chart.DifficultyId, chart.Level,
-                    chart.ChartAuthor, chart.ChartFile));
+                    chart.ChartAuthor, chartFile));
             }
             return new SongContent(source, new ReadOnlyCollection<SongChartEntry>(charts));
         }
 
         public static string ResolveReference(string songDataPath, string relativePath)
         {
-            ValidateReference(relativePath, nameof(relativePath));
+            ValidateFileName(relativePath, nameof(relativePath));
             string folder = Path.GetDirectoryName(Path.GetFullPath(songDataPath));
             string resolved = Path.GetFullPath(Path.Combine(folder,
-                relativePath.Replace('/', Path.DirectorySeparatorChar)));
+                relativePath));
             string prefix = folder.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             if (!resolved.StartsWith(prefix, Path.DirectorySeparatorChar == '\\'
                     ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
@@ -150,15 +160,16 @@ namespace REmind.Charting
                     throw new FormatException(name + " must use letters, numbers, '_' or '-'.");
         }
 
-        private static void ValidateReference(string path, string name)
+        public static void ValidateFileName(string path, string name)
         {
             if (string.IsNullOrWhiteSpace(path) || Path.IsPathRooted(path) ||
-                path.IndexOf('\\') >= 0 || path.IndexOf(':') >= 0)
-                throw new FormatException(name + " must be a song-folder-relative path using '/'.");
-            foreach (string segment in path.Split('/'))
-                if (segment.Length == 0 || segment == "." || segment == ".." ||
-                    segment.IndexOfAny(new[] { '\0', '\r', '\n' }) >= 0)
-                    throw new FormatException(name + " contains an invalid path segment.");
+                path == "." || path == ".." ||
+                path.IndexOfAny(new[] { '/', '\\', ':', '*', '?', '"', '<', '>', '|',
+                    '\0', '\r', '\n' }) >= 0)
+                throw new FormatException(name + " must be a filename in the song folder.");
+            foreach (char character in path)
+                if (char.IsControl(character))
+                    throw new FormatException(name + " contains a control character.");
         }
 
         private static void RequireText(string value, string name)
@@ -180,6 +191,8 @@ namespace REmind.Charting
         [DataMember(Name = "songSeason")] public int SongSeason { get; set; }
         [DataMember(Name = "title")] public string Title { get; set; }
         [DataMember(Name = "artist")] public string Artist { get; set; }
+        [DataMember(Name = "musicVolumeMultiplier")]
+        public double? MusicVolumeMultiplier { get; set; }
         [DataMember(Name = "audioFile")] public string AudioFile { get; set; }
         [DataMember(Name = "jacketFile")] public string JacketFile { get; set; }
         [DataMember(Name = "jacketIllustrator")] public string JacketIllustrator { get; set; }

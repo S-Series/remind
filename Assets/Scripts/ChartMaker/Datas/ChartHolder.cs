@@ -62,6 +62,7 @@ public class ChartHolder
     [NonSerialized] public GameObject[][] scratchNoteObjectGroups;
     [NonSerialized] public GameObject[][] airNoteObjectGroups;
     [NonSerialized] public GameObject[] actionNoteObjects;
+    [NonSerialized] public GameObject[] speedNoteObjects;
     [NonSerialized] public GameObject[] cameraNoteObjects;
     [NonSerialized] public GameObject[] markerNoteObjects;
     [NonSerialized] public GameObject[] effectNoteObjects;
@@ -459,6 +460,57 @@ public class ChartHolder
         return isCameraMove;
     }
 
+    public bool AddSpeedNote(GameObject[] noteObjects, float multiplier = 1f)
+    {
+        if (hasLineSpeedChange || !IsValidNoteObjects(noteObjects) ||
+            !float.IsFinite(multiplier) || multiplier <= 0f)
+        {
+            return false;
+        }
+
+        hasLineSpeedChange = true;
+        targetLineSpeed = multiplier;
+        speedNoteObjects = noteObjects;
+        return true;
+    }
+
+    public bool TryGetSpeedNote(out GameObject[] noteObjects)
+    {
+        noteObjects = speedNoteObjects;
+        return hasLineSpeedChange;
+    }
+
+    public bool AttachSpeedNoteObjects(GameObject[] noteObjects)
+    {
+        if (!hasLineSpeedChange || speedNoteObjects != null ||
+            !IsValidNoteObjects(noteObjects))
+        {
+            return false;
+        }
+
+        speedNoteObjects = noteObjects;
+        return true;
+    }
+
+    internal bool TryDetachSpeedNote(GameObject noteObject,
+        out GameObject[] noteObjects, out float multiplier)
+    {
+        noteObjects = null;
+        multiplier = 1f;
+        if (!hasLineSpeedChange ||
+            !FindNoteObject(speedNoteObjects, noteObject))
+        {
+            return false;
+        }
+
+        noteObjects = speedNoteObjects;
+        multiplier = targetLineSpeed;
+        speedNoteObjects = null;
+        hasLineSpeedChange = false;
+        targetLineSpeed = 1f;
+        return true;
+    }
+
     public void EnsureEffectIdentity()
     {
         if (isEffect && string.IsNullOrWhiteSpace(effectId))
@@ -539,6 +591,15 @@ public class ChartHolder
 
         EnsureStorage();
 
+        if (FindNoteObject(speedNoteObjects, noteObject))
+        {
+            DestroyNoteObjects(speedNoteObjects);
+            speedNoteObjects = null;
+            hasLineSpeedChange = false;
+            targetLineSpeed = 1f;
+            return true;
+        }
+
         if (FindNoteObject(effectNoteObjects, noteObject))
         {
             DestroyNoteObjects(effectNoteObjects);
@@ -609,7 +670,8 @@ public class ChartHolder
         }
 
         EnsureStorage();
-        return FindNoteObject(effectNoteObjects, noteObject) ||
+        return FindNoteObject(speedNoteObjects, noteObject) ||
+            FindNoteObject(effectNoteObjects, noteObject) ||
             FindNoteObject(markerNoteObjects, noteObject) ||
             FindNoteObject(cameraNoteObjects, noteObject) ||
             FindNoteGroup(tapNoteObjectGroups, noteObject) >= 0 ||
@@ -626,6 +688,15 @@ public class ChartHolder
         out bool isPowered)
     {
         EnsureStorage();
+
+        if (FindNoteObject(speedNoteObjects, noteObject))
+        {
+            line = 0;
+            noteType = NoteType.Speed;
+            handleType = NoteHandleType.Unknown;
+            isPowered = false;
+            return hasLineSpeedChange;
+        }
 
         if (FindNoteObject(effectNoteObjects, noteObject))
         {
@@ -888,6 +959,8 @@ public class ChartHolder
 
         DestroyNoteObjects(cameraNoteObjects);
         cameraNoteObjects = null;
+        DestroyNoteObjects(speedNoteObjects);
+        speedNoteObjects = null;
         DestroyNoteObjects(markerNoteObjects);
         markerNoteObjects = null;
         DestroyNoteObjects(effectNoteObjects);

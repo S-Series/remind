@@ -154,8 +154,15 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
     }
 
     /// <summary>선택한 로컬 음악 파일을 비동기로 읽어 테스트 AudioSource에 적용합니다.</summary>
-    public bool LoadAudioFile(string filePath)
+    public bool LoadAudioFile(string filePath, float? volume = null)
     {
+        if (volume.HasValue && (float.IsNaN(volume.Value) ||
+            float.IsInfinity(volume.Value) || volume.Value < 0f ||
+            volume.Value > 1f))
+        {
+            Debug.LogError("Audio volume must be between 0 and 1.", this);
+            return false;
+        }
         if (audioSource == null || IsAudioLoading || IsTestPlaying ||
             startInProgress || stopInProgress)
         {
@@ -183,7 +190,7 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
             return false;
         }
 
-        StartCoroutine(LoadAudioFileRoutine(fullPath, audioType));
+        StartCoroutine(LoadAudioFileRoutine(fullPath, audioType, volume));
         return true;
     }
 
@@ -424,7 +431,8 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
 
     private IEnumerator LoadAudioFileRoutine(
         string fullPath,
-        AudioType audioType)
+        AudioType audioType,
+        float? volume)
     {
         IsAudioLoading = true;
         string fileUri = new Uri(fullPath).AbsoluteUri;
@@ -456,6 +464,7 @@ public sealed class ChartCore : MonoSingleton<ChartCore>
         loadedAudioClip = newClip;
         loadedAudioClip.name = Path.GetFileNameWithoutExtension(fullPath);
         audioSource.clip = loadedAudioClip;
+        if (volume.HasValue) audioSource.volume = volume.Value;
         CurrentAudioFilePath = fullPath;
         IsAudioLoading = false;
         ChartMakerRecentFiles.RememberAudioPath(fullPath);

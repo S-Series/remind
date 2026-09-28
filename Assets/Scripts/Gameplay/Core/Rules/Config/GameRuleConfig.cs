@@ -4,7 +4,7 @@ using UnityEngine;
 public sealed class GameRuleConfig : ScriptableObject
 {
     [Header("Judgement")]
-    [SerializeField] private JudgeWindows baseJudgeWindows = new JudgeWindows(30, 60, 100, 150);
+    [SerializeField] private JudgeWindows baseJudgeWindows = new JudgeWindows(50, 50, 100, 100);
 
     [Header("Gauge")]
     [SerializeField] private HealthGaugeType gaugeType = HealthGaugeType.Normal;

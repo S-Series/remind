@@ -16,10 +16,12 @@ MonoBehaviour:
   - musicId: designant
     songData: {fileID: 4900000, guid: c62a02aa3a5fb5a4482e5e0b125310da, type: 3}
     jacket: {fileID: 21300000, guid: fd82148dbfdc3d748808e2d939ed91cb, type: 3}
-    audioClip: {fileID: 8300000, guid: 0c287d2ad5cc2ad42923bedbd263d7b4, type: 3}
+    audioClip: {fileID: 8300000, guid: 1ba2c0e17d00c664083f42e44cf9d6aa, type: 3}
     difficulties:
     - difficultyId: hard
       level: 0
+      jacket: {fileID: 21300000, guid: fd82148dbfdc3d748808e2d939ed91cb, type: 3}
+      runtimePackage: {fileID: 4900000, guid: 60fbe34fbf7092543a71a911fa83313e, type: 3}
   - musicId: i
     songData: {fileID: 4900000, guid: acb9417978524aa5a2339ce0c8371270, type: 3}
     jacket: {fileID: 21300000, guid: d795dff1441aa58479d92485ec0c970e, type: 3}
@@ -27,3 +29,5 @@ MonoBehaviour:
     difficulties:
     - difficultyId: hard
       level: 0
+      jacket: {fileID: 21300000, guid: d795dff1441aa58479d92485ec0c970e, type: 3}
+      runtimePackage: {fileID: 4900000, guid: ec47c90a520b0004d8fdeb3957d2ea19, type: 3}

@@ -101,11 +101,13 @@ public sealed class FileToChart : MonoBehaviour
             if (dataPath != null)
             {
                 string audioPath;
+                float songVolume = 0.5f;
                 try
                 {
                     SongContent song = SongContentFileStore.Load(dataPath);
                     audioPath = SongContentCodec.ResolveReference(dataPath,
                         song.AudioFile);
+                    songVolume = song.PlaybackVolume;
                 }
                 catch (Exception exception)
                 {
@@ -117,8 +119,13 @@ public sealed class FileToChart : MonoBehaviour
                 {
                     while (chartCore.IsAudioLoading) yield return null;
                     if (ChartMakerRecentFiles.AreSamePath(
-                            chartCore.CurrentAudioFilePath, audioPath) ||
-                        chartCore.LoadAudioFile(audioPath))
+                            chartCore.CurrentAudioFilePath, audioPath))
+                    {
+                        if (chartCore.AudioSource)
+                            chartCore.AudioSource.volume = songVolume;
+                        yield break;
+                    }
+                    if (chartCore.LoadAudioFile(audioPath, songVolume))
                     {
                         while (chartCore.IsAudioLoading) yield return null;
                         if (ChartMakerRecentFiles.AreSamePath(
@@ -193,7 +200,7 @@ public sealed class FileToChart : MonoBehaviour
     {
         ChartFile chartFile = ParseSupportedChart(text);
         if (chartFile.HasEffectParameterFile)
-            throw new FormatException("This chart needs its paired Effect JSON. Open the .rd file by path.");
+            throw new FormatException("This older chart needs its paired Effect JSON. Open the .rd file by path.");
         return ApplyLoadedChart(chartFile);
     }
 
@@ -202,6 +209,7 @@ public sealed class FileToChart : MonoBehaviour
         ApplyTimingMetadata(chartFile);
         ChartManager.ReplaceChartData(chartFile.chartDatas);
         ChartEffectDocumentState.Apply(chartFile);
+        chartToFile?.SetDocumentJacketFile(chartFile.JacketFile);
 
         if (placementController)
         {
@@ -504,7 +512,7 @@ public sealed class FileToChart : MonoBehaviour
                 chartFile = ParseSupportedChart(text);
                 if (chartFile.HasEffectParameterFile)
                     throw new FormatException(
-                        "This chart needs its paired Effect JSON. Open the .rd file by path.");
+                        "This older chart needs its paired Effect JSON. Open the .rd file by path.");
             }
             catch (Exception currentException)
             {
@@ -539,15 +547,20 @@ public sealed class FileToChart : MonoBehaviour
             string dataPath = SongContentFileStore.FindDataPath(fullPath);
             string audioPath = SongContentCodec.ResolveReference(dataPath,
                 songContent.AudioFile);
-            if (!ChartMakerRecentFiles.AreSamePath(
-                    chartCore.CurrentAudioFilePath, audioPath) &&
-                !chartCore.LoadAudioFile(audioPath))
+            if (ChartMakerRecentFiles.AreSamePath(
+                    chartCore.CurrentAudioFilePath, audioPath))
+            {
+                if (chartCore.AudioSource)
+                    chartCore.AudioSource.volume = songContent.PlaybackVolume;
+            }
+            else if (!chartCore.LoadAudioFile(audioPath,
+                         songContent.PlaybackVolume))
                 Debug.LogWarning("Song audio could not start loading: " +
                     audioPath, this);
         }
 
         if (recovered)
-            Debug.LogWarning("Loaded a matching backup chart/Effect pair. Save to make this recovered state current.", this);
+            Debug.LogWarning("Loaded a backup chart. Save to make this recovered state current.", this);
 
         if (chartToFile)
         {
@@ -589,19 +602,31 @@ public sealed class FileToChart : MonoBehaviour
             if (chartCore && chartCore.IsTestPlaying)
                 throw new InvalidOperationException("Stop test playback before reloading Effect parameters.");
             if (!chartToFile || !chartToFile.HasSavePath)
-                throw new InvalidOperationException("Save/open a .rd file before reloading Effect JSON.");
-            ChartFile edited = ChartFileCodec.Parse(chartToFile.BuildText());
-            string path = ChartEffectFileStore.GetParameterPath(chartToFile.CurrentFilePath,
-                edited.MusicId, edited.DifficultyId);
-            ChartEffectFileStore.ApplyParameters(edited, File.ReadAllText(path, Encoding.UTF8));
-            ChartEffectJsonCodec.BuildParameterMap(edited.chartDatas, edited.GimmickId);
+                throw new InvalidOperationException("Save/open a .rd file before reloading Effect parameters.");
+            ChartFile saved = ChartEffectFileStore.Load(chartToFile.CurrentFilePath,
+                out _, out _);
+            ChartEffectJsonCodec.BuildParameterMap(saved.chartDatas, saved.GimmickId);
             var positions = new List<int>();
-            foreach (ChartHolder holder in edited.chartDatas)
-                if (holder.isEffect) positions.Add(holder.AbsoluteChartPosition);
-            var transaction = ChartEditHistory.BeginChange(positions.ToArray());
-            foreach (ChartHolder holder in edited.chartDatas)
+            var savedParameters = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (ChartHolder holder in saved.chartDatas)
                 if (holder.isEffect)
-                    ChartManager.GetHolder(holder.AbsoluteChartPosition).effectParametersJson = holder.effectParametersJson;
+                    savedParameters.Add(holder.effectId, holder.effectParametersJson);
+            foreach (ChartHolder holder in ChartManager.ChartHolders)
+                if (holder.isEffect)
+                {
+                    if (!savedParameters.ContainsKey(holder.effectId))
+                        throw new FormatException(
+                            "The saved .rd has no matching Effect ID: " + holder.effectId);
+                    positions.Add(holder.AbsoluteChartPosition);
+                }
+            if (positions.Count != savedParameters.Count)
+                throw new FormatException(
+                    "The saved .rd and editor have different Effect sets. Reopen the chart to reload all data.");
+            var transaction = ChartEditHistory.BeginChange(positions.ToArray());
+            foreach (ChartHolder holder in ChartManager.ChartHolders)
+                if (holder.isEffect &&
+                    savedParameters.TryGetValue(holder.effectId, out string parameters))
+                    holder.effectParametersJson = parameters;
             ChartEditHistory.CommitChange(transaction);
             ChartManager.NotifyChartChanged();
             error = null;

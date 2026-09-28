@@ -18,7 +18,7 @@ public sealed class ChartToFile : MonoBehaviour
     [SerializeField] private ChartPlacementController placementController;
 
     private string savedChartText = string.Empty;
-    private string savedParameterText = string.Empty;
+    private string jacketFile;
     private bool recoveredStateRequiresSave;
 
     public string CurrentFilePath => currentFilePath;
@@ -34,11 +34,8 @@ public sealed class ChartToFile : MonoBehaviour
 
             try
             {
-                return !string.Equals(
-                    BuildText(),
-                    savedChartText,
-                    StringComparison.Ordinal) || !string.Equals(
-                        BuildParameterText(), savedParameterText, StringComparison.Ordinal);
+                return !string.Equals(BuildText(), savedChartText,
+                    StringComparison.Ordinal);
             }
             catch
             {
@@ -84,11 +81,9 @@ public sealed class ChartToFile : MonoBehaviour
             ChartManager.ChartHolders,
             chartCore.Bpm,
             chartCore.StartCorrectionMs,
-            ChartEffectDocumentState.Capture());
+            ChartEffectDocumentState.Capture(),
+            jacketFile);
     }
-
-    private static string BuildParameterText() => ChartEffectFileStore.SerializeParameters(
-        ChartManager.ChartHolders, ChartEffectDocumentState.Capture());
 
     /// <summary>현재 채보를 지정한 경로에 UTF-8(BOM 없음)로 저장합니다.</summary>
     public void SaveToPath(string filePath)
@@ -138,10 +133,9 @@ public sealed class ChartToFile : MonoBehaviour
             ChartEffectDocumentState.MusicId, ChartEffectDocumentState.DifficultyId,
             ChartEffectDocumentState.GimmickId, Guid.NewGuid().ToString("N"));
         string chartText = ChartFileCodec.Serialize(ChartManager.ChartHolders,
-            chartCore.Bpm, chartCore.StartCorrectionMs, metadata);
-        string parameterText = ChartEffectFileStore.SerializeParameters(ChartManager.ChartHolders, metadata);
+            chartCore.Bpm, chartCore.StartCorrectionMs, metadata, jacketFile);
         SongContentFileStore.ValidateChart(fullPath, ChartFileCodec.Parse(chartText));
-        ChartEffectFileStore.Save(fullPath, chartText, parameterText);
+        ChartEffectFileStore.Save(fullPath, chartText, null);
         ChartEffectDocumentState.Restore(metadata);
         ApplySaveNormalization(
             normalizationPlan,
@@ -149,7 +143,6 @@ public sealed class ChartToFile : MonoBehaviour
 
         currentFilePath = fullPath;
         savedChartText = chartText;
-        savedParameterText = parameterText;
         recoveredStateRequiresSave = false;
         ChartMakerRecentFiles.RememberChartPath(currentFilePath);
         ChartSaved?.Invoke(currentFilePath);
@@ -178,8 +171,7 @@ public sealed class ChartToFile : MonoBehaviour
                 nameof(filePath));
 
         // Build and validate the complete package before touching the output.
-        string package = ChartMakerRuntimePackageExporter.Export(
-            BuildText(), BuildParameterText());
+        string package = ChartMakerRuntimePackageExporter.Export(BuildText());
         string directory = Path.GetDirectoryName(fullPath);
         if (!string.IsNullOrEmpty(directory))
             Directory.CreateDirectory(directory);
@@ -202,10 +194,18 @@ public sealed class ChartToFile : MonoBehaviour
         }
     }
 
+    public void SetDocumentJacketFile(string fileName)
+    {
+        if (!string.IsNullOrEmpty(fileName))
+            REmind.Charting.SongContentCodec.ValidateFileName(fileName, "jacketFile");
+        jacketFile = fileName;
+    }
+
     /// <summary>새 문서 상태로 전환하고 현재 빈 채보를 저장 기준으로 기록합니다.</summary>
     public void ResetDocument()
     {
         currentFilePath = null;
+        jacketFile = null;
         MarkCurrentStateAsSaved();
     }
 
@@ -213,13 +213,11 @@ public sealed class ChartToFile : MonoBehaviour
     public void MarkCurrentStateAsSaved()
     {
         savedChartText = BuildText();
-        savedParameterText = BuildParameterText();
         recoveredStateRequiresSave = false;
     }
 
     /// <summary>
-    /// A matching backup pair is valid in memory, but it is not the current pair on
-    /// disk until the user saves it. Keep close/dirty prompts active until then.
+    /// A recovered backup is valid in memory but is not current on disk until saved.
     /// </summary>
     public void MarkRecoveredStateRequiresSave()
     {

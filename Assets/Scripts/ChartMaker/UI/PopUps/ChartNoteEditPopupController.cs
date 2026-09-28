@@ -39,6 +39,8 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
     private DropdownField airLineField;
     private IntegerField airValueField;
     private VisualElement cameraPanel;
+    private VisualElement speedPanel;
+    private FloatField speedMultiplierField;
     private FloatField cameraOffsetXField;
     private DropdownField cameraSpinDirectionField;
     private ChartEffectNoteEditorPanel effectPanel;
@@ -90,6 +92,8 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
         airLineField = root.Q<DropdownField>("air-line-field");
         airValueField = root.Q<IntegerField>("air-value-field");
         cameraPanel = root.Q<VisualElement>("camera-note-edit-panel");
+        speedPanel = root.Q<VisualElement>("speed-note-edit-panel");
+        speedMultiplierField = root.Q<FloatField>("speed-multiplier-field");
         cameraOffsetXField = root.Q<FloatField>("camera-offset-x-field");
         cameraSpinDirectionField =
             root.Q<DropdownField>("camera-spin-direction-field");
@@ -241,6 +245,10 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
             cameraSpinDirectionField.SetValueWithoutNotify(
                 ToCameraSpinText(holder.cameraSpinDirection));
         }
+        else if (noteType == NoteType.Speed)
+        {
+            speedMultiplierField.SetValueWithoutNotify(holder.targetLineSpeed);
+        }
         else if (noteType == NoteType.Effect)
         {
             effectPanel.Populate(holder);
@@ -248,7 +256,7 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
 
         applyButton.SetEnabled(
             noteType.IsGameplayNote() || noteType == NoteType.Camera ||
-            noteType == NoteType.Effect);
+            noteType == NoteType.Effect || noteType == NoteType.Speed);
         editWindow.style.display = DisplayStyle.Flex;
         editWindow.schedule.Execute(ApplyRememberedWindowPosition);
     }
@@ -524,6 +532,9 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
         cameraPanel.style.display = noteType == NoteType.Camera
             ? DisplayStyle.Flex
             : DisplayStyle.None;
+        speedPanel.style.display = noteType == NoteType.Speed
+            ? DisplayStyle.Flex
+            : DisplayStyle.None;
 
         effectPanel.Element.style.display = noteType == NoteType.Effect
             ? DisplayStyle.Flex
@@ -570,6 +581,11 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
                 break;
             case NoteType.Camera:
                 succeeded = TryApplyCameraEdit(out error);
+                break;
+            case NoteType.Speed:
+                succeeded = placementController.TryEditSpeedNote(
+                    selectedNoteObject, measureField.value, positionField.value,
+                    speedMultiplierField.value, out error);
                 break;
             case NoteType.Effect:
                 succeeded = placementController.TryEditEffectNote(
@@ -804,6 +820,8 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
                airLineField != null &&
                airValueField != null &&
                cameraPanel != null &&
+               speedPanel != null &&
+               speedMultiplierField != null &&
                cameraOffsetXField != null &&
                cameraSpinDirectionField != null &&
                errorLabel != null &&
@@ -853,6 +871,7 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
             NoteType.LongScratch => "Long Scratch Note",
             NoteType.Air => "Air Note",
             NoteType.Camera => "Camera Note",
+            NoteType.Speed => "Line Speed",
             NoteType.Effect => "Effect Note",
             NoteType.Marker => "Marker",
             _ => "Note"

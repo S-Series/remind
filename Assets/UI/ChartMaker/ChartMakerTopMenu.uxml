@@ -48,6 +48,12 @@
                     <ui:IntegerField name="air-value-field" label="Value" class="note-edit-field" />
                 </ui:VisualElement>
 
+                <ui:VisualElement name="speed-note-edit-panel" class="note-type-edit-panel">
+                    <ui:Label text="Line Speed" class="note-edit-section-title" />
+                    <ui:FloatField name="speed-multiplier-field" label="Multiplier" class="note-edit-field" />
+                    <ui:Label text="Changes visual scroll from this position" class="note-edit-meta" />
+                </ui:VisualElement>
+
                 <ui:VisualElement name="camera-note-edit-panel" class="note-type-edit-panel">
                     <ui:Label text="Camera" class="note-edit-section-title" />
                     <ui:FloatField name="camera-offset-x-field" label="Offset X" class="note-edit-field" />

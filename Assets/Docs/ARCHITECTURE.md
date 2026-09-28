@@ -37,8 +37,12 @@ Shared는 두 앱에서 우연히 재사용할 수 있는 모든 코드를 뜻�
 음원, 선택 화면 미리듣기 구간, 공통 재킷 등 곡 카탈로그 정보를 소유한다.
 곡 파일의 난이도 목록은 난이도/레벨, 채보 제작자와 채보 경로를 소유한다.
 난이도별 채보는 BPM·박자·시간 보정, 노트와 Effect·연출 규칙을 소유한다.
-재킷이나 배경이 난이도마다 다르면 난이도 목록의 표시 정보로 두며,
+재킷이 난이도마다 다르면 해당 `.rd`의 선택적 `jacketFile`로 지정한다.
+지정하지 않으면 `<difficultyId>.jpg`를 먼저 찾고, 없으면 곡의 `art.jpg`를
+사용한다. 배경이 난이도마다 다르면 난이도 목록의 표시 정보로 두며,
 플레이 결과·점수·즐겨찾기는 별도 사용자 저장 데이터다.
+플레이어 음악 음량·판정 보정·Game 레인 키는 Game 전용 설정 데이터로
+진행 기록과 분리한다. ChartMaker Preview는 이 플레이어 설정을 읽지 않는다.
 동일 값의 복사본을 두 파일에 독립적으로 편집하지 않고, 필요할 때 검증된
 실행 패키지로 조합한다.
 
@@ -46,13 +50,15 @@ Shared는 두 앱에서 우연히 재사용할 수 있는 모든 코드를 뜻�
 
 | 소유 파일 | 필드명 | 의미 |
 | --- | --- | --- |
-| 곡 `data.json` | `musicId`, `title`, `artist`, `audioFile` | 곡 식별자와 공통 표시·음원 정보 |
+| 곡 `data.json` | `musicId`, `title`, `artist`, `audioFile` | 곡 식별자와 공통 표시·음원 정보. 음원 기본값 `audio.mp3` |
+| 곡 `data.json` | `musicVolumeMultiplier` | 곡 음악 볼륨 배수 `0`~`2`. 기본값 `1`은 AudioSource 볼륨 `0.5` |
 | 곡 `data.json` | `previewStartMs`, `previewDurationMs` | 곡 선택 화면의 미리듣기 구간 |
-| 곡 `data.json` | `jacketFile`, `jacketIllustrator`, `charts[]` | 공통 재킷과 난이도 목록 |
-| `charts[]` 항목 | `difficultyId`, `level`, `chartAuthor`, `chartFile` | 난이도 표시 정보와 제작용 채보 참조 |
+| 곡 `data.json` | `jacketFile`, `jacketIllustrator`, `charts[]` | 공통 재킷과 난이도 목록. 재킷 기본값 `art.jpg` |
+| `charts[]` 항목 | `difficultyId`, `level`, `chartAuthor`, `chartFile` | 난이도 표시 정보와 제작용 채보 참조. 채보 기본값 `<difficultyId>.rd` |
+| 난이도별 채보 | `jacketFile` | 선택적 전용 재킷. 기본 `<difficultyId>.jpg`, 파일이 없으면 공통 재킷 사용 |
 | 난이도별 채보 | `musicId`, `difficultyId` | 곡·난이도 연결을 검증하는 식별자 |
 | 난이도별 채보 | `baseBpm`, `bpmChanges`, `musicStartCorrectionMs` | 채보의 시간 계산과 음원 정렬 |
-| 난이도별 채보 | `backgroundId`, `backgroundLayerId`, `effectDefinitions`, `effectParameters` | 해당 채보의 연출과 실행 규칙 |
+| 난이도별 채보 | `backgroundId`, `backgroundLayerId`, `notes`, `eventDictionary` | 해당 채보의 노트·연출과 실행 규칙. Effect 파라미터도 `eventDictionary`에 포함 |
 
 이 표는 목표 소유권과 이름이다. 현행 `.rd`와 로더에 없는 필드를 이미 지원한다고
 간주하지 않는다. 선택 화면의 BPM 표기는 채보의 시간 데이터에서 산출하며, 곡 파일에
@@ -106,6 +112,12 @@ Validated Runtime Package
 
 ### Game
 
+- Game 빌드는 `Bootstrap` 씬에서 시작한다. 하이어라키의 `AppRoot`만
+  `DontDestroyOnLoad`로 유지하며 Home을 연다. 이 루트는 곡/난이도 선택처럼
+  씬 사이의 선택·결과 요약과 로컬 플레이어 기록 저장소를 소유한다. 그 자식의
+  `SceneTransitionController`는 씬 위에 표시할 Music Select 전환 오버레이와
+  Game 씬 로드를 맡는다. `GameManager`, 채보·판정·Effect·오디오
+  세션은 계속 Game 씬이 소유하고 씬 종료 시 정리한다.
 - 실제 입력 장치와 입력 routing
 - 공용 Runtime package를 세션에 게시하는 composition root
 - 실제 `GameRule`, 체력·점수·콤보·실패/클리어 상태 adapter
@@ -116,15 +128,28 @@ Validated Runtime Package
   방향 이동·Submit은 `InputSystemUIInputModule`/`Selectable`에 맡긴다.
   실제 플레이 중 Pause 진입만 Gameplay 입력에서 처리한다.
 - Home의 MUSIC 버튼은 하이어라키에 저장된 `MusicSelect` 곡 선택 화면을 연다.
-  현재 곡 선택·분류·즐겨찾기·정렬·난이도 필터는 화면 안에서 동작하며,
-  실제 곡 재생 연결은 아직 없다. 기존 `Music` 임시 씬은 샘플 Game 진입용으로
-  보존한다. 임시 메뉴 씬의 복귀는 Home으로, Game 곡 선택의 복귀는 Music으로
-  연결한다. 화면 내용은 각 씬 하이어라키에서 교체한다.
+  Play를 누르면 선택한 곡 ID와 난이도 ID를 `AppRoot`에 기록하고 Game 씬으로
+  이동한다. Music Select→Game에서는 AppRoot의 `MusicSelected` 48프레임
+  애니메이션을 전체 화면 UI로 표시하고, 마지막 프레임 뒤 Game을 로드해 오버레이를
+  걷는다. 전환 중 중복 Play와 Music Select의 ESC 복귀를 막는다. Game 씬은
+  `MusicCatalog`에서 해당 ID의 검증된 실행 패키지와 음원을
+  찾아 패키지 ID를 다시 확인한 뒤 세션을 준비한다. 음원 로드가 끝나면 재생을
+  시작한다. 실패하면 Game 오류 화면으로 이동한다. 패키지와 재생 세션은 Game 씬이
+  소유하며 `AppRoot`에는 남기지 않는다. Game에서 나가면 `MusicSelect`로 복귀한다.
+  플레이 종료 시 Game은 세션의 점수·판정·콤보와 GameRule의 랭크를 불변 결과
+  요약으로 확정한다. `AppRoot`는 이 요약을 Result 씬으로 한 번 전달하고 즉시
+  비운다. Result 씬은 곡 카탈로그에서 제목·아티스트·재킷·난이도를 읽어 표시한다.
+  곡·난이도별 최고 점수, 클리어 이력, 플레이 횟수, 최고 콤보와 곡 즐겨찾기는
+  Game 전용 로컬 JSON에 저장한다. Music Select는 최고 점수·즐겨찾기를,
+  Result는 확정된 결과와 저장된 진행 기록을 읽는다. Auto Play는 진행에 반영하지
+  않는다. 곡·난이도 첫 클리어마다 기억 조각 1개를 지급하며, 보유 수량은 클리어
+  기록에서 계산한다. Result는 첫 클리어 보상만 표시하고 곡별 서사는 숨긴다.
+  기존 `Music` 임시 씬은 샘플 진입용으로 보존한다.
 
 ### ChartMaker
 
 - `ChartHolder` 기반 편집 상태, 배치/선택 UI와 Undo/Redo
-- `.rd`와 Effect sidecar 저장, backup/복구, 최근 파일
+- Effect 파라미터를 포함한 `.rd` 저장, backup/복구, 최근 파일
 - 설정 panel과 제작자용 validation 안내
 - Preview용 Transform/Animator/Audio 표시와 명시적인 테스트 상태
 
@@ -164,8 +189,8 @@ Snapshot 지점과 구간을 공용 시간축에서 처리한다. Game의 `NoteJ
 
 ## 8. Effect / MusicGimmick
 
-Effect 정의는 실행 시각·order·stable ID·종류·명령만 가진다. 난이도별 sidecar는
-수치만, 복잡한 조건과 상태 전이는 C#만 소유한다.
+난이도별 `.rd`의 `eventDictionary`는 Effect 위치·order·stable ID·종류·명령과
+수치 파라미터를 가진다. 복잡한 조건과 상태 전이는 C#만 소유한다.
 
 `EffectRunner`는 공용 Effect와 `CallMusicGimmickEffect`를 한 목록에서 처리한다.
 한 세션의 명령은 같은 MusicGimmick 인스턴스를 공유하며, 명령 호출 종료와 곡 기믹
@@ -195,5 +220,6 @@ Effect 안에서 Scene을 즉시 바꾸지 않고 요청만 제출하며 앱의 
 
 `REmind.ChartCore`, `REmind.NoteRules`는 Unity 비의존 assembly이고,
 `REmind.Gameplay`와 `REmind.ChartMaker`는 별도 제품 assembly다. Game/ChartMaker
-Windows 빌드에서 상대 제품 DLL이 포함되지 않음을 확인했다. 배포용 Build Profile,
-플랫폼별 설정과 수동 실행 검증은 `MIGRATION.md`와 `TASKS.md`에서 관리한다.
+Windows 빌드에서 상대 제품 DLL이 포함되지 않음을 확인했다. `Play`와 `Chart`
+Build Profile은 제품별 씬과 define을 소유한다. 플랫폼별 추가 설정과 수동 실행
+검증은 `MIGRATION.md`와 `TASKS.md`에서 관리한다.

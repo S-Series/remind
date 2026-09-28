@@ -26,6 +26,7 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
     private ScratchMotionPath motionPath = ScratchMotionPath.Empty;
     private PlayableChartSnapshot sessionSnapshot;
     private PlayableChartSnapshot displaySnapshot;
+    private ChartCore subscribedChartCore;
     private float displayScale = 1f;
 
     public float DisplayScale => displayScale;
@@ -33,10 +34,12 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
     private void OnEnable()
     {
         ChartManager.ChartChanged += Rebuild;
+        SubscribeToBpmChanges();
     }
 
     private void Start()
     {
+        SubscribeToBpmChanges();
         ResolvePreviewNoteField();
 
         if (!previewLineField || !previewNoteField || !sourceGraphic)
@@ -56,6 +59,33 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
     private void OnDisable()
     {
         ChartManager.ChartChanged -= Rebuild;
+        if (subscribedChartCore)
+        {
+            subscribedChartCore.BpmChanged -= HandleBpmChanged;
+            subscribedChartCore = null;
+        }
+    }
+
+    private void SubscribeToBpmChanges()
+    {
+        ChartCore core = ChartCore.Instance;
+        if (!core || core == subscribedChartCore)
+        {
+            return;
+        }
+
+        if (subscribedChartCore)
+        {
+            subscribedChartCore.BpmChanged -= HandleBpmChanged;
+        }
+
+        subscribedChartCore = core;
+        subscribedChartCore.BpmChanged += HandleBpmChanged;
+    }
+
+    private void HandleBpmChanged(double _)
+    {
+        Rebuild();
     }
 
     public void Rebuild()
@@ -74,9 +104,11 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
 
         float previewEndY = Mathf.Max(
             0f,
-            sourceGraphic.GetPoint(1).y * displayScale);
+            EvaluateFloorPositionAtChartY(sourceGraphic.GetPoint(1).y) *
+            displayScale);
         float previewStartY = Mathf.Clamp(
-            sourceGraphic.GetPoint(0).y * displayScale,
+            EvaluateFloorPositionAtChartY(sourceGraphic.GetPoint(0).y) *
+            displayScale,
             0f,
             previewEndY);
         CollectSegmentBoundaries(previewStartY, previewEndY);
@@ -325,10 +357,19 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
             includeInstantAtPosition);
     }
 
+    /// <summary>편집 좌표를 Preview와 같은 FloorPosition으로 변환합니다.</summary>
+    public float EvaluateFloorPositionAtChartY(float chartY)
+    {
+        return displaySnapshot != null
+            ? (float)displaySnapshot.ScrollMap.FloorPositionAtChartPosition(
+                chartY * ChartHolder.PositionUnitsPerWorldUnit)
+            : chartY;
+    }
+
     /// <summary>
-    /// 현재 Preview 필드에서 지정한 채보 Y의 라인 중심이 이동한 월드 오프셋을 반환합니다.
+    /// 현재 Preview 필드에서 지정한 FloorPosition의 라인 중심이 이동한 월드 오프셋을 반환합니다.
     /// </summary>
-    public Vector3 EvaluateWorldCenterOffset(float positionY)
+    public Vector3 EvaluateWorldCenterOffset(float floorPosition)
     {
         if (!previewLineField)
         {
@@ -336,7 +377,7 @@ public sealed class ChartPreviewFloorRenderer : MonoBehaviour
         }
 
         float centerX = EvaluateCenterX(
-            positionY * displayScale,
+            floorPosition * displayScale,
             includeInstantAtPosition: true);
         return previewLineField.TransformVector(
             new Vector3(centerX, 0f, 0f));

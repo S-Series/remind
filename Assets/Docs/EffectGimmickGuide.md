@@ -1,7 +1,7 @@
 # Effect / MusicGimmick 사용 및 확장 가이드
 
 > 적용 범위: 현재 ChartMaker Preview와 `DemoPlay` 통합 하네스  
-> 데이터 형식: ChartMaker Editor JSON v8 + Effect sidecar v1  
+> 데이터 형식: ChartMaker Editor JSON 형식 버전 1 (`.rd` 단일 파일)
 > 최종 갱신: 2026-09-09
 
 이 문서는 Effect를 배치하고 안전하게 저장하는 방법, Preview와 실행 시의 공통
@@ -14,18 +14,14 @@
 | 정보 | 원본 |
 | --- | --- |
 | Effect 시각, 동일 시각 순서, 종류, 명령, `effectId` | `.rd`의 Effect 정의 |
-| 지속 시간, 위치, 강도, 조건 기준값 | `effect.{musicId}.{difficultyId}.json` |
+| 지속 시간, 위치, 강도, 조건 기준값 | `.rd`의 `eventDictionary[].parameters` |
 | 조건, 분기, 상태 변화, 실제 명령 구현 | C# Effect / MusicGimmick |
 | 실행 중 상태와 Unity 오브젝트 | 재생 세션; 파일이나 Snapshot에 저장하지 않음 |
 
-`.rd`와 sidecar는 같은 편집 문서다. 두 파일의 `musicId`, `difficultyId`,
-`revision`이 맞아야 하며, 연결은 배열 위치가 아니라 안정적인 `effectId`로 한다.
-다른 문서가 소유한 sidecar에는 저장하지 않는다.
-
-저장은 두 직렬화를 먼저 검증한 뒤 임시 파일과 backup을 사용한다. 두 파일 중 하나만
-교체된 경우 현재 pair 또는 backup pair로 복구하고, 어느 쪽도 맞지 않으면 불일치를
-명확히 보고한다. 디스크에 마지막으로 저장된 revision은 Undo/Redo되는 편집 이력과
-별도로 관리한다.
+Effect 행과 정의는 위치로, 조정값은 같은 `eventDictionary` 항목에 저장한다.
+저장 전에 전체 채보와 등록된 파라미터를 검증하고 임시 파일을 거쳐 `.rd`를 교체한다.
+복구용 `.rd.bak`이 생길 수 있다. 디스크에 마지막으로 저장된 revision은
+Undo/Redo되는 편집 이력과 별도로 관리한다.
 
 ## 2. ChartMaker 작업 순서
 
@@ -33,7 +29,7 @@
 2. 생성된 Effect가 자동 선택되면 `Effect Type`을 지정한다.
 3. `music.call`이면 현재 채보의 `gimmickId`에 등록된 `Command`도 지정한다.
 4. 표시된 JSON 수치를 수정하고 `Apply`한다.
-5. `.rd`로 저장한다. 같은 폴더의 sidecar도 함께 저장된다.
+5. `.rd`로 저장한다. Effect 파라미터도 같은 파일에 저장된다.
 6. 다시 열어 Effect 선택과 수치가 유지되는지 확인하고 Preview를 시작한다.
 
 종류가 비어 있거나 현재 등록되지 않은 기존 Effect도 열기·편집·보존·재저장은 할 수
@@ -41,21 +37,29 @@
 Gameplay 준비를 허용하지 않는다. 이 경우 ChartMaker는 Console 오류로 중단하는 대신
 해당 Effect를 선택하고 설정 안내를 표시한다.
 
-Preview 중에는 문서 변경, 저장/열기, 음악 교체를 막는다. 외부에서 sidecar를 수정한
+Preview 중에는 문서 변경, 저장/열기, 음악 교체를 막는다. 외부에서 `.rd`를 수정한
 경우 실행 중 세션에 조용히 반영하지 않고 명시적으로 다시 열거나 다시 불러온다.
 
-## 3. Sidecar v1 형식
+## 3. `.rd`의 Effect 파라미터 형식
 
 ```json
 {
-  "version": 1,
+  "format": "REmindChart",
+  "formatVersion": 1,
   "musicId": "effect_gameplay_sample",
   "difficultyId": "demo",
+  "baseBpm": 120,
+  "musicStartCorrectionMs": 0,
   "revision": "stage6_demo_004",
-  "parameters": [
+  "notes": ["000|0000|--------|--------|00000000|-1|-|T|-"],
+  "eventDictionary": [
     {
+      "position": 0,
       "effectId": "fx_stage6_camera",
-      "data": {
+      "effectTypeId": "camera.offset",
+      "commandId": "",
+      "order": 0,
+      "parameters": {
         "durationMs": 2000,
         "offsetX": 2.5,
         "offsetY": 0.75,
@@ -68,9 +72,8 @@ Preview 중에는 문서 변경, 저장/열기, 음악 교체를 막는다. 외�
 }
 ```
 
-최상위 또는 `data`의 알 수 없는 필드, 중복 JSON key, 잘못된 타입,
-NaN/Infinity는 준비 단계에서 거부한다. 설정이 필요 없는 명령은 sidecar 항목을
-요구하지 않는다.
+중복 JSON key, 잘못된 파라미터 타입, NaN/Infinity는 준비 단계에서 거부한다.
+설정이 필요 없는 명령은 `parameters`를 생략할 수 있다.
 
 ### `camera.offset`
 
@@ -83,7 +86,7 @@ NaN/Infinity는 준비 단계에서 거부한다. 설정이 필요 없는 명령
 | `attackMs` | 아니요 | 기존 파일 `0`, 새 설정 `100` | ms, finite, `0` 이상 |
 | `releaseMs` | 아니요 | 기존 파일 `0`, 새 설정 `100` | ms, finite, `0` 이상 |
 
-`attackMs + releaseMs`는 `durationMs` 이하여야 한다. 기존 sidecar에 두 보간 필드가
+`attackMs + releaseMs`는 `durationMs` 이하여야 한다. 기존 파라미터에 두 보간 필드가
 없으면 이전 동작을 보존하기 위해 둘 다 `0`으로 읽는다. ChartMaker에서 새로 만드는
 Camera 설정은 각각 `100ms`를 기본으로 넣는다.
 
@@ -111,7 +114,7 @@ envelope를 사용한다. 프레임이 늦어져도 그 프레임의 실제 경�
 
 준비 단계에서만 파일을 읽고 다음을 모두 검사한다.
 
-- `.rd`/sidecar 소유 정보와 revision
+- `.rd`의 곡·난이도 정보와 revision
 - Effect 행과 정의의 1:1 대응, 고유 `effectId`, 동일 시각의 고유 order
 - 등록된 Effect 종류, MusicGimmick과 명령
 - JSON 구조·타입·필수 값·범위
@@ -188,9 +191,9 @@ Gameplay로 간주하지 않는다.
 
 ## 7. 번들 샘플과 확인 방법
 
-- 채보: `Assets/Chart/EffectGameplaySample.rd`
-- 수치: `Assets/Chart/effect.effect_gameplay_sample.demo.json`
-- pair revision: `stage6_demo_004`
+- 채보와 Effect 설정: `Assets/Tests/Fixtures/EffectGameplaySample.rd`
+- 실행 패키지: `Assets/Tests/Fixtures/rmp/EffectGameplaySample.rmp.json`
+- revision: `stage6_demo_004`
 - 모든 노트와 Effect는 최초 로딩과 겹치지 않게 1000ms 이후에 있다.
 - Camera Effect는 약 1.733초에 시작해 500ms 동안 진입하고, 약 1초 유지한 뒤
   500ms 동안 복귀한다.
@@ -212,9 +215,8 @@ Console 오류가 없는지 확인한다. Auto는 물리 입력 대신 샘플 Ta
 - `Temp chart TextAsset is not assigned`: 현재 `DemoPlay`에는 구형 `TempLoader`가 없어야
   한다. 씬에 남은 legacy `Chart Provider`를 제거하고 새 session controller 참조를 쓴다.
 - `duplicate ID, invalid order, or no matching Effect row`: `.rd`의 Effect 행과
-  `effectDefinitions` 위치/ID/order가 1:1인지 확인한다.
-- revision 또는 owner 불일치: 임의로 한쪽 revision만 고치지 말고 matching current/
-  backup pair를 복구하거나 ChartMaker에서 두 파일을 함께 다시 저장한다.
+  `eventDictionary` 위치/ID/order가 1:1인지 확인한다.
+- 저장된 파일이 손상된 경우: `.rd.bak`을 확인하고 ChartMaker에서 다시 저장한다.
 - 타입 미지정 안내: 데이터를 지우지 말고 해당 Effect의 등록된 Type과 필요한 Command를
   선택한 뒤 Apply한다.
 - 카메라가 움직이지 않음: 준비 오류로 Play가 멈추지 않았는지, Effect camera pivot과

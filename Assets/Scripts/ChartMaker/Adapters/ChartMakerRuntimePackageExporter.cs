@@ -1,10 +1,22 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using REmind.Charting;
 
-/// <summary>Turns the current editor files into a validated Game package.</summary>
+/// <summary>Turns the editor chart into a validated Game package.</summary>
 public static class ChartMakerRuntimePackageExporter
 {
+    public static string DefaultOutputPath(string chartPath)
+    {
+        if (string.IsNullOrWhiteSpace(chartPath))
+            throw new ArgumentException("Chart path is required.", nameof(chartPath));
+        return Path.Combine(Path.GetDirectoryName(chartPath), "rmp",
+            Path.GetFileNameWithoutExtension(chartPath) + ".rmp.json");
+    }
+
+    public static string Export(string chartJson, int beatsPerMeasure = 4) =>
+        Export(chartJson, null, beatsPerMeasure);
+
     public static string Export(string chartJson, string effectParameterJson,
         int beatsPerMeasure = 4)
     {

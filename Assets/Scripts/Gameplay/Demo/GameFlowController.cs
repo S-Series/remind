@@ -47,6 +47,8 @@ namespace REmind.Gameplay.Demo
         private int great;
         private int good;
         private int miss;
+        private int maxCombo;
+        private int lastPauseTransitionFrame = -1;
 
         private void Awake()
         {
@@ -60,11 +62,13 @@ namespace REmind.Gameplay.Demo
         private void OnEnable()
         {
             if (judgementSystem) judgementSystem.NoteJudged += OnNoteJudged;
+            if (sessionState) sessionState.StateChanged += OnSessionStateChanged;
         }
 
         private void OnDisable()
         {
             if (judgementSystem) judgementSystem.NoteJudged -= OnNoteJudged;
+            if (sessionState) sessionState.StateChanged -= OnSessionStateChanged;
         }
 
         private void Start() => Show(Screen.Loading);
@@ -75,24 +79,45 @@ namespace REmind.Gameplay.Demo
             {
                 if (notePresenter && notePresenter.IsReady &&
                     chartSession && chartSession.IsPrepared)
-                    Show(Screen.Select);
+                {
+                    AudioClip song = gameManager && gameManager.GamePlay
+                        ? gameManager.GamePlay.CurrentSong : null;
+                    if (song && song.loadState == AudioDataLoadState.Loading)
+                        return;
+                    if (!song || song.loadState == AudioDataLoadState.Failed)
+                    {
+                        Show(Screen.Error);
+                        return;
+                    }
+                    if (!string.IsNullOrEmpty(chartSession.CurrentSongTitle))
+                        songTitle = chartSession.CurrentSongTitle;
+                    if (AppRoot.Current &&
+                        AppRoot.Current.TryGetSelectedSong(out _))
+                        BeginSong(false);
+                    else
+                        Show(Screen.Select);
+                }
                 else if (notePresenter && !notePresenter.enabled && !notePresenter.IsReady)
                     Show(Screen.Error);
             }
             else if (screen == Screen.Playing)
             {
-                // Pause is a gameplay action; menu Cancel is used only after pause opens.
                 if (Keyboard.current != null &&
-                    Keyboard.current.escapeKey.wasPressedThisFrame)
+                    Keyboard.current.escapeKey.wasPressedThisFrame &&
+                    lastPauseTransitionFrame != Time.frameCount)
                     Pause();
                 else if (gameManager &&
                     gameManager.PlaybackState == PlaybackState.Finished &&
                     judgementSystem && judgementSystem.PendingNoteCount == 0)
-                    Show(Screen.Result);
+                    FinishSong();
                 else if (sessionState && sessionState.IsFailed && gameManager &&
                     gameManager.PlaybackState == PlaybackState.Ready)
-                    Show(Screen.Result);
+                    FinishSong();
             }
+            else if (screen == Screen.Paused && Keyboard.current != null &&
+                     Keyboard.current.escapeKey.wasPressedThisFrame &&
+                     lastPauseTransitionFrame != Time.frameCount)
+                Resume();
 
             if ((screen == Screen.Playing || screen == Screen.Paused) && hudText && sessionState)
                 hudText.text = $"{songTitle}    Score {sessionState.CurrentScore:0}    " +
@@ -113,14 +138,24 @@ namespace REmind.Gameplay.Demo
 
         public void Pause()
         {
-            if (screen == Screen.Playing && gameManager && gameManager.PauseGame())
+            if (screen == Screen.Playing &&
+                lastPauseTransitionFrame != Time.frameCount &&
+                gameManager && gameManager.PauseGame())
+            {
+                lastPauseTransitionFrame = Time.frameCount;
                 Show(Screen.Paused);
+            }
         }
 
         public void Resume()
         {
-            if (screen == Screen.Paused && gameManager && gameManager.ResumeGame())
+            if (screen == Screen.Paused &&
+                lastPauseTransitionFrame != Time.frameCount &&
+                gameManager && gameManager.ResumeGame())
+            {
+                lastPauseTransitionFrame = Time.frameCount;
                 Show(Screen.Playing);
+            }
         }
 
         public void Restart()
@@ -134,6 +169,11 @@ namespace REmind.Gameplay.Demo
         public void ReturnToSelect()
         {
             gameManager?.StopGame();
+            if (AppRoot.Current && AppRoot.Current.TryGetSelectedSong(out _))
+            {
+                SceneManager.LoadScene("MusicSelect");
+                return;
+            }
             notePresenter?.ResetJudgements();
             notePresenter?.ResetView();
             Show(Screen.Select);
@@ -142,7 +182,7 @@ namespace REmind.Gameplay.Demo
         public void ReturnToMusic()
         {
             gameManager?.StopGame();
-            SceneManager.LoadScene("Music");
+            SceneManager.LoadScene("MusicSelect");
         }
 
         private void BeginSong(bool enableAutoPlay)
@@ -222,7 +262,39 @@ namespace REmind.Gameplay.Demo
             }
         }
 
-        private void ResetCounts() => perfect = great = good = miss = 0;
+        private void OnSessionStateChanged()
+        {
+            if (sessionState && sessionState.CurrentCombo > maxCombo)
+                maxCombo = sessionState.CurrentCombo;
+        }
+
+        private void FinishSong()
+        {
+            if (AppRoot.Current &&
+                AppRoot.Current.TryGetSelectedSong(out AppRoot.SongSelection selection) &&
+                chartSession && chartSession.CurrentChart != null &&
+                sessionState && gameManager && gameManager.GameRule != null &&
+                selection.MusicId == chartSession.CurrentChart.Metadata.MusicId &&
+                selection.DifficultyId == chartSession.CurrentChart.Metadata.DifficultyId)
+            {
+                var result = new GameResultSnapshot(
+                    selection.MusicId, selection.DifficultyId,
+                    sessionState.CurrentScore, gameManager.GameRule.MaxScore,
+                    gameManager.GameRule.GetRank(sessionState.CurrentScore),
+                    perfect, great, good, miss, maxCombo,
+                    sessionState.TotalNoteCount, sessionState.IsCleared,
+                    sessionState.IsFailed, autoPlay);
+                AppRoot.Current.PublishResult(result);
+                SceneManager.LoadScene("Result");
+                return;
+            }
+            Show(Screen.Result);
+        }
+
+        private void ResetCounts()
+        {
+            perfect = great = good = miss = maxCombo = 0;
+        }
 
         private static void SetVisible(GameObject target, bool visible)
         {

@@ -3,13 +3,15 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using System.Xml.Linq;
 using REmind.Charting;
 using REmind.Data;
 using UnityEngine;
 
 public static class ChartFileCodec
 {
-    public const int CurrentFormatVersion = 8;
+    public const int CurrentFormatVersion = 1;
+    private const int PreviousEffectJsonFormatVersion = 8;
     private const int CompactJsonFormatVersion = 7;
     internal const int LegacyPositionUnitsPerMeasure = 1600;
 
@@ -37,7 +39,8 @@ public static class ChartFileCodec
         IReadOnlyList<ChartHolder> holders,
         double baseBpm,
         double musicStartCorrectionMs,
-        ChartEffectDocumentState.Metadata? effectMetadata = null)
+        ChartEffectDocumentState.Metadata? effectMetadata = null,
+        string jacketFile = null)
     {
         // 기존 Native codec의 검증/정규화 규칙을 단일 기준으로 재사용한 뒤
         // 검증된 편집 데이터를 JSON DTO로 변환합니다.
@@ -50,6 +53,9 @@ public static class ChartFileCodec
             new ChartEffectDocumentState.Metadata("untitled", "default", "", "");
         normalized.MusicId = metadata.MusicId;
         normalized.DifficultyId = metadata.DifficultyId;
+        if (!string.IsNullOrEmpty(jacketFile))
+            SongContentCodec.ValidateFileName(jacketFile, "jacketFile");
+        normalized.JacketFile = jacketFile;
         normalized.GimmickId = metadata.GimmickId;
         normalized.EffectRevision = metadata.Revision;
         Dictionary<int, ChartHolder> sources = new Dictionary<int, ChartHolder>();
@@ -59,7 +65,7 @@ public static class ChartFileCodec
             source.EnsureEffectIdentity();
             sources.Add(source.AbsoluteChartPosition, source);
         }
-        normalized.HasEffectParameterFile = sources.Count > 0;
+        normalized.HasEffectParameterFile = false;
         foreach (ChartHolder target in normalized.chartDatas)
         {
             if (!target.isEffect) continue;
@@ -68,6 +74,7 @@ public static class ChartFileCodec
             target.effectTypeId = source.effectTypeId;
             target.effectCommandId = source.effectCommandId;
             target.effectOrder = source.effectOrder;
+            target.effectParametersJson = source.effectParametersJson;
         }
         return SerializeJson(normalized);
     }
@@ -429,21 +436,36 @@ public static class ChartFileCodec
             }
         }
 
-        JsonCompactChartDocument document = new JsonCompactChartDocument
+        JsonCurrentChartDocument document = new JsonCurrentChartDocument
         {
             format = JsonFormatName,
             formatVersion = CurrentFormatVersion,
-            baseBpm = chartFile.BaseBpm,
-            musicStartCorrectionMs = chartFile.MusicStartCorrectionMs,
-            events = eventRows.ToArray(),
             musicId = chartFile.MusicId,
             difficultyId = chartFile.DifficultyId,
+            jacketFile = chartFile.JacketFile,
             gimmickId = chartFile.GimmickId,
+            baseBpm = chartFile.BaseBpm,
+            musicStartCorrectionMs = chartFile.MusicStartCorrectionMs,
             revision = chartFile.EffectRevision,
-            hasEffectParameters = chartFile.HasEffectParameterFile,
-            effectDefinitions = BuildEffectDefinitions(holders)
+            notes = eventRows.ToArray(),
+            eventDictionary = BuildEffectDefinitions(holders)
         };
-        return JsonUtility.ToJson(document, true);
+        XElement root = ChartEffectJsonCodec.ReadObject(JsonUtility.ToJson(document));
+        XElement entries = ChartEffectJsonCodec.Member(root, "eventDictionary");
+        ChartEffectJsonCodec.RequireType(entries, "array");
+        Dictionary<string, ChartHolder> effects = new Dictionary<string, ChartHolder>(StringComparer.Ordinal);
+        foreach (ChartHolder holder in holders)
+            if (holder.isEffect) effects.Add(holder.effectId, holder);
+        foreach (XElement entry in entries.Elements())
+        {
+            string id = ChartEffectJsonCodec.String(entry, "effectId");
+            string parametersJson = effects[id].effectParametersJson;
+            if (string.IsNullOrWhiteSpace(parametersJson)) continue;
+            XElement parameters = ChartEffectJsonCodec.ReadObject(parametersJson);
+            parameters.Name = "parameters";
+            entry.Add(parameters);
+        }
+        return ChartEffectJsonCodec.WriteObject(root);
     }
 
     private static ChartFile ParseJson(string text)
@@ -483,6 +505,7 @@ public static class ChartFileCodec
         }
 
         if (header.formatVersion == CurrentFormatVersion ||
+            header.formatVersion == PreviousEffectJsonFormatVersion ||
             header.formatVersion == CompactJsonFormatVersion)
         {
             return ParseCompactJson(text);
@@ -492,8 +515,8 @@ public static class ChartFileCodec
         {
             throw new FormatException(
                 $"Unsupported JSON chart format version " +
-                $"'{header.formatVersion}'. Expected " +
-                $"{ObjectJsonFormatVersion} or {CurrentFormatVersion}.");
+                $"'{header.formatVersion}'. Current version is " +
+                $"{CurrentFormatVersion}.");
         }
 
         JsonChartDocument document;
@@ -629,18 +652,22 @@ public static class ChartFileCodec
                 JsonFormatName,
                 StringComparison.Ordinal) ||
             (document.formatVersion != CurrentFormatVersion &&
+             document.formatVersion != PreviousEffectJsonFormatVersion &&
              document.formatVersion != CompactJsonFormatVersion))
         {
             throw new FormatException(
-                $"Compact chart JSON requires format '{JsonFormatName}' " +
-                $"version {CurrentFormatVersion}.");
+                $"Unsupported compact chart JSON format or version. " +
+                $"Current format is '{JsonFormatName}' version {CurrentFormatVersion}.");
         }
 
         ValidateBaseBpm(document.baseBpm);
         ValidateFinite(
             document.musicStartCorrectionMs,
             nameof(document.musicStartCorrectionMs));
-        string[] eventRows = document.events ?? Array.Empty<string>();
+        bool inline = document.formatVersion == CurrentFormatVersion;
+        if (inline && (document.notes == null || document.eventDictionary == null))
+            throw new FormatException("Chart version 1 requires both notes and eventDictionary.");
+        string[] eventRows = inline ? document.notes : document.events ?? Array.Empty<string>();
         StringBuilder nativeText = new StringBuilder();
         AppendMetadata(
             nativeText,
@@ -679,14 +706,53 @@ public static class ChartFileCodec
         parsed.FormatVersion = document.formatVersion;
         parsed.MusicId = document.musicId;
         parsed.DifficultyId = document.difficultyId;
+        if (!string.IsNullOrEmpty(document.jacketFile))
+            SongContentCodec.ValidateFileName(document.jacketFile, "jacketFile");
+        parsed.JacketFile = document.jacketFile;
         parsed.GimmickId = document.gimmickId;
         parsed.EffectRevision = document.revision;
-        parsed.HasEffectParameterFile = document.hasEffectParameters;
-        if (document.formatVersion >= 8)
-            ApplyEffectDefinitions(parsed.chartDatas, document.effectDefinitions);
+        parsed.HasEffectParameterFile = !inline && document.hasEffectParameters;
+        if (document.formatVersion == CurrentFormatVersion ||
+            document.formatVersion == PreviousEffectJsonFormatVersion)
+            ApplyEffectDefinitions(parsed.chartDatas,
+                inline ? document.eventDictionary : document.effectDefinitions,
+                inline ? ReadInlineParameters(text, document.eventDictionary) : null);
         else
             foreach (ChartHolder holder in parsed.chartDatas) holder.EnsureEffectIdentity();
+        if (inline)
+            ChartEffectJsonCodec.ValidateKnownParameters(parsed.chartDatas,
+                parsed.GimmickId);
         return parsed;
+    }
+
+    private static Dictionary<string, string> ReadInlineParameters(
+        string text, JsonEffectDefinition[] definitions)
+    {
+        XElement root = ChartEffectJsonCodec.ReadObject(text);
+        ChartEffectJsonCodec.Only(root, "format", "formatVersion", "musicId",
+            "difficultyId", "jacketFile", "gimmickId", "baseBpm",
+            "musicStartCorrectionMs", "revision", "notes", "eventDictionary");
+        XElement entries = ChartEffectJsonCodec.Member(root, "eventDictionary");
+        ChartEffectJsonCodec.RequireType(entries, "array");
+        XElement[] items = new List<XElement>(entries.Elements()).ToArray();
+        if (items.Length != definitions.Length)
+            throw new FormatException("eventDictionary entry count changed during parsing.");
+        Dictionary<string, string> result = new Dictionary<string, string>(StringComparer.Ordinal);
+        for (int i = 0; i < items.Length; i++)
+        {
+            XElement entry = items[i];
+            ChartEffectJsonCodec.RequireType(entry, "object");
+            ChartEffectJsonCodec.Only(entry, "position", "effectId", "effectTypeId",
+                "commandId", "order", "parameters");
+            if (ChartEffectJsonCodec.String(entry, "effectId") != definitions[i].effectId)
+                throw new FormatException("eventDictionary Effect IDs do not match.");
+            XElement parameters = entry.Element("parameters");
+            if (parameters == null) continue;
+            ChartEffectJsonCodec.RequireType(parameters, "object");
+            result.Add(definitions[i].effectId,
+                ChartEffectJsonCodec.WriteObject(parameters));
+        }
+        return result;
     }
 
     private static JsonEffectDefinition[] BuildEffectDefinitions(IReadOnlyList<ChartHolder> holders)
@@ -710,7 +776,9 @@ public static class ChartFileCodec
         return result.ToArray();
     }
 
-    private static void ApplyEffectDefinitions(ChartHolder[] holders, JsonEffectDefinition[] definitions)
+    private static void ApplyEffectDefinitions(ChartHolder[] holders,
+        JsonEffectDefinition[] definitions,
+        IReadOnlyDictionary<string, string> parametersById = null)
     {
         Dictionary<int, ChartHolder> effects = new Dictionary<int, ChartHolder>();
         foreach (ChartHolder holder in holders)
@@ -726,6 +794,9 @@ public static class ChartFileCodec
             holder.effectTypeId = definition.effectTypeId;
             holder.effectCommandId = definition.commandId;
             holder.effectOrder = definition.order;
+            if (parametersById != null &&
+                parametersById.TryGetValue(definition.effectId, out string parametersJson))
+                holder.effectParametersJson = parametersJson;
             effects.Remove(definition.position);
         }
         if (effects.Count > 0)
@@ -2248,6 +2319,22 @@ public static class ChartFileCodec
     }
 
     [Serializable]
+    private sealed class JsonCurrentChartDocument
+    {
+        public string format;
+        public int formatVersion;
+        public string musicId;
+        public string difficultyId;
+        public string jacketFile;
+        public string gimmickId;
+        public double baseBpm;
+        public double musicStartCorrectionMs;
+        public string revision;
+        public string[] notes;
+        public JsonEffectDefinition[] eventDictionary;
+    }
+
+    [Serializable]
     private sealed class JsonCompactChartDocument
     {
         public string format;
@@ -2255,12 +2342,15 @@ public static class ChartFileCodec
         public double baseBpm;
         public double musicStartCorrectionMs;
         public string[] events;
+        public string[] notes;
         public string musicId;
         public string difficultyId;
+        public string jacketFile;
         public string gimmickId;
         public string revision;
         public bool hasEffectParameters;
         public JsonEffectDefinition[] effectDefinitions;
+        public JsonEffectDefinition[] eventDictionary;
     }
 
     [Serializable]

@@ -9,9 +9,13 @@ namespace REmind.Gameplay.Demo
     {
         [SerializeField] private string difficultyId;
         [SerializeField] private int level;
+        [SerializeField] private Sprite jacket;
+        [SerializeField] private TextAsset runtimePackage;
 
         public string DifficultyId => difficultyId;
         public int Level => level;
+        public Sprite Jacket => jacket;
+        public TextAsset RuntimePackage => runtimePackage;
     }
 
     [Serializable]
@@ -30,6 +34,15 @@ namespace REmind.Gameplay.Demo
         public IReadOnlyList<MusicDifficultyEntry> Difficulties =>
             difficulties ?? Array.Empty<MusicDifficultyEntry>();
 
+        public Sprite GetJacket(string difficultyId)
+        {
+            foreach (MusicDifficultyEntry difficulty in Difficulties)
+                if (string.Equals(difficulty.DifficultyId, difficultyId,
+                        StringComparison.Ordinal))
+                    return difficulty.Jacket ? difficulty.Jacket : jacket;
+            return jacket;
+        }
+
         public bool TryGetLevel(string difficultyId, out int level)
         {
             foreach (MusicDifficultyEntry difficulty in Difficulties)
@@ -41,6 +54,15 @@ namespace REmind.Gameplay.Demo
             level = 0;
             return false;
         }
+
+        public MusicDifficultyEntry FindDifficulty(string difficultyId)
+        {
+            foreach (MusicDifficultyEntry difficulty in Difficulties)
+                if (string.Equals(difficulty.DifficultyId, difficultyId,
+                        StringComparison.Ordinal))
+                    return difficulty;
+            return null;
+        }
     }
 
     /// <summary>Build-safe references generated from Assets/Data/Music/*/data.json.</summary>
@@ -49,5 +71,14 @@ namespace REmind.Gameplay.Demo
         [SerializeField] private MusicCatalogEntry[] songs = Array.Empty<MusicCatalogEntry>();
 
         public IReadOnlyList<MusicCatalogEntry> Songs => songs;
+
+        public MusicCatalogEntry FindSong(string musicId)
+        {
+            foreach (MusicCatalogEntry song in Songs)
+                if (string.Equals(song.MusicId, musicId,
+                        StringComparison.Ordinal))
+                    return song;
+            return null;
+        }
     }
 }

@@ -2866,7 +2866,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::GamePlay
   cameraTransform: {fileID: 414375661}
   audioSource: {fileID: 1721417049}
-  initialSong: {fileID: 8300000, guid: 78bbcd18f077b6e45a2a3165214242fd, type: 3}
+  initialSong: {fileID: 0}
   playOnStart: 0
   musicVolume: 0.5
   schedulingLeadTimeSeconds: 0.2
@@ -4277,10 +4277,13 @@ MonoBehaviour:
   gameManager: {fileID: 1721417052}
   judgementSystem: {fileID: 1721417054}
   chartSession: {fileID: 2200000003}
+  musicCatalog: {fileID: 11400000, guid: 2aa562f8971e4fb194194407a7b18c1e, type: 2}
+  defaultMusicId: i
+  defaultDifficultyId: hard
   cameraTransform: {fileID: 248921289}
   bpm: 225
   speedMultiplier: 7.5
-  tapNotePrefab: {fileID: 7256374167690495269, guid: ef722f8fe35a808468de9c43ee1ca0a2, type: 3}
+  tapNotePrefab: {fileID: 7256374167690495269, guid: e6e09ee44b1b0ac45a4f3c4a90725dc3, type: 3}
   scratchNotePrefab: {fileID: 7673451636091737856, guid: cb527a7e42ec7ff4aa3c5a525eff110e, type: 3}
   longTapNotePrefab: {fileID: 6189104666034249852, guid: dcd8361cd23431843a556207df73d8e3, type: 3}
   longScratchNotePrefab: {fileID: 6189104666034249852, guid: 799d704f4831bb2498ba81ebcf6630f1, type: 3}
@@ -4300,8 +4303,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e36aea3d03c642dcbec37428e6e25f41, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::REmind.Gameplay.Chart.GameplayChartSessionController
-  chartAsset: {fileID: 4900000, guid: 9130f2d0b9d9ce749a41b454171ce2ee, type: 3}
-  bundledMusicId: chroma-i
+  chartAsset: {fileID: 4900000, guid: ec47c90a520b0004d8fdeb3957d2ea19, type: 3}
+  bundledMusicId: i
   bundledSong: {fileID: 8300000, guid: 78bbcd18f077b6e45a2a3165214242fd, type: 3}
   bundledSongVolume: 0.5
   gameManager: {fileID: 1721417052}

@@ -22,6 +22,9 @@ namespace REmind.Gameplay.Demo
         [SerializeField] private GameManager gameManager;
         [SerializeField] private NoteJudgementSystem judgementSystem;
         [SerializeField] private GameplayChartSessionController chartSession;
+        [SerializeField] private MusicCatalog musicCatalog;
+        [SerializeField] private string defaultMusicId = "i";
+        [SerializeField] private string defaultDifficultyId = "hard";
 
         [Header("Movement")]
         [SerializeField] private Transform cameraTransform;
@@ -63,7 +66,21 @@ namespace REmind.Gameplay.Demo
             bool chartReady = false;
             if (chartSession)
             {
-                chartReady = chartSession.TryPrepareConfiguredChart();
+                if (musicCatalog)
+                {
+                    string musicId = defaultMusicId;
+                    string difficultyId = defaultDifficultyId;
+                    if (AppRoot.Current && AppRoot.Current.TryGetSelectedSong(
+                            out AppRoot.SongSelection selection))
+                    {
+                        musicId = selection.MusicId;
+                        difficultyId = selection.DifficultyId;
+                    }
+                    chartReady = chartSession.TryPrepareSelectedChart(
+                        musicCatalog, musicId, difficultyId);
+                }
+                else
+                    chartReady = chartSession.TryPrepareConfiguredChart();
                 if (chartReady)
                 {
                     preparedChart = chartSession.CurrentChart;
@@ -73,8 +90,10 @@ namespace REmind.Gameplay.Demo
 
             if (!chartReady)
             {
-                LastError = chartSession ? chartSession.LastError :
-                    "Could not create the demo chart.";
+                LastError = chartSession &&
+                    !string.IsNullOrEmpty(chartSession.LastError)
+                        ? chartSession.LastError
+                        : "Could not build the prepared chart views.";
                 enabled = false;
                 return;
             }

@@ -4237,7 +4237,7 @@ MonoBehaviour:
   cameraTransform: {fileID: 248921289}
   bpm: 225
   speedMultiplier: 7.5
-  tapNotePrefab: {fileID: 7256374167690495269, guid: ef722f8fe35a808468de9c43ee1ca0a2, type: 3}
+  tapNotePrefab: {fileID: 7256374167690495269, guid: e6e09ee44b1b0ac45a4f3c4a90725dc3, type: 3}
   noteField: {fileID: 418015322}
   noteCorrectionMs: -1200
   playOnReady: 1

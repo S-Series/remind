@@ -6,8 +6,8 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
-    path: Assets/Scenes/SampleScene.unity
-    guid: 99c9720ab356a0642a771bea13969a05
+    path: Assets/Scenes/Bootstrap.unity
+    guid: 4e56cf13a3924fbca669b9913a77de2c
   - enabled: 1
     path: Assets/Scenes/Home.unity
     guid: 3f713db28951ea44e99d91be43c73d02
@@ -35,6 +35,9 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Scenes/MusicSelect.unity
     guid: 9001c1085fea3244c9fd7aa1a0f74cdd
+  - enabled: 1
+    path: Assets/Scenes/Result.unity
+    guid: 56b6185d213dbef4c95e44e7066aa294
   m_configObjects:
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   m_UseUCBPForAssetBundles: 0

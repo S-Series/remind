@@ -1163,6 +1163,7 @@ MonoBehaviour:
   difficultyNormalSprite: {fileID: 21300000, guid: 6f05cc44c0b54f3782d4a790d72edd57, type: 3}
   difficultySelectedSprite: {fileID: 21300000, guid: 9b3b2e1da6d040c183817e14ab9cea87, type: 3}
   previewAudioSource: {fileID: 3000001101}
+  previewFadeSeconds: 0.35
   jacketContainer: {fileID: 1287060467}
   jacketCanvasGroup: {fileID: 3000001102}
   listTransitionSeconds: 0.25
@@ -5583,7 +5584,7 @@ MonoBehaviour:
       m_Calls:
       - m_Target: {fileID: 394162728}
         m_TargetAssemblyTypeName: REmind.Gameplay.Demo.MusicSelectController, REmind.Gameplay
-        m_MethodName: ShowPlayNotice
+        m_MethodName: PlaySelectedSong
         m_Mode: 0
         m_Arguments:
           m_ObjectArgument: {fileID: 0}
@@ -9992,7 +9993,7 @@ AudioSource:
   m_audioClip: {fileID: 0}
   m_Resource: {fileID: 0}
   m_PlayOnAwake: 0
-  m_Volume: 0.35
+  m_Volume: 0.5
   m_Pitch: 1
   Loop: 0
   Mute: 0

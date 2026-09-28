@@ -30,12 +30,14 @@ namespace REmind.Gameplay.Input.Routing
             new Dictionary<InputAction, ActionBinding>(ActionBindings.Length);
 
         private InputActionMap rhythmActionMap;
+        private InputActionAsset runtimeActions;
         private bool isBound;
 
         public event Action<RhythmInputEvent> InputPerformed;
         public event Action<RhythmInputEvent> InputReleased;
 
-        public InputActionAsset InputActions => inputActions;
+        public InputActionAsset InputActions => runtimeActions
+            ? runtimeActions : inputActions;
         public bool IsReady => isBound;
 
         private void Awake()
@@ -59,6 +61,11 @@ namespace REmind.Gameplay.Input.Routing
         private void OnDestroy()
         {
             UnbindActions();
+            if (runtimeActions)
+            {
+                if (Application.isPlaying) Destroy(runtimeActions);
+                else DestroyImmediate(runtimeActions);
+            }
         }
 
         public void SetInputEnabled(bool value)
@@ -99,7 +106,10 @@ namespace REmind.Gameplay.Input.Routing
                 return false;
             }
 
-            rhythmActionMap = inputActions.FindActionMap(RhythmActionMapName, false);
+            if (AppRoot.Current && !runtimeActions)
+                runtimeActions = Instantiate(inputActions);
+            rhythmActionMap = InputActions.FindActionMap(RhythmActionMapName,
+                false);
             if (rhythmActionMap == null)
             {
                 Debug.LogError(
@@ -121,6 +131,10 @@ namespace REmind.Gameplay.Input.Routing
                         this);
                     return false;
                 }
+
+                if (runtimeActions && action.bindings.Count > 0)
+                    action.ApplyBindingOverride(0,
+                        AppRoot.Current.Settings.GetLaneBinding(binding.Lane));
 
                 bindingByAction.Add(action, binding);
                 action.performed += HandleActionPerformed;

@@ -18,10 +18,33 @@ MonoBehaviour:
   m_PlatformId: 4e3c793746204150860bf175a9a41a05
   m_PlatformBuildProfile:
     rid: 2235901488273293455
-  m_OverrideGlobalSceneList: 0
-  m_Scenes: []
+  m_OverrideGlobalSceneList: 1
+  m_Scenes:
+  - m_enabled: 1
+    m_path: Assets/Scenes/Bootstrap.unity
+  - m_enabled: 1
+    m_path: Assets/Scenes/Home.unity
+  - m_enabled: 1
+    m_path: Assets/Scenes/Story.unity
+  - m_enabled: 1
+    m_path: Assets/Scenes/MusicSelect.unity
+  - m_enabled: 1
+    m_path: Assets/Scenes/Music.unity
+  - m_enabled: 1
+    m_path: Assets/Scenes/Character.unity
+  - m_enabled: 1
+    m_path: Assets/Scenes/ReMind.unity
+  - m_enabled: 1
+    m_path: Assets/Scenes/Option.unity
+  - m_enabled: 1
+    m_path: Assets/Scenes/Settings.unity
+  - m_enabled: 1
+    m_path: Assets/Scenes/Game.unity
+  - m_enabled: 1
+    m_path: Assets/Scenes/Result.unity
   m_HasScriptingDefines: 0
-  m_ScriptingDefines: []
+  m_ScriptingDefines:
+  - REMIND_GAME
   m_PlayerSettingsYaml:
     m_Settings: []
   references:

@@ -21,7 +21,7 @@ public static class MusicCatalogBuilder
             throw new DirectoryNotFoundException(musicDirectory);
 
         var songs = new List<(string id, TextAsset data, Sprite jacket, AudioClip audio,
-            IReadOnlyList<SongChartEntry> difficulties)>();
+            IReadOnlyList<(string id, int level, Sprite jacket, TextAsset package)> difficulties)>();
         var ids = new HashSet<string>(StringComparer.Ordinal);
         foreach (string folder in Directory.GetDirectories(musicDirectory))
         {
@@ -35,10 +35,6 @@ public static class MusicCatalogBuilder
             string audioPath = SongContentCodec.ResolveReference(dataPath, song.AudioFile);
             if (!File.Exists(jacketPath) || !File.Exists(audioPath))
                 throw new FileNotFoundException("Song jacket or audio is missing: " + dataPath);
-            foreach (SongChartEntry chart in song.Charts)
-                if (!File.Exists(SongContentCodec.ResolveReference(dataPath, chart.ChartFile)))
-                    throw new FileNotFoundException("Song chart is missing: " + chart.ChartFile);
-
             TextAsset dataAsset = AssetDatabase.LoadAssetAtPath<TextAsset>(ToAssetPath(projectRoot, dataPath));
             Sprite jacketAsset = AssetDatabase.LoadAssetAtPath<Sprite>(ToAssetPath(projectRoot, jacketPath));
             AudioClip audioAsset = AssetDatabase.LoadAssetAtPath<AudioClip>(ToAssetPath(projectRoot, audioPath));
@@ -48,7 +44,62 @@ public static class MusicCatalogBuilder
                 throw new InvalidOperationException("Song jacket is not imported as a Sprite: " + jacketPath);
             if (!audioAsset)
                 throw new InvalidOperationException("Song audio is not imported as an AudioClip: " + audioPath);
-            songs.Add((song.MusicId, dataAsset, jacketAsset, audioAsset, song.Charts));
+
+            var difficulties = new List<(string id, int level, Sprite jacket, TextAsset package)>();
+            foreach (SongChartEntry entry in song.Charts)
+            {
+                string chartPath = SongContentCodec.ResolveReference(dataPath, entry.ChartFile);
+                if (!File.Exists(chartPath))
+                    throw new FileNotFoundException("Song chart is missing: " + entry.ChartFile);
+                string chartText = File.ReadAllText(chartPath);
+                ChartFile chart = ChartFileCodec.Parse(chartText);
+                if (!string.Equals(chart.MusicId, song.MusicId, StringComparison.Ordinal) ||
+                    !string.Equals(chart.DifficultyId, entry.DifficultyId, StringComparison.Ordinal))
+                    throw new FormatException("Song chart identity does not match data.json: " + chartPath);
+
+                string chartJacketPath = SongContentCodec.ResolveReference(
+                    dataPath, chart.EffectiveJacketFile);
+                Sprite chartJacket = jacketAsset;
+                if (File.Exists(chartJacketPath))
+                {
+                    chartJacket = AssetDatabase.LoadAssetAtPath<Sprite>(
+                        ToAssetPath(projectRoot, chartJacketPath));
+                    if (!chartJacket)
+                        throw new InvalidOperationException(
+                            "Chart jacket is not imported as a Sprite: " + chartJacketPath);
+                }
+                else if (!string.IsNullOrEmpty(chart.JacketFile))
+                    throw new FileNotFoundException(
+                        "Explicit chart jacket is missing: " + chart.JacketFile,
+                        chartJacketPath);
+
+                string packagePath = ChartMakerRuntimePackageExporter
+                    .DefaultOutputPath(chartPath);
+                string packageText = ChartMakerRuntimePackageExporter.Export(chartText);
+                string packageFolder = ToAssetPath(projectRoot,
+                    Path.GetDirectoryName(packagePath));
+                if (!AssetDatabase.IsValidFolder(packageFolder))
+                    AssetDatabase.CreateFolder(
+                        ToAssetPath(projectRoot, Path.GetDirectoryName(chartPath)),
+                        "rmp");
+                if (!File.Exists(packagePath) ||
+                    !string.Equals(File.ReadAllText(packagePath), packageText,
+                        StringComparison.Ordinal))
+                {
+                    File.WriteAllText(packagePath, packageText,
+                        new System.Text.UTF8Encoding(false));
+                    AssetDatabase.ImportAsset(ToAssetPath(projectRoot, packagePath),
+                        ImportAssetOptions.ForceUpdate);
+                }
+                TextAsset packageAsset = AssetDatabase.LoadAssetAtPath<TextAsset>(
+                    ToAssetPath(projectRoot, packagePath));
+                if (!packageAsset)
+                    throw new InvalidOperationException(
+                        "Runtime package is not imported as a TextAsset: " + packagePath);
+                difficulties.Add((entry.DifficultyId, entry.Level, chartJacket,
+                    packageAsset));
+            }
+            songs.Add((song.MusicId, dataAsset, jacketAsset, audioAsset, difficulties));
         }
         songs.Sort((a, b) => string.CompareOrdinal(a.id, b.id));
 
@@ -72,10 +123,12 @@ public static class MusicCatalogBuilder
             difficulties.arraySize = songs[index].difficulties.Count;
             for (int chartIndex = 0; chartIndex < difficulties.arraySize; chartIndex++)
             {
-                SongChartEntry chart = songs[index].difficulties[chartIndex];
+                var chart = songs[index].difficulties[chartIndex];
                 SerializedProperty difficulty = difficulties.GetArrayElementAtIndex(chartIndex);
-                difficulty.FindPropertyRelative("difficultyId").stringValue = chart.DifficultyId;
-                difficulty.FindPropertyRelative("level").intValue = chart.Level;
+                difficulty.FindPropertyRelative("difficultyId").stringValue = chart.id;
+                difficulty.FindPropertyRelative("level").intValue = chart.level;
+                difficulty.FindPropertyRelative("jacket").objectReferenceValue = chart.jacket;
+                difficulty.FindPropertyRelative("runtimePackage").objectReferenceValue = chart.package;
             }
         }
         serialized.ApplyModifiedPropertiesWithoutUndo();

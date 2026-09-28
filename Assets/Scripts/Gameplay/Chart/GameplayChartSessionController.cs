@@ -1,5 +1,6 @@
 using System;
 using REmind.Charting;
+using REmind.Gameplay.Demo;
 using REmind.Gameplay.Effects;
 using REmind.Gameplay.Input.Judgement;
 using REmind.Presentation;
@@ -34,6 +35,7 @@ namespace REmind.Gameplay.Chart
         private bool hitEffectBound;
 
         public PreparedGameplayChart CurrentChart { get; private set; }
+        public string CurrentSongTitle { get; private set; }
         public string LastError { get; private set; }
         public bool IsPrepared => CurrentChart != null;
 
@@ -67,9 +69,47 @@ namespace REmind.Gameplay.Chart
                 validateBundledSong: false);
         }
 
+        public bool TryPrepareSelectedChart(MusicCatalog catalog,
+            string musicId, string difficultyId)
+        {
+            if (!catalog || string.IsNullOrWhiteSpace(musicId) ||
+                string.IsNullOrWhiteSpace(difficultyId))
+                return Fail("A song and difficulty must be selected.");
+
+            MusicCatalogEntry entry = catalog.FindSong(musicId);
+            MusicDifficultyEntry difficulty = entry?.FindDifficulty(difficultyId);
+            if (difficulty == null || !entry.SongData || !entry.AudioClip ||
+                !difficulty.RuntimePackage)
+                return Fail("Selected song content is unavailable: " +
+                    musicId + "/" + difficultyId);
+
+            SongContent song;
+            try
+            {
+                song = SongContentCodec.Parse(entry.SongData.text);
+            }
+            catch (FormatException exception)
+            {
+                return Fail("Selected song data is invalid: " + exception.Message);
+            }
+            if (!string.Equals(song.MusicId, musicId, StringComparison.Ordinal) ||
+                song.FindChart(difficultyId) == null)
+                return Fail("Selected song IDs do not match its catalog entry.");
+
+            return TryPrepareInternal(difficulty.RuntimePackage.text,
+                validateBundledSong: false, expectedMusicId: musicId,
+                expectedDifficultyId: difficultyId, selectedSong: entry.AudioClip,
+                selectedVolume: song.PlaybackVolume, selectedTitle: song.Title);
+        }
+
         private bool TryPrepareInternal(
             string runtimePackageJson,
-            bool validateBundledSong)
+            bool validateBundledSong,
+            string expectedMusicId = null,
+            string expectedDifficultyId = null,
+            AudioClip selectedSong = null,
+            float selectedVolume = 1f,
+            string selectedTitle = null)
         {
             if (!ResolveReferences(out string referenceError))
             {
@@ -95,16 +135,23 @@ namespace REmind.Gameplay.Chart
                 return Fail(exception.Message);
             }
 
+            if (expectedMusicId != null &&
+                (!string.Equals(prepared.Metadata.MusicId, expectedMusicId,
+                    StringComparison.Ordinal) ||
+                 !string.Equals(prepared.Metadata.DifficultyId,
+                    expectedDifficultyId, StringComparison.Ordinal)))
+                return Fail("Runtime package IDs do not match the selected song and difficulty.");
+
             if (validateBundledSong)
             {
-                string expectedMusicId = bundledMusicId.Trim();
+                string bundledExpectedMusicId = bundledMusicId.Trim();
                 if (!string.Equals(
                         prepared.Metadata.MusicId,
-                        expectedMusicId,
+                        bundledExpectedMusicId,
                         StringComparison.Ordinal))
                 {
                     return Fail(
-                        $"Bundled song ID '{expectedMusicId}' does not match " +
+                        $"Bundled song ID '{bundledExpectedMusicId}' does not match " +
                         $"chart musicId '{prepared.Metadata.MusicId}'.");
                 }
 
@@ -112,12 +159,19 @@ namespace REmind.Gameplay.Chart
                 // a clip whose audio data has entered a failed state.
                 if (!gameManager.SetAudioSource(
                         bundledSong,
-                        bundledSongVolume))
+                        bundledSongVolume * (AppRoot.Current
+                            ? AppRoot.Current.Settings.MusicVolume : 1f)))
                 {
                     return Fail(
-                        $"Could not prepare the AudioClip for '{expectedMusicId}'.");
+                        $"Could not prepare the AudioClip for '{bundledExpectedMusicId}'.");
                 }
             }
+            else if (selectedSong &&
+                     !gameManager.SetAudioSource(selectedSong,
+                         selectedVolume * (AppRoot.Current
+                             ? AppRoot.Current.Settings.MusicVolume : 1f)))
+                return Fail("Could not prepare the selected AudioClip for '" +
+                    expectedMusicId + "'.");
 
             // Static parsing and bundled-song checks leave the previous prepared
             // chart intact. From this point onward a replacement owns the live
@@ -139,6 +193,9 @@ namespace REmind.Gameplay.Chart
                 return FailInvalidating(stateError);
             }
 
+            if (AppRoot.Current)
+                judgementSystem.SetUserOffsetMs(
+                    AppRoot.Current.Settings.JudgementOffsetMs);
             if (!judgementSystem.Initialize(
                     prepared.Snapshot,
                     prepared.ChartOffsetMs))
@@ -171,6 +228,7 @@ namespace REmind.Gameplay.Chart
             }
 
             CurrentChart = prepared;
+            CurrentSongTitle = selectedTitle;
             LastError = null;
             return true;
         }
@@ -192,6 +250,7 @@ namespace REmind.Gameplay.Chart
             // guard subscribed (until destruction) so a stale Effect plan can
             // never start while this owner is disabled.
             CurrentChart = null;
+            CurrentSongTitle = null;
             if (gameManager &&
                 (gameManager.PlaybackState == PlaybackState.Playing ||
                  gameManager.PlaybackState == PlaybackState.Paused ||
@@ -302,6 +361,7 @@ namespace REmind.Gameplay.Chart
         private string InvalidateLivePreparation()
         {
             CurrentChart = null;
+            CurrentSongTitle = null;
             string effectError = null;
             if (effectController && !effectController.ClearPreparation())
             {

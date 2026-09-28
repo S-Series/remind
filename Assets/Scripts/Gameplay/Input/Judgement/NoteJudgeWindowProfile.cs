@@ -9,9 +9,13 @@ namespace REmind.Gameplay.Input.Judgement
     {
         [SerializeField] private ChartNoteKind noteKind;
         [SerializeField] private JudgeWindows windows =
-            new JudgeWindows(30, 60, 100, 150);
+            new JudgeWindows(50, 50, 100, 100);
+        [SerializeField, Min(0)] private int longScratchMidPerfectMs = 100;
+        [SerializeField, Min(0)] private int longScratchEndPerfectMs = 75;
 
         public ChartNoteKind NoteKind => noteKind;
         public JudgeWindows Windows => windows;
+        public int LongScratchMidPerfectMs => longScratchMidPerfectMs;
+        public int LongScratchEndPerfectMs => longScratchEndPerfectMs;
     }
 }

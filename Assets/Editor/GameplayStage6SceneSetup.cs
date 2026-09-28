@@ -18,10 +18,8 @@ public static class GameplayStage6SceneSetup
 {
     private const string UndoName = "Connect Effect Sample to DemoPlay";
     private const string ScenePath = "Assets/Scenes/DemoPlay.unity";
-    private const string ChartPath =
-        "Assets/Chart/EffectGameplaySample.rd";
-    private const string ParameterPath =
-        "Assets/Chart/effect.effect_gameplay_sample.demo.json";
+    private const string PackagePath =
+        "Assets/Tests/Fixtures/rmp/EffectGameplaySample.rmp.json";
     private const string SampleMusicId = "effect_gameplay_sample";
 
     [MenuItem("REmind/Gameplay/Connect Effect Sample to DemoPlay")]
@@ -36,23 +34,14 @@ public static class GameplayStage6SceneSetup
         int undoGroup = Undo.GetCurrentGroup();
         Undo.SetCurrentGroupName(UndoName);
 
-        AssetDatabase.ImportAsset(
-            ChartPath,
-            ImportAssetOptions.ForceSynchronousImport |
-            ImportAssetOptions.ForceUpdate);
-        AssetDatabase.ImportAsset(
-            ParameterPath,
-            ImportAssetOptions.ForceSynchronousImport |
-            ImportAssetOptions.ForceUpdate);
+        RuntimePackageAssetBuilder.BuildDemoPackage();
 
         TextAsset chartAsset = AssetDatabase.LoadAssetAtPath<TextAsset>(
-            ChartPath);
-        TextAsset parameterAsset = AssetDatabase.LoadAssetAtPath<TextAsset>(
-            ParameterPath);
-        if (!chartAsset || !parameterAsset)
+            PackagePath);
+        if (!chartAsset)
         {
             throw new InvalidOperationException(
-                "The bundled gameplay chart pair could not be imported.");
+                "The bundled gameplay package could not be imported.");
         }
 
         Scene scene = EditorSceneManager.OpenScene(
@@ -102,11 +91,6 @@ public static class GameplayStage6SceneSetup
         SetReference(effects, "gameStateProvider", state);
 
         SetReference(chartSession, "chartAsset", chartAsset);
-        SetReference(
-            chartSession,
-            "effectParameterAsset",
-            parameterAsset);
-        SetInteger(chartSession, "beatsPerMeasure", 4);
         SetString(chartSession, "bundledMusicId", SampleMusicId);
         SetReference(chartSession, "bundledSong", song);
         SetFloat(chartSession, "bundledSongVolume", 0.5f);
@@ -132,7 +116,7 @@ public static class GameplayStage6SceneSetup
         AssetDatabase.SaveAssets();
         Undo.CollapseUndoOperations(undoGroup);
         Debug.Log(
-            "DemoPlay now uses the shared .rd/Effect JSON gameplay pipeline.");
+            "DemoPlay now uses the shared runtime chart package.");
     }
 
     private static void RemoveLegacyTempLoaders(Scene scene)

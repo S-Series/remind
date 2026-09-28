@@ -520,6 +520,11 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
                     holder.airNoteValues[sourceLine - 1],
                     out error);
                 break;
+            case NoteType.Speed:
+                moved = placementController.TryEditSpeedNote(
+                    selectedObject, targetMeasure, targetPosition,
+                    holder.targetLineSpeed, out error);
+                break;
             default:
                 moved = false;
                 error = $"{noteType} does not support keyboard movement.";
@@ -541,6 +546,12 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
         int direction,
         out int targetLine)
     {
+        if (noteType.IsChartEvent())
+        {
+            targetLine = sourceLine;
+            return false;
+        }
+
         if (noteType.IsScratch())
         {
             targetLine = direction < 0 ? -1 : -2;

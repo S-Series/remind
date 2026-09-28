@@ -49,14 +49,16 @@ namespace REmind.Charting
         }
 
         private readonly List<Entry> entries = new List<Entry>();
-        private readonly Func<PlayableNoteSnapshot, double, ChartJudgementGrade> judge;
-        private readonly Func<PlayableNoteSnapshot, double> missWindow;
+        private readonly Func<PlayableNoteSnapshot, int, double,
+            ChartJudgementGrade> judge;
+        private readonly Func<PlayableNoteSnapshot, int, double> missWindow;
         private readonly Action<ChartJudgementResolution> resolved;
         private readonly double userOffsetMs;
 
         public PlayableJudgementSession(PlayableChartSnapshot chart,
-            Func<PlayableNoteSnapshot, double, ChartJudgementGrade> judge,
-            Func<PlayableNoteSnapshot, double> missWindow,
+            Func<PlayableNoteSnapshot, int, double,
+                ChartJudgementGrade> judge,
+            Func<PlayableNoteSnapshot, int, double> missWindow,
             Action<ChartJudgementResolution> resolved, double userOffsetMs = 0d)
         {
             if (chart == null) throw new ArgumentNullException(nameof(chart));
@@ -118,7 +120,7 @@ namespace REmind.Charting
                 {
                     if (!pressed) continue;
                     double offset = chartTimeMs - userOffsetMs - note.StartTimeMs;
-                    ChartJudgementGrade grade = judge(note, offset);
+                    ChartJudgementGrade grade = judge(note, 0, offset);
                     if (grade == ChartJudgementGrade.None) continue;
                     Emit(entry, -1, grade, offset, note.StartTimeMs, chartTimeMs, false);
                     entry.Complete = true;
@@ -131,7 +133,8 @@ namespace REmind.Charting
                 if (pressed)
                 {
                     double startOffset = chartTimeMs - userOffsetMs - start.TimeMs;
-                    ChartJudgementGrade grade = judge(note, startOffset);
+                    ChartJudgementGrade grade = judge(note, index,
+                        startOffset);
                     if (grade != ChartJudgementGrade.None &&
                         !entry.JoinAttempted)
                     {
@@ -144,7 +147,7 @@ namespace REmind.Charting
                     if (index + 1 < note.Points.Count - 1 && !entry.Held)
                     {
                         double midOffset = chartTimeMs - userOffsetMs - end.TimeMs;
-                        grade = judge(note, midOffset);
+                        grade = judge(note, index + 1, midOffset);
                         if (grade != ChartJudgementGrade.None)
                         {
                             entry.PendingMidJoin = true;
@@ -160,7 +163,8 @@ namespace REmind.Charting
                     double endOffset = chartTimeMs - userOffsetMs - end.TimeMs;
                     if (index + 1 == note.Points.Count - 1 && entry.Joined)
                     {
-                        ChartJudgementGrade grade = judge(note, endOffset);
+                        ChartJudgementGrade grade = judge(note, index + 1,
+                            endOffset);
                         if (grade != ChartJudgementGrade.None)
                         {
                             ChartJudgementGrade intervalGrade =
@@ -190,7 +194,7 @@ namespace REmind.Charting
                 if (note.Points.Count == 1)
                 {
                     double time = note.StartTimeMs + userOffsetMs +
-                        (autoPlay ? 0d : missWindow(note) + 0.000001d);
+                        (autoPlay ? 0d : missWindow(note, 0) + 0.000001d);
                     next = Math.Min(next, time);
                 }
                 else
@@ -199,7 +203,7 @@ namespace REmind.Charting
                     bool isEnd = endIndex == note.Points.Count - 1;
                     double time = note.Points[endIndex].TimeMs + userOffsetMs +
                         (autoPlay || !isEnd ? 0d :
-                            missWindow(note) + 0.000001d);
+                            missWindow(note, endIndex) + 0.000001d);
                     next = Math.Min(next, time);
                 }
             }
@@ -219,7 +223,7 @@ namespace REmind.Charting
                 double target = note.Points[endIndex].TimeMs;
                 double deadline = target + userOffsetMs +
                     (autoPlay || !isEnd ? 0d :
-                        missWindow(note) + 0.000001d);
+                        missWindow(note, endIndex) + 0.000001d);
                 if (timeMs < deadline) continue;
 
                 if (single)

@@ -309,17 +309,37 @@ namespace REmind.Gameplay.Input.Judgement
         }
 
         private ChartJudgementGrade JudgeOffset(PlayableNoteSnapshot note,
-            double offsetMs)
+            int pointIndex, double offsetMs)
         {
+            if (note.Kind == ChartNoteKind.LongScratch && pointIndex > 0)
+            {
+                int limit = GetLongScratchPointWindow(
+                    pointIndex == note.Points.Count - 1);
+                return Math.Abs(offsetMs) <= limit
+                    ? ChartJudgementGrade.Perfect : ChartJudgementGrade.None;
+            }
             RuleContext context = CreateRuleContext(note);
             return (ChartJudgementGrade)gameRule.Judge(offsetMs, context,
                 GetBaseWindows(note.Kind));
         }
 
-        private double GetMissWindow(PlayableNoteSnapshot note)
+        private double GetMissWindow(PlayableNoteSnapshot note, int pointIndex)
         {
+            if (note.Kind == ChartNoteKind.LongScratch && pointIndex > 0)
+                return GetLongScratchPointWindow(
+                    pointIndex == note.Points.Count - 1);
             return gameRule.GetJudgeWindows(CreateRuleContext(note),
                 GetBaseWindows(note.Kind)).MissWindowMs;
+        }
+
+        private int GetLongScratchPointWindow(bool end)
+        {
+            if (noteWindowProfiles != null)
+                foreach (NoteJudgeWindowProfile profile in noteWindowProfiles)
+                    if (profile && profile.NoteKind == ChartNoteKind.LongScratch)
+                        return end ? profile.LongScratchEndPerfectMs :
+                            profile.LongScratchMidPerfectMs;
+            return end ? 75 : 100;
         }
 
         private RuleContext CreateRuleContext(PlayableNoteSnapshot note)

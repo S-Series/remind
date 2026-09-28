@@ -28,6 +28,7 @@ namespace REmind.Gameplay.Demo
         [SerializeField] private Sprite difficultySelectedSprite;
         [Header("Selection Presentation")]
         [SerializeField] private AudioSource previewAudioSource;
+        [SerializeField, Min(0.01f)] private float previewFadeSeconds = 0.35f;
         [SerializeField] private RectTransform jacketContainer;
         [SerializeField] private CanvasGroup jacketCanvasGroup;
         [SerializeField, Min(0.01f)] private float listTransitionSeconds = 0.25f;
@@ -57,9 +58,11 @@ namespace REmind.Gameplay.Demo
         private int levelFilter;
         private int sort;
         private int presentedTrack = -1;
+        private Sprite presentedArtwork;
         private int presentedPosition = -1;
         private int previewStartSample;
         private int previewEndSample;
+        private float previewTargetVolume;
         private Vector2 listRestPosition;
         private Vector2 jacketRestPosition;
         private Vector3 jacketRestScale;
@@ -109,6 +112,25 @@ namespace REmind.Gameplay.Demo
         private void Start()
         {
             if (playNotice) playNotice.SetActive(false);
+            if (AppRoot.Current && AppRoot.Current.TryGetSelectedSong(
+                    out AppRoot.SongSelection previous))
+            {
+                for (int index = 0; index < tracks.Length; index++)
+                    if (string.Equals(tracks[index].MusicId, previous.MusicId,
+                            StringComparison.Ordinal) &&
+                        tracks[index].TryGetLevel(previous.DifficultyId, out _))
+                    {
+                        selected = index;
+                        for (int difficulty = 0;
+                             difficulty < DifficultyIds.Length; difficulty++)
+                            if (DifficultyIds[difficulty] == previous.DifficultyId)
+                            {
+                                selectedDifficulty = difficulty;
+                                break;
+                            }
+                        break;
+                    }
+            }
             Refresh();
         }
 
@@ -119,7 +141,8 @@ namespace REmind.Gameplay.Demo
 
         private void Update()
         {
-            RepeatPreviewIfNeeded();
+            if (AppRoot.Current && AppRoot.Current.IsTransitioning) return;
+            UpdatePreviewLoop();
             var keyboard = Keyboard.current;
             if (keyboard == null) return;
             if (keyboard.escapeKey.wasPressedThisFrame)
@@ -140,15 +163,12 @@ namespace REmind.Gameplay.Demo
 
         private void OnDisable()
         {
-            if (previewAudioSource)
-            {
-                previewAudioSource.Stop();
-                previewAudioSource.clip = null;
-            }
+            StopPreview();
             if (listTransition != null) StopCoroutine(listTransition);
             if (jacketTransition != null) StopCoroutine(jacketTransition);
             listTransition = jacketTransition = null;
             presentedTrack = presentedPosition = -1;
+            presentedArtwork = null;
             if (trackContainer) trackContainer.anchoredPosition = listRestPosition;
             if (jacketContainer)
             {
@@ -230,11 +250,34 @@ namespace REmind.Gameplay.Demo
         {
             if (tracks.Length == 0 || !tracks[selected].gameObject.activeInHierarchy) return;
             tracks[selected].ToggleFavorite();
+            if (AppRoot.Current)
+                AppRoot.Current.SetFavorite(tracks[selected].MusicId,
+                    tracks[selected].Favorite);
             Refresh();
         }
-        public void ShowPlayNotice() => playNotice.SetActive(true);
+        public void PlaySelectedSong()
+        {
+            if (selected < 0 || selected >= tracks.Length ||
+                !tracks[selected].gameObject.activeInHierarchy) return;
+
+            MusicTrackRow track = tracks[selected];
+            if (!AppRoot.Current)
+            {
+                Debug.LogError("Start the Game from Bootstrap to keep the selected song.", this);
+                return;
+            }
+            if (AppRoot.Current.IsTransitioning) return;
+            AppRoot.Current.SelectSong(track.MusicId, track.DifficultyId);
+            StopPreview();
+            if (!AppRoot.Current.TryStartSelectedGame())
+                Debug.LogError("Music Selected transition is not configured.", this);
+        }
         public void CloseNotice() => playNotice.SetActive(false);
-        public void Back() => SceneManager.LoadScene("Home");
+        public void Back()
+        {
+            if (AppRoot.Current && AppRoot.Current.IsTransitioning) return;
+            SceneManager.LoadScene("Home");
+        }
 
         private void StartPreview(MusicTrackRow track)
         {
@@ -242,6 +285,8 @@ namespace REmind.Gameplay.Demo
             if (!previewAudioSource || !track.PreviewAudio) return;
             AudioClip clip = track.PreviewAudio;
             if (clip.samples <= 0) return;
+            previewTargetVolume = track.PreviewVolume * (AppRoot.Current
+                ? AppRoot.Current.Settings.MusicVolume : 1f);
             previewStartSample = (int)Math.Min(clip.samples - 1d, Math.Max(0d,
                 Math.Round(track.PreviewStartMs * clip.frequency / 1000d)));
             previewEndSample = (int)Math.Min(clip.samples, Math.Max(
@@ -250,17 +295,38 @@ namespace REmind.Gameplay.Demo
                     track.PreviewDurationMs * clip.frequency / 1000d)));
             previewAudioSource.clip = clip;
             previewAudioSource.timeSamples = previewStartSample;
+            previewAudioSource.volume = 0f;
             previewAudioSource.Play();
         }
 
-        private void RepeatPreviewIfNeeded()
+        private void UpdatePreviewLoop()
         {
             if (!previewAudioSource || !previewAudioSource.clip) return;
-            if (previewAudioSource.isPlaying &&
-                previewAudioSource.timeSamples < previewEndSample) return;
             if (previewAudioSource.clip.loadState == AudioDataLoadState.Loading) return;
-            previewAudioSource.timeSamples = previewStartSample;
-            if (!previewAudioSource.isPlaying) previewAudioSource.Play();
+            if (previewAudioSource.clip.loadState == AudioDataLoadState.Failed)
+            {
+                Debug.LogError("Preview audio could not load: " +
+                    previewAudioSource.clip.name, this);
+                StopPreview();
+                return;
+            }
+            int sample = previewAudioSource.timeSamples;
+            if (!previewAudioSource.isPlaying || sample < previewStartSample ||
+                sample >= previewEndSample)
+            {
+                previewAudioSource.Stop();
+                previewAudioSource.timeSamples = previewStartSample;
+                previewAudioSource.volume = 0f;
+                previewAudioSource.Play();
+                return;
+            }
+
+            int fadeSamples = Math.Max(1, (int)Math.Min(
+                Math.Round(previewFadeSeconds * previewAudioSource.clip.frequency),
+                Math.Max(1, (previewEndSample - previewStartSample) / 2)));
+            float fadeIn = Mathf.Clamp01((sample - previewStartSample) / (float)fadeSamples);
+            float fadeOut = Mathf.Clamp01((previewEndSample - sample) / (float)fadeSamples);
+            previewAudioSource.volume = previewTargetVolume * Mathf.Min(fadeIn, fadeOut);
         }
 
         private void StopPreview()
@@ -268,6 +334,8 @@ namespace REmind.Gameplay.Demo
             if (!previewAudioSource) return;
             previewAudioSource.Stop();
             previewAudioSource.clip = null;
+            previewAudioSource.volume = 0f;
+            previewTargetVolume = 0f;
             previewStartSample = previewEndSample = 0;
         }
 
@@ -372,6 +440,16 @@ namespace REmind.Gameplay.Demo
         private void Refresh()
         {
             ApplyAvailableDifficulties();
+            if (AppRoot.Current)
+                foreach (MusicTrackRow row in tracks)
+                {
+                    bool hasRecord = AppRoot.Current.TryGetBestRecord(
+                        row.MusicId, row.DifficultyId,
+                        out double score, out RankGrade grade);
+                    row.ApplyPlayerData(
+                        AppRoot.Current.IsFavorite(row.MusicId),
+                        hasRecord, score, grade);
+                }
             int first = BuildVisibleOrder();
             if (first >= 0 && !visibleOrder.Contains(selected))
             {
@@ -400,6 +478,7 @@ namespace REmind.Gameplay.Demo
             {
                 presentedTrack = -1;
                 presentedPosition = -1;
+                presentedArtwork = null;
                 StopPreview();
                 if (listTransition != null) StopCoroutine(listTransition);
                 if (jacketTransition != null) StopCoroutine(jacketTransition);
@@ -433,6 +512,13 @@ namespace REmind.Gameplay.Demo
                     }
                     StartPreview(track);
                     presentedTrack = selected;
+                    presentedArtwork = track.Artwork;
+                }
+                else if (presentedArtwork != track.Artwork)
+                {
+                    if (jacketTransition != null) StopCoroutine(jacketTransition);
+                    jacketTransition = StartCoroutine(AnimateJacket(track));
+                    presentedArtwork = track.Artwork;
                 }
                 presentedPosition = selectedPosition;
                 selectedTitle.text = track.Title;

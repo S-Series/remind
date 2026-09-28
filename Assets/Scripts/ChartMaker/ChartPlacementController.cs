@@ -77,7 +77,7 @@ public sealed class ChartPlacementController : MonoBehaviour
     [SerializeField] private Transform specialNoteField;
     [SerializeField] private Transform chartPreviewNoteField;
 
-    [Header("InGame / Making Prefabs")]
+    [Header("InGame Prefabs")]
     [FormerlySerializedAs("TapNotePrefab")]
     [SerializeField] private GameObject tapNotePrefab;
     [FormerlySerializedAs("HoldNotePrefab")]
@@ -103,7 +103,8 @@ public sealed class ChartPlacementController : MonoBehaviour
     [SerializeField] private GameObject chartPreviewMarkerNotePrefab;
     [SerializeField] private GameObject chartPreviewIdleNotePrefab;
 
-    [Header("Chart Preview Prefabs")]
+    [Header("Making Prefabs")]
+    // 기존 씬의 직렬화 연결을 유지하기 위해 chartPreview 필드 이름은 보존합니다.
     [SerializeField] private GameObject chartPreviewTapNotePrefab;
     [SerializeField] private GameObject chartPreviewLongTapNotePrefab;
     [SerializeField] private GameObject chartPreviewScratchNotePrefab;
@@ -187,6 +188,10 @@ public sealed class ChartPlacementController : MonoBehaviour
 
         if (!inputRouter ||
             !tapNotePrefab ||
+            !longTapNotePrefab ||
+            !scratchNotePrefab ||
+            !longScratchNotePrefab ||
+            !airNotePrefab ||
             !previewField ||
             !leftNoteField ||
             !middleNoteField ||
@@ -204,9 +209,8 @@ public sealed class ChartPlacementController : MonoBehaviour
             !chartPreviewIdleNotePrefab)
         {
             Debug.LogError(
-                "ChartPlacementController requires an Input Router, a Tap Note prefab, " +
-                "Preview Field, all four editing Note Fields, and every chart " +
-                "Preview prefab.",
+                "ChartPlacementController requires an Input Router, all InGame " +
+                "and Making note prefabs, Preview Field, and all four Note Fields.",
                 this);
             enabled = false;
             return;
@@ -349,7 +353,11 @@ public sealed class ChartPlacementController : MonoBehaviour
         dragSourceAbsolutePosition = sourceHolder.AbsoluteChartPosition;
         GameObject[] linkedNoteObjects;
 
-        if (draggedNoteType == NoteType.Marker)
+        if (draggedNoteType == NoteType.Speed)
+        {
+            sourceHolder.TryGetSpeedNote(out linkedNoteObjects);
+        }
+        else if (draggedNoteType == NoteType.Marker)
         {
             sourceHolder.TryGetMarkerNote(out linkedNoteObjects);
         }
@@ -751,6 +759,30 @@ public sealed class ChartPlacementController : MonoBehaviour
             Debug.LogWarning(
                 $"Cannot place {placementNoteType}: prefab is missing.",
                 this);
+            return;
+        }
+
+        if (placementNoteType == NoteType.Speed)
+        {
+            if (holder.hasLineSpeedChange)
+            {
+                return;
+            }
+
+            ChartEditHistory.ChartEditTransaction speedTransaction =
+                ChartEditHistory.BeginChange(holder.AbsoluteChartPosition);
+            GameObject[] speedObjects = CreateNoteObjects(
+                prefab, notePosition, NoteHandleType.Left, NoteType.Speed);
+            if (!holder.AddSpeedNote(speedObjects))
+            {
+                DestroyNoteObjects(speedObjects);
+                return;
+            }
+
+            ChartManager.NotifyChartChanged();
+            ChartEditHistory.CommitChange(speedTransaction);
+            SetCurrentTool(ChartToolType.None);
+            selectionController?.SelectNoteObject(speedObjects[0]);
             return;
         }
 
@@ -1309,6 +1341,49 @@ public sealed class ChartPlacementController : MonoBehaviour
             out error);
     }
 
+    public bool TryEditSpeedNote(GameObject noteObject, int measure,
+        int measurePosition, float multiplier, out string error)
+    {
+        if (!TryRequireEditingAvailable(out error) ||
+            !TryRequireNoteType(noteObject, out _, out error, NoteType.Speed) ||
+            !TryGetAbsolutePosition(measure, measurePosition,
+                out int targetAbsolutePosition, out error) ||
+            !ChartManager.TryGetNoteData(noteObject, out ChartHolder sourceHolder,
+                out _, out _, out _, out _))
+        {
+            error ??= "Selected Speed event could not be found.";
+            return false;
+        }
+
+        if (!float.IsFinite(multiplier) || multiplier <= 0f)
+        {
+            error = "Line Speed multiplier must be greater than zero.";
+            return false;
+        }
+
+        if (sourceHolder.AbsoluteChartPosition == targetAbsolutePosition &&
+            sourceHolder.targetLineSpeed == multiplier)
+        {
+            error = null;
+            return true;
+        }
+
+        ChartEditHistory.ChartEditTransaction transaction =
+            ChartEditHistory.BeginChange(sourceHolder.AbsoluteChartPosition,
+                targetAbsolutePosition);
+        if (!ChartManager.EditSpeedNote(noteObject, targetAbsolutePosition,
+                multiplier, out error))
+        {
+            return false;
+        }
+
+        UpdateEditedNoteObjects(noteObject, targetAbsolutePosition,
+            0, NoteHandleType.Left);
+        ChartEditHistory.CommitChange(transaction);
+        selectionController?.NotifySelectionChanged();
+        return true;
+    }
+
     /// <summary>Camera Note의 위치, X 오프셋과 L/N/R 회전을 수정합니다.</summary>
     public bool TryEditCameraNote(
         GameObject noteObject,
@@ -1635,7 +1710,11 @@ public sealed class ChartPlacementController : MonoBehaviour
 
         GameObject[] noteObjects;
 
-        if (noteType == NoteType.Camera)
+        if (noteType == NoteType.Speed)
+        {
+            holder.TryGetSpeedNote(out noteObjects);
+        }
+        else if (noteType == NoteType.Camera)
         {
             holder.TryGetCameraNote(out noteObjects);
         }
@@ -1874,6 +1953,23 @@ public sealed class ChartPlacementController : MonoBehaviour
                 }
             }
 
+            if (holder.hasLineSpeedChange &&
+                (!holder.TryGetSpeedNote(out GameObject[] existingSpeedObjects) ||
+                 existingSpeedObjects == null))
+            {
+                GameObject speedPrefab = GetNotePrefab(NoteType.Speed);
+                if (speedPrefab)
+                {
+                    GameObject[] speedObjects = CreateNoteObjects(
+                        speedPrefab, new Vector3(0f, holder.WorldY, 0f),
+                        NoteHandleType.Left, NoteType.Speed);
+                    if (!holder.AttachSpeedNoteObjects(speedObjects))
+                    {
+                        DestroyNoteObjects(speedObjects);
+                    }
+                }
+            }
+
             if (holder.isEffect &&
                 (!holder.TryGetEffectNote(out GameObject[] existingEffectObjects) ||
                  existingEffectObjects == null))
@@ -1973,7 +2069,7 @@ public sealed class ChartPlacementController : MonoBehaviour
         if (noteType.IsChartEvent())
         {
             GameObject specialPrefab =
-                GetChartPreviewNotePrefab(noteType) ??
+                GetMakingNotePrefab(noteType) ??
                 chartPreviewIdleNotePrefab ??
                 prefab;
             GameObject specialNote = Instantiate(
@@ -1990,20 +2086,21 @@ public sealed class ChartPlacementController : MonoBehaviour
             return specialNoteObjects;
         }
 
-        // 편집 필드는 InGame 프리팹, 우측 Preview는 표시 전용 프리팹을 사용합니다.
-        GameObject middleNote = Instantiate(prefab, middleNoteField, false);
+        // 편집 필드는 Making, 우측 인게임 미니보기는 InGame 프리팹을 사용합니다.
+        GameObject makingPrefab = GetMakingNotePrefab(noteType) ?? prefab;
+        GameObject middleNote = Instantiate(
+            makingPrefab, middleNoteField, false);
         middleNote.transform.localPosition = notePosition;
 
         Transform handField = handleType == NoteHandleType.Left
             ? leftNoteField
             : rightNoteField;
-        GameObject handNote = Instantiate(prefab, handField, false);
+        GameObject handNote = Instantiate(
+            makingPrefab, handField, false);
         handNote.transform.localPosition = notePosition;
 
-        GameObject chartPreviewPrefab =
-            GetChartPreviewNotePrefab(noteType) ?? prefab;
         GameObject chartPreviewNote = Instantiate(
-            chartPreviewPrefab,
+            prefab,
             chartPreviewNoteField,
             false);
         chartPreviewNote.transform.localPosition = notePosition;
@@ -2064,6 +2161,8 @@ public sealed class ChartPlacementController : MonoBehaviour
                 holder.airNoteObjectGroups,
                 scale);
             ApplyEditingVisualDisplayScale(holder.actionNoteObjects, scale);
+            ApplyEditingVisualDisplayScale(holder.speedNoteObjects, scale);
+            ApplyEditingVisualDisplayScale(holder.effectNoteObjects, scale);
             ApplyEditingVisualDisplayScale(holder.cameraNoteObjects, scale);
             ApplyEditingVisualDisplayScale(holder.markerNoteObjects, scale);
         }
@@ -2337,7 +2436,7 @@ public sealed class ChartPlacementController : MonoBehaviour
             return;
         }
 
-        GameObject prefab = GetNotePrefab(noteType);
+        GameObject prefab = GetMakingNotePrefab(noteType);
 
         if (!prefab || !previewField)
         {
@@ -2395,26 +2494,30 @@ public sealed class ChartPlacementController : MonoBehaviour
         {
             case ChartToolType.SingleTap:
                 SetPreviewing(true);
-                SetPreviewPrefab(tapNotePrefab, NoteType.Tap, true);
+                SetPreviewPrefab(
+                    chartPreviewTapNotePrefab, NoteType.Tap, true);
                 break;
             case ChartToolType.LongTap:
                 SetPreviewing(true);
-                SetPreviewPrefab(longTapNotePrefab, NoteType.LongTap, true);
+                SetPreviewPrefab(
+                    chartPreviewLongTapNotePrefab, NoteType.LongTap, true);
                 break;
             case ChartToolType.SingleScratch:
                 SetPreviewing(true);
-                SetPreviewPrefab(scratchNotePrefab, NoteType.Scratch, true);
+                SetPreviewPrefab(
+                    chartPreviewScratchNotePrefab, NoteType.Scratch, true);
                 break;
             case ChartToolType.LongScratch:
                 SetPreviewing(true);
                 SetPreviewPrefab(
-                    longScratchNotePrefab,
+                    chartPreviewLongScratchNotePrefab,
                     NoteType.LongScratch,
                     true);
                 break;
             case ChartToolType.SingleAir:
                 SetPreviewing(true);
-                SetPreviewPrefab(airNotePrefab, NoteType.Air, true);
+                SetPreviewPrefab(
+                    chartPreviewAirNotePrefab, NoteType.Air, true);
                 break;
             case ChartToolType.Eraser:
                 SetPreviewing(true);
@@ -2506,6 +2609,7 @@ public sealed class ChartPlacementController : MonoBehaviour
             noteType == NoteType.LongTap ||
             noteType.IsScratch() ||
             noteType == NoteType.Air ||
+            noteType == NoteType.Speed ||
             noteType == NoteType.Effect ||
             noteType == NoteType.Camera ||
             noteType == NoteType.Marker;
@@ -2760,7 +2864,7 @@ public sealed class ChartPlacementController : MonoBehaviour
         };
     }
 
-    private GameObject GetChartPreviewNotePrefab(NoteType noteType)
+    private GameObject GetMakingNotePrefab(NoteType noteType)
     {
         return noteType switch
         {
