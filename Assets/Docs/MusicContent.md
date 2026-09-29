@@ -1,5 +1,8 @@
 # Music Content
 
+> 현행 곡 카탈로그 계약 — 2026-09-29 검토
+> 제작 형식은 [ChartFormat.md](ChartFormat.md), 진행 상태는 [TASKS.md](TASKS.md)를 따른다.
+
 `data.json` 형식 버전 1은 한 곡의 공통 정보와 난이도 목록을 소유한다. 채보 본문의 노트·시간·
 Effect 시점과 조정값은 `.rd` 형식 버전 1이 함께 소유한다.
 Game은 ChartMaker가 검증해 출력한 실행 패키지를 받으며 `.rd`를 직접 읽지 않는다.
@@ -27,11 +30,13 @@ Assets/Data/Music/i/
 - `musicVolumeMultiplier`는 곡별 음악 볼륨 배수이며 범위는 `0`~`2`,
   생략 시 `1`이다. AudioSource 음악 볼륨은 `musicVolumeMultiplier × 0.5`로
   계산한다. 따라서 `0`은 무음, `1`은 `0.5`, `2`는 `1`이다. Music Select
-  미리듣기와 ChartMaker의 곡 데이터 기반 음원 불러오기에 적용한다.
+  미리듣기·Game 재생과 ChartMaker의 곡 데이터 기반 음원 불러오기에 적용한다.
+  Game에서는 여기에 사용자 BGM 설정(`AppRoot.MusicGain`)을 곱하고 마스터 볼륨은
+  AudioListener에서 적용한다. ChartMaker는 Game 사용자 설정을 읽지 않는다.
 - `.rd`의 선택적 `jacketFile`은 난이도 전용 재킷이다. 기본 파일명은
   `<difficultyId>.jpg`이다. 기본 파일이 없으면 곡의 `art.jpg`를 사용한다.
   명시한 재킷 파일이 없으면 오류로 처리한다. 파일명에는 폴더 경로를 넣지 않는다.
-- 현재 `i`의 제목과 제작자 정보는 테스트 값이다. 사용자 점수·해금·즐겨찾기와
+- 현재 `i`·`designant`는 테스트 콘텐츠이며 레벨·채보 제작자에 미정 값이 있다. 사용자 점수·해금·즐겨찾기와
   세션별 판정 상태는 이 파일에 저장하지 않는다.
 - ChartMaker는 목록에 등록된 채보를 열거나 저장할 때 식별자와 경로를 확인한다.
   Effect의 정의와 파라미터는 `eventDictionary` 항목 안에서 함께 저장한다.
@@ -58,11 +63,16 @@ Assets/Data/Music/i/
   Game은 카탈로그의 패키지 ID와 선택 ID를 대조하고 음원·곡 볼륨과 함께 세션을
   준비한 뒤 재생한다. `REmind/Build I Song Runtime Package`는 `i`만 별도로
   출력하는 개발용 명령으로 남아 있다.
-- 결과의 곡·난이도별 최고 점수·랭크와 곡 즐겨찾기는
+- 결과의 곡·난이도별 최고 점수·랭크·클리어 이력·플레이 횟수·최고 콤보와 곡 즐겨찾기는
   `Application.persistentDataPath/player-progress-v1.json`에 저장한다.
   저장 파일은 버전 1이며 쓰기 전 임시 파일과 이전 파일 백업을 사용한다.
   Music Select에 다시 진입하면 해당 난이도의 최고 점수와 즐겨찾기를 표시한다.
-  Auto Play 결과는 Result에서 표시하되 최고 점수에는 기록하지 않는다.
+  실패도 플레이 횟수에 포함한다. Auto Play 결과는 Result에서 표시하되 진행에는
+  기록하지 않는다. 첫 클리어는 저장 전 이력과 비교하며 기억 조각 수량은 클리어한
+  곡·난이도 기록 수에서 계산한다. 소비나 추가 지급 정책은 별도 결정 대상이다.
+- Game 설정은 `Application.persistentDataPath/player-settings-v1.json`에 별도 저장한다.
+  파일 이름과 달리 현행 내부 형식은 버전 2이며 버전 1 설정을 보존해 읽는다.
+  곡 metadata나 `.rd`에 사용자 음량·키·판정 보정을 복사해 저장하지 않는다.
 - `.rd`의 곡·난이도·타이밍 정보가 먼저 나오고, 긴 `notes`와
   `eventDictionary` 배열이 마지막에 나온다. 저장 중 실패에 대비한 `.rd.bak`은
   생길 수 있지만 별도 Effect 본문 파일은 만들지 않는다.

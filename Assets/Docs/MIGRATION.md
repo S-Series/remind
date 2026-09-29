@@ -13,26 +13,29 @@ ChartMaker의 파일 경계는 목록의 곡·난이도 ID와 경로를 검사�
 `designant`의 Effect 파라미터는 이제 각 `.rd` 안에 있다. Music Select의 행은 곡명·아티스트·
 레벨을 이 목록에서 읽는다. 카탈로그 생성은 등록된 각 `.rd`를 검증해 난이도별
 채보 폴더의 `rmp/`에 `.rmp.json`을 출력하고 Unity 에셋 참조를 연결한다.
-Game 빌드의 첫 씬은 `Bootstrap`이다. 이 씬의 `AppRoot`가 Home 진입과
-Music Select에서 고른 곡/난이도 ID를 보유한다. Game 씬은 카탈로그에서 해당
+Game 빌드의 첫 씬은 `Bootstrap`이다. 씬 전용 `BootstrapLoadingController`가
+로고와 진행 표시가 끝나고 새 버튼 입력을 받으면 Home 전환을 요청하며, `AppRoot`가 Music Select에서 고른
+곡/난이도 ID를 보유한다. Game 씬은 카탈로그에서 해당
 실행 패키지와 음원을 찾아 ID·곡 데이터를 확인한 뒤 세션을 준비한다.
-Music Select의 Play는 AppRoot 자식의 `SceneTransitionController`를 통해
-기존 `MusicSelected` 애니메이션을 전체 화면에 표시한 후 Game 씬을 연다.
-현재 Animator Controller의 2배속·빈 상태 복귀 설정과 무관하게, 기존 클립을
-12fps 원래 속도로 직접 샘플링한다.
+Bootstrap→Home을 포함한 Game 씬 이동은 AppRoot 자식의
+`SceneTransitionController`를 통한다. 투명 `CrystalOverlayTransition`은
+로드 전후로 이어 재생하며, 일반 이동은 어두운 덮개로 로드 순간을 가린다.
+Music Select→Game에만 `CrystalTransition`의 흰 화면 연출을 추가한다.
+기존 `MusicSelected` Animator/스프라이트는 실행 시 비활성화한다.
 전환 표시와 씬 로드는 Game 전용이며 판정·재생 세션은 Game 씬에 남는다.
 
 현재 존재하는 코드의 폴더명이나 클래스명만으로 장기 Source of Truth를 판단하지 않는다.
 
 ## 2. Current Functional Reference
 
-현재 ChartMaker가 실제 개발과 기능 구현의 주요 기준이다.
-
-다만 ChartMaker의 내부 구현 전체를 최종 아키텍처로 간주하지 않는다.
+현재 제작 흐름은 ChartMaker, 실제 플레이 흐름은 Game이 기준이다. 두 제품의 공통 의미는
+Shared 계약과 교차 검사로 확인한다. ChartMaker 내부 구현 전체를 최종 아키텍처로 간주하지 않는다.
 
 Effect vertical slice는 ChartMaker Preview와 기존 `DemoPlay`에서 같은 실행 의미를
 검증한다. `DemoPlay`는 최종 Game 씬이 아니라 레거시 구성요소를 연결한 과도기 통합
-하네스다. 별도 `Game.unity`는 `i`와 `designant`의 선택·플레이·일시정지·
+하네스다. 씬은 `Assets/Tests/Fixtures/Scenes/DemoPlay.unity`로 옮겼고 제품 빌드에
+넣지 않는다. `Gameplay/Demo`의 클래스는 Game에서도 사용되므로 폴더 전체를 레거시로
+분류하지 않는다. 별도 `Game.unity`는 `i`와 `designant`의 선택·플레이·일시정지·
 실패·결과·재시도 흐름을 연결한다. 로컬 최고 점수·클리어·플레이 횟수·최고 콤보와
 즐겨찾기를 저장하고, Result에 기록 기반 진행을 표시한다. Game 설정도 별도 파일에
 저장한다. 첫 클리어 기억 조각 보상도 기록에서 계산한다. 정식 콘텐츠와 최종 UI
@@ -50,20 +53,14 @@ DemoPlay 및 기존 Gameplay의 일부는 레거시 또는 과도기 코드다.
 
 ## 4. Current Shared-core Direction
 
-현재 중요한 공용화 흐름 후보:
+현재 구현된 제작·실행 경계:
 
 ```text
-ChartMaker storage/model
-        ↓
-Adapter
-        ↓
-Editable shared chart model
-        ↓
-Compile
-        ↓
-Validated runtime chart
-        ↓
-Preview / Game
+ChartHolder (편집 원본)
+        ↓ ChartHolderDocumentAdapter
+ChartDocument → ChartCompiler → Snapshot → Preview
+        ↓ ChartMakerRuntimePackageExporter
+.rmp.json → GameplayChartPreparation → Snapshot + Effect plan → Game
 ```
 
 현재 구체 타입과 API가 장기적으로 확정됐다는 의미는 아니다.
@@ -95,7 +92,7 @@ Preview / Game
 - `PreparedEffectPlan`은 읽기 전용 엔트리와 파라미터 원본 복사본을 가진다. 내장
   파라미터는 매 세션에 별도 복사되며 확장 파라미터는 복사 함수를 등록해야 한다.
 - `LaneHitEffectPlayer`는 공용 Unity 표시 assembly로 이동해 판정 시스템을 더는
-  구독하지 않는다. DemoPlay의 `GameplayChartSessionController`가 판정 이벤트를
+  구독하지 않는다. Game/테스트 하네스의 `GameplayChartSessionController`가 판정 이벤트를
   표시기에 연결하고 ChartMaker는 표시기만 호출한다.
 - `REmind.ChartMaker`, `REmind.Gameplay`, `REmind.Common` assembly를 추가했다.
   공용 assembly와 두 제품 assembly는 서로의 제품 구현을 참조하지 않는다.
@@ -105,11 +102,12 @@ Preview / Game
   `Assets/Tests/Fixtures/EffectGameplaySample.rd`와 같은 폴더의
   `rmp/EffectGameplaySample.rmp.json`을 사용한다. 샘플 Effect 설정은 `.rd`에
   포함되며 별도 설정 JSON은 필요하지 않다.
-- 제품별 빌드 명령은 `Game.unity`와 ChartMaker 씬을 각각 선택하고 전용
+- 제품별 빌드 명령은 Bootstrap으로 시작하는 Game 씬 목록과 ChartMaker 씬을 각각 선택하고 전용
   assembly define을 지정한다. 두 Windows 빌드는 컴파일에 성공했으며 각
   산출물의 Managed 폴더에 상대 제품 assembly가 없음을 확인했다.
 - `NoteType`과 Scratch motion/rules/path를 `REmind.NoteRules` 순수 C# assembly로
-  이동했다. 기존 `NoteData` 파서와 자료형은 호출되지 않는 레거시 파일로 남지만,
+  이동했다. 기존 `NoteData` 파서와 자료형은 `ChartLoadService` 등 구형 경로 내부에서
+  참조되고 있지만,
   `GameplayChartPreparation`의 변환과 `NoteJudgementSystem`의 입력에서는 제거했다.
 - 입력 라우터가 press와 release를 발행한다. 공용 판정 세션은 단일 노트 입력,
   Long의 Start→Mid→End 유지/해제, Mid의 재합류와 구간별 결과를 처리한다.
@@ -133,6 +131,12 @@ Preview / Game
   사용자 음악 음량은 곡별 볼륨에 곱하고, 판정 보정은 차트 준비 전에 판정
   세션에, 레인 키 경로는 Game 입력 액션의 런타임 복제본에 적용한다.
   ChartMaker의 입력 액션과 데이터는 이 설정을 읽지 않는다.
+  파일 내부 형식은 버전 2이며 기존 버전 1의 음량·보정·키 설정을 보존해 읽는다.
+  설정 UI는 `AppRoot`의 영속 Canvas 아래 `SettingsOverlay.prefab` 모달로
+  이동했다. Home은 AppRoot를 통해 열고 씬 이동 시 모달 탐색 참조를 정리한다.
+  마스터 볼륨은 AudioListener, BGM은 곡/미리듣기, SFX와 히트 사운드 스타일은
+  판정 효과음에 반영한다. 출력 장치는 OS 기본 장치를 사용한다. 음성 소스는 아직
+  없어 Voice 볼륨과 음성 중 BGM 감소는 저장되며 음성 재생을 연결할 때 적용한다.
 - Game의 `player-progress-v1.json`은 곡·난이도별 최고 점수·랭크,
   클리어 이력, 플레이 횟수, 최고 콤보와 곡 즐겨찾기를 소유한다. 실패한 플레이도
   횟수에 포함하고 첫 클리어는 저장 전 기록과 비교한다. Auto Play는 저장하지 않는다.
@@ -144,8 +148,8 @@ Preview / Game
 
 현재 확인/관리해야 할 대표 위험:
 
-- Editor와 Gameplay의 이중 데이터 모델
-- Preview와 향후 Game runtime의 중복 실행 로직
+- ChartHolder 편집 상태와 ChartDocument 변환 경계의 장기 소유권
+- Preview 자동 표시와 Game 수동 판정의 통합 범위
 - 레거시 API를 신규 구조가 따라가게 되는 문제
 - 같은 규칙이 서로 다른 폴더에 중복되는 문제
 - 임시 Adapter가 영구 구조로 굳어지는 문제
@@ -169,26 +173,28 @@ Preview / Game
 ### CURRENT
 - ChartMaker의 실제 편집, 저장/복구, Undo/Redo, Preview 흐름
 - `PlayableChartSnapshot`, Effect runtime과 카메라 공용 계산
-- 기존 Gameplay 판정/GameRule 구성요소 중 Demo 하네스로 검증한 부분
+- Game의 카탈로그·재생·공용 판정 연결·결과·설정·로컬 기록
+- Bootstrap/씬 전환/Settings 모달의 최신 로컬 변경과 검수
 
 ### SHARED
 - `REmind.ChartCore`의 chart compiler, timing/scroll/camera map
 - Effect 계약, registry, 준비 계획, runner와 session context
 - Effect 카메라 envelope/mixer, Preview capability, transition mailbox
 - Runtime chart package codec, Effect parameter decoder, 공용 노트 지점과 구간
+- PlayableJudgementSession, NoteType과 Scratch motion/rules/path
+- LaneHitEffectPlayer의 Unity 표시 전용 책임
 
 ### SHARED candidates
-- GameRule의 판정 등급/수치 중 Preview 수동 입력에도 필요한 부분
-- `NoteType`, Scratch motion/rules/path의 물리적 이동 — **완료**
-- Runtime chart package와 codec/validation 경계 — **완료**
+- GameRule의 판정 등급/수치·modifier 중 Preview 수동 입력에도 필요한 부분
 
 ### LEGACY
-- `DemoPlay` 전용 하네스 UI
-- `TempLoader` 및 구형 임시 chart 경로. 현재 DemoPlay 씬에서는 제거됨
+- 테스트 fixture의 DemoPlay 하네스 구성. 해당 Presenter/Controller 전체가 폐기 대상은 아님
+- `TempLoader` 및 구형 ChartLoader/NoteData 경로. DemoPlay fixture의 TempLoader는 제거됨
 
 ### UNKNOWN / Mixed
 - 실제 키 입력·청음에서 확정 판정 창의 체감 검증
-- `LaneHitEffectPlayer`의 공용 presenter와 Gameplay event binding 책임
+- ChartMaker의 static 편집 상태와 fallback 씬 탐색 의존
+- 포커스 이탈 자동 Pause·Visual Offset·수동 Test Play의 제품 범위
 
 ## 7. Migration Goal
 
@@ -223,4 +229,6 @@ Game과 ChartMaker가 서로 직접 의존하지 않고,
 - `SampleMusicGimmick`: 실제 곡 registry가 준비되면 개발 전용 등록을 테스트/샘플 범위로
   격리하거나 Player 등록에서 제외한다.
 
-세부 우선순위와 아직 결정되지 않은 수치는 `TASKS.md`에서 관리한다.
+세부 우선순위와 검증 이력은 [TASKS.md](TASKS.md), 작업 의존관계는
+[ROADMAP.md](ROADMAP.md)에서 관리한다. 기본 판정 창은 확정되어 있으며
+실제 입력·청음 검수와 추가 제품 정책을 구분한다.

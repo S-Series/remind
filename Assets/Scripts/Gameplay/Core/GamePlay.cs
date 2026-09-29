@@ -20,6 +20,7 @@ public sealed class GamePlay : MonoBehaviour
     private double scheduledSongTimeMs;
     private DspSongClock songClock;
     private bool startInProgress;
+    private float baseSongVolume = 1f;
     private bool startCancellationRequested;
     private int stateNotificationDepth;
 
@@ -132,6 +133,10 @@ public sealed class GamePlay : MonoBehaviour
 
     private void Update()
     {
+        if (audioSource)
+            audioSource.volume = baseSongVolume *
+                (REmind.Gameplay.AppRoot.Current
+                    ? REmind.Gameplay.AppRoot.Current.MusicGain : 1f);
         if (State != PlaybackState.Playing || SongTimeMs < SongDurationMs)
         {
             return;
@@ -175,7 +180,10 @@ public sealed class GamePlay : MonoBehaviour
         // passed every synchronous load check.
         audioSource.Stop();
         audioSource.clip = song;
-        audioSource.volume = Mathf.Clamp01(volume);
+        baseSongVolume = Mathf.Clamp01(volume);
+        audioSource.volume = baseSongVolume *
+            (REmind.Gameplay.AppRoot.Current
+                ? REmind.Gameplay.AppRoot.Current.MusicGain : 1f);
         requiredCompletionTimeMs = 0d;
 
         heldSongTimeMs = 0d;

@@ -1,6 +1,5 @@
 using UnityEngine;
 using UnityEngine.EventSystems;
-using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 namespace REmind.Gameplay.Demo
@@ -18,8 +17,8 @@ namespace REmind.Gameplay.Demo
                 EventSystem.current.SetSelectedGameObject(initialSelection.gameObject);
         }
 
-        public void Retry() => SceneManager.LoadScene("Game");
-        public void Next() => SceneManager.LoadScene("MusicSelect");
-        public void MusicSelect() => SceneManager.LoadScene("MusicSelect");
+        public void Retry() => AppRoot.NavigateToScene("Game");
+        public void Next() => AppRoot.NavigateToScene("MusicSelect");
+        public void MusicSelect() => AppRoot.NavigateToScene("MusicSelect");
     }
 }

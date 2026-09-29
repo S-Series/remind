@@ -1,5 +1,5 @@
 using UnityEngine;
-using UnityEngine.SceneManagement;
+using REmind.Common.UI;
 
 namespace REmind.Gameplay.Demo
 {
@@ -7,17 +7,24 @@ namespace REmind.Gameplay.Demo
     [DisallowMultipleComponent]
     public sealed class HomeMenuActions : MonoBehaviour
     {
-        public void OpenStory() => SceneManager.LoadScene("Story");
+        [SerializeField] private MenuNavigationController navigation;
+        public void OpenStory() => AppRoot.NavigateToScene("Story");
 
-        public void OpenMusic() => SceneManager.LoadScene("MusicSelect");
+        public void OpenMusic() => AppRoot.NavigateToScene("MusicSelect");
 
-        public void OpenCharacter() => SceneManager.LoadScene("Character");
+        public void OpenCharacter() => AppRoot.NavigateToScene("Character");
 
-        public void OpenReMind() => SceneManager.LoadScene("ReMind");
+        public void OpenReMind() => AppRoot.NavigateToScene("ReMind");
 
-        public void OpenOption() => SceneManager.LoadScene("Option");
+        public void OpenOption() => AppRoot.NavigateToScene("Option");
 
-        public void OpenSettings() => SceneManager.LoadScene("Settings");
+        public void OpenSettings()
+        {
+            if (!AppRoot.Current || !AppRoot.Current.TryOpenSettings(navigation))
+            {
+                Debug.LogError("Home Settings overlay is unavailable.", this);
+            }
+        }
 
         public void ExitGame() => Application.Quit();
     }

@@ -51,8 +51,8 @@ public static class ResultSceneLayoutBuilder
 
         font = AssetDatabase.LoadAssetAtPath<TMP_FontAsset>("Assets/Art/Fonts/NanumMyeongjo SDF.asset");
         background = LoadSprite("Assets/Art/Sprites/AI Generated/HomeBackground.png");
-        jacket = LoadSprite("Assets/Art/Sprites/UI/MusicSelect/StellarPromise_Jacket.png");
-        compass = LoadSprite("Assets/Art/Sprites/UI/MusicSelect/CompassRose.png");
+        jacket = LoadSprite("Assets/Art/UI/MusicSelectUI/StellarPromise_Jacket.png");
+        compass = LoadSprite("Assets/Art/UI/MusicSelectUI/CompassRose.png");
         if (!font || !background || !jacket)
             throw new InvalidOperationException("Result layout assets are missing.");
 

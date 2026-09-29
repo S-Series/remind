@@ -15,7 +15,7 @@ public static class RuntimeProductBuilds
         "Assets/Scenes/Story.unity", "Assets/Scenes/MusicSelect.unity",
         "Assets/Scenes/Music.unity", "Assets/Scenes/Character.unity",
         "Assets/Scenes/ReMind.unity", "Assets/Scenes/Option.unity",
-        "Assets/Scenes/Settings.unity", "Assets/Scenes/Game.unity",
+        "Assets/Scenes/Game.unity",
         "Assets/Scenes/Result.unity"
     };
     private static readonly string[] ChartMakerScenes =

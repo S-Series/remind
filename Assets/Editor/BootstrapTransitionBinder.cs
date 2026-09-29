@@ -1,105 +1,95 @@
 using System;
 using REmind.Gameplay;
+using REmind.Gameplay.Presentation;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
-/// <summary>Connects the authored AppRoot animation to a persistent UI overlay.</summary>
+/// <summary>Connects the two authored transition prefabs to the persistent AppRoot.</summary>
 public static class BootstrapTransitionBinder
 {
     private const string ScenePath = "Assets/Scenes/Bootstrap.unity";
 
-    [MenuItem("REmind/Bind Music Selected Transition")]
+    [MenuItem("REmind/Bind Crystal Scene Transitions %#k")]
     public static void Bind()
     {
-        Scene scene = EditorSceneManager.OpenScene(ScenePath,
-            OpenSceneMode.Single);
-        AppRoot root = null;
-        foreach (GameObject candidate in scene.GetRootGameObjects())
-            if (candidate.TryGetComponent(out root)) break;
-        if (!root) throw new InvalidOperationException("Bootstrap AppRoot is missing.");
-        Transform animationRoot = root.transform.Find("Animator");
-        if (!animationRoot ||
-            !animationRoot.TryGetComponent(out Animator animator) ||
-            !animationRoot.TryGetComponent(out SpriteRenderer source))
-            throw new InvalidOperationException(
-                "AppRoot/Animator needs Animator and SpriteRenderer.");
-
-        AnimationClip clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(
-            "Assets/Art/Animations/MusicSelected.anim");
-        Sprite firstFrame = AssetDatabase.LoadAssetAtPath<Sprite>(
-            "Assets/Art/ai/ReMind_transition_001-048_no_text/" +
-            "ReMind_transition_001.png");
-        if (!clip || !firstFrame)
-            throw new InvalidOperationException(
-                "MusicSelected clip or first frame is missing.");
-
-        Transform overlayRoot = animationRoot.Find("ScreenTransitionOverlay");
-        if (!overlayRoot)
+        Scene scene = SceneManager.GetSceneByPath(ScenePath);
+        bool openedHere = !scene.IsValid() || !scene.isLoaded;
+        if (openedHere)
+            scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Additive);
+        try
         {
-            var objectRoot = new GameObject("ScreenTransitionOverlay",
-                typeof(RectTransform), typeof(Canvas),
-                typeof(CanvasGroup), typeof(GraphicRaycaster));
-            objectRoot.transform.SetParent(animationRoot, false);
-            overlayRoot = objectRoot.transform;
-        }
-        Canvas canvas = overlayRoot.GetComponent<Canvas>();
-        CanvasGroup group = overlayRoot.GetComponent<CanvasGroup>();
-        if (!canvas || !group ||
-            !overlayRoot.TryGetComponent(out GraphicRaycaster _))
-            throw new InvalidOperationException(
-                "ScreenTransitionOverlay components are incomplete.");
-        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-        canvas.overrideSorting = true;
-        canvas.sortingOrder = short.MaxValue;
-        group.alpha = 0f;
-        group.interactable = false;
-        group.blocksRaycasts = false;
+            AppRoot root = null;
+            foreach (GameObject candidate in scene.GetRootGameObjects())
+                if (candidate.TryGetComponent(out root)) break;
+            if (!root) throw new InvalidOperationException("Bootstrap AppRoot is missing.");
+            Transform transitionRoot = root.transform.Find("Animator");
+            if (!transitionRoot)
+                throw new InvalidOperationException("AppRoot/Animator is missing.");
+            var overlay = transitionRoot.Find("CrystalOverlayTransition")
+                ?.GetComponent<CrystalTransitionPlayer>();
+            var crystal = transitionRoot.Find("CrystalTransition")
+                ?.GetComponent<CrystalTransitionPlayer>();
+            if (!overlay || !crystal || !overlay.clip || !overlay.loopClip ||
+                !overlay.outroClip || !crystal.clip)
+                throw new InvalidOperationException("Both transition prefabs must be assigned under AppRoot/Animator.");
 
-        Transform frameRoot = overlayRoot.Find("Frame");
-        if (!frameRoot)
+            Transform fadeRoot = transitionRoot.Find("SceneFadeCover");
+            if (!fadeRoot)
+            {
+                var go = new GameObject("SceneFadeCover", typeof(RectTransform),
+                    typeof(Canvas), typeof(CanvasGroup), typeof(GraphicRaycaster));
+                go.transform.SetParent(transitionRoot, false);
+                fadeRoot = go.transform;
+            }
+            var canvas = fadeRoot.GetComponent<Canvas>();
+            var group = fadeRoot.GetComponent<CanvasGroup>();
+            if (!canvas || !group || !fadeRoot.GetComponent<GraphicRaycaster>())
+                throw new InvalidOperationException("SceneFadeCover components are incomplete.");
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.overrideSorting = true;
+            canvas.sortingOrder = 29999;
+            group.alpha = 0f;
+            group.interactable = false;
+            group.blocksRaycasts = false;
+
+            Transform imageRoot = fadeRoot.Find("Frame");
+            if (!imageRoot)
+            {
+                var go = new GameObject("Frame", typeof(RectTransform), typeof(Image));
+                go.transform.SetParent(fadeRoot, false);
+                imageRoot = go.transform;
+            }
+            var bounds = (RectTransform)imageRoot;
+            bounds.anchorMin = Vector2.zero;
+            bounds.anchorMax = Vector2.one;
+            bounds.offsetMin = Vector2.zero;
+            bounds.offsetMax = Vector2.zero;
+            var image = imageRoot.GetComponent<Image>();
+            if (!image) throw new InvalidOperationException("SceneFadeCover/Frame needs an Image.");
+            image.color = new Color(0.016f, 0.024f, 0.046f, 1f);
+            image.raycastTarget = true;
+            canvas.enabled = false;
+
+            var transition = transitionRoot.GetComponent<SceneTransitionController>();
+            if (!transition)
+                throw new InvalidOperationException("SceneTransitionController is missing.");
+            var serialized = new SerializedObject(transition);
+            serialized.FindProperty("crystalOverlayTransition").objectReferenceValue = overlay;
+            serialized.FindProperty("crystalTransition").objectReferenceValue = crystal;
+            serialized.FindProperty("fadeCanvas").objectReferenceValue = canvas;
+            serialized.FindProperty("fadeGroup").objectReferenceValue = group;
+            serialized.ApplyModifiedPropertiesWithoutUndo();
+            EditorSceneManager.MarkSceneDirty(scene);
+            if (!EditorSceneManager.SaveScene(scene, ScenePath))
+                throw new InvalidOperationException("Could not save Bootstrap scene.");
+            Debug.Log("Crystal scene transitions bound to Bootstrap AppRoot.");
+        }
+        finally
         {
-            var frame = new GameObject("Frame",
-                typeof(RectTransform), typeof(Image));
-            frame.transform.SetParent(overlayRoot, false);
-            frameRoot = frame.transform;
+            if (openedHere) EditorSceneManager.CloseScene(scene, true);
         }
-        RectTransform bounds = (RectTransform)frameRoot;
-        bounds.anchorMin = Vector2.zero;
-        bounds.anchorMax = Vector2.one;
-        bounds.offsetMin = Vector2.zero;
-        bounds.offsetMax = Vector2.zero;
-        Image image = frameRoot.GetComponent<Image>();
-        if (!image) throw new InvalidOperationException(
-            "Transition Frame needs an Image.");
-        image.sprite = firstFrame;
-        image.color = Color.white;
-        image.raycastTarget = true;
-        image.preserveAspect = false;
-        canvas.enabled = false;
-        source.enabled = false;
-
-        SceneTransitionController transition = animationRoot
-            .GetComponent<SceneTransitionController>() ??
-            animationRoot.gameObject.AddComponent<SceneTransitionController>();
-        var serialized = new SerializedObject(transition);
-        serialized.FindProperty("animator").objectReferenceValue = animator;
-        serialized.FindProperty("frameSource").objectReferenceValue = source;
-        serialized.FindProperty("musicSelected").objectReferenceValue = clip;
-        serialized.FindProperty("firstFrame").objectReferenceValue = firstFrame;
-        serialized.FindProperty("overlayCanvas").objectReferenceValue = canvas;
-        serialized.FindProperty("overlayGroup").objectReferenceValue = group;
-        serialized.FindProperty("overlayImage").objectReferenceValue = image;
-        serialized.ApplyModifiedPropertiesWithoutUndo();
-        var serializedRoot = new SerializedObject(root);
-        serializedRoot.FindProperty("sceneTransition").objectReferenceValue =
-            transition;
-        serializedRoot.ApplyModifiedPropertiesWithoutUndo();
-        EditorSceneManager.MarkSceneDirty(scene);
-        if (!EditorSceneManager.SaveScene(scene, ScenePath))
-            throw new InvalidOperationException("Could not save Bootstrap scene.");
-        Debug.Log("Music Selected transition bound to Bootstrap AppRoot.");
     }
 }

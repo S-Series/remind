@@ -75,6 +75,11 @@ namespace REmind.Common.UI
                 eventSystem.SetSelectedGameObject(null);
         }
 
+        public void FocusActive()
+        {
+            if (ActiveScope) Select(ActiveScope.FirstAvailableNode);
+        }
+
         internal void SelectFromPointer(NavigationNode node)
         {
             if (node && node.Scope == ActiveScope && node.IsAvailable)

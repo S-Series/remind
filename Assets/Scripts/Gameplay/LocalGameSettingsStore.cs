@@ -8,6 +8,7 @@ namespace REmind.Gameplay
     /// <summary>Player preferences, kept separate from scores and favorites.</summary>
     public sealed class LocalGameSettingsStore
     {
+        public enum HitSoundStyle { Default, Soft, Sharp, None }
         public const int LaneCount = 10;
         public const double MaximumJudgementOffsetMs = 200d;
 
@@ -22,8 +23,16 @@ namespace REmind.Gameplay
         [Serializable]
         private sealed class SaveDocument
         {
-            public int version = 1;
+            public int version = 2;
             public float musicVolume = 1f;
+            public float masterVolume = 1f;
+            public float sfxVolume = 1f;
+            public float voiceVolume = 1f;
+            public HitSoundStyle hitSoundStyle;
+            public bool spatialAudio;
+            public bool muteWhenUnfocused;
+            public bool reduceBgmDuringVoice = true;
+            public bool keepAudioInBackground = true;
             public double judgementOffsetMs;
             public string[] laneBindings = (string[])DefaultBindings.Clone();
         }
@@ -38,7 +47,39 @@ namespace REmind.Gameplay
         }
 
         public float MusicVolume => document.musicVolume;
+        public float MasterVolume => document.masterVolume;
+        public float SfxVolume => document.sfxVolume;
+        public float VoiceVolume => document.voiceVolume;
+        public HitSoundStyle HitSound => document.hitSoundStyle;
+        public bool SpatialAudio => document.spatialAudio;
+        public bool MuteWhenUnfocused => document.muteWhenUnfocused;
+        public bool ReduceBgmDuringVoice => document.reduceBgmDuringVoice;
+        public bool KeepAudioInBackground => document.keepAudioInBackground;
         public double JudgementOffsetMs => document.judgementOffsetMs;
+
+        public void SetMasterVolume(float value) =>
+            document.masterVolume = ValidateVolume(value);
+
+        public void SetSfxVolume(float value) =>
+            document.sfxVolume = ValidateVolume(value);
+
+        public void SetVoiceVolume(float value) =>
+            document.voiceVolume = ValidateVolume(value);
+
+        public void SetHitSoundStyle(HitSoundStyle value)
+        {
+            if (!Enum.IsDefined(typeof(HitSoundStyle), value))
+                throw new ArgumentOutOfRangeException(nameof(value));
+            document.hitSoundStyle = value;
+        }
+
+        public void SetSpatialAudio(bool value) => document.spatialAudio = value;
+        public void SetMuteWhenUnfocused(bool value) =>
+            document.muteWhenUnfocused = value;
+        public void SetReduceBgmDuringVoice(bool value) =>
+            document.reduceBgmDuringVoice = value;
+        public void SetKeepAudioInBackground(bool value) =>
+            document.keepAudioInBackground = value;
 
         public static LocalGameSettingsStore Load(string path)
         {
@@ -60,10 +101,15 @@ namespace REmind.Gameplay
 
         public void SetMusicVolume(float value)
         {
+            document.musicVolume = ValidateVolume(value);
+        }
+
+        private static float ValidateVolume(float value)
+        {
             if (float.IsNaN(value) || float.IsInfinity(value) ||
                 value < 0f || value > 1f)
                 throw new ArgumentOutOfRangeException(nameof(value));
-            document.musicVolume = value;
+            return value;
         }
 
         public void SetJudgementOffsetMs(double value)
@@ -135,7 +181,7 @@ namespace REmind.Gameplay
             {
                 SaveDocument result = JsonUtility.FromJson<SaveDocument>(
                     File.ReadAllText(path));
-                if (result == null || result.version != 1 ||
+                if (result == null || (result.version != 1 && result.version != 2) ||
                     float.IsNaN(result.musicVolume) ||
                     float.IsInfinity(result.musicVolume) ||
                     result.musicVolume < 0f || result.musicVolume > 1f ||
@@ -146,6 +192,24 @@ namespace REmind.Gameplay
                     result.laneBindings == null ||
                     result.laneBindings.Length != LaneCount)
                     throw new FormatException("Unsupported player settings format.");
+                if (result.version == 1)
+                {
+                    result.masterVolume = 1f;
+                    result.sfxVolume = 1f;
+                    result.voiceVolume = 1f;
+                    result.hitSoundStyle = HitSoundStyle.Default;
+                    result.spatialAudio = false;
+                    result.muteWhenUnfocused = false;
+                    result.reduceBgmDuringVoice = true;
+                    result.keepAudioInBackground = true;
+                    result.version = 2;
+                }
+                if (!IsValidVolume(result.masterVolume) ||
+                    !IsValidVolume(result.sfxVolume) ||
+                    !IsValidVolume(result.voiceVolume) ||
+                    !Enum.IsDefined(typeof(HitSoundStyle),
+                        result.hitSoundStyle))
+                    throw new FormatException("Invalid audio preferences.");
                 for (int i = 0; i < LaneCount; i++)
                 {
                     if (!IsValidBinding(result.laneBindings[i]))
@@ -165,5 +229,9 @@ namespace REmind.Gameplay
                 return null;
             }
         }
+
+        private static bool IsValidVolume(float value) =>
+            !float.IsNaN(value) && !float.IsInfinity(value) &&
+            value >= 0f && value <= 1f;
     }
 }

@@ -49,6 +49,7 @@ namespace REmind.Gameplay.Demo
         private int miss;
         private int maxCombo;
         private int lastPauseTransitionFrame = -1;
+        private bool resultDispatched;
 
         private void Awake()
         {
@@ -161,6 +162,7 @@ namespace REmind.Gameplay.Demo
         public void Restart()
         {
             if (!gameManager) return;
+            resultDispatched = false;
             ResetCounts();
             notePresenter?.SetAutoPlayEnabled(autoPlay);
             Show(gameManager.RestartGame() ? Screen.Playing : Screen.Error);
@@ -171,7 +173,7 @@ namespace REmind.Gameplay.Demo
             gameManager?.StopGame();
             if (AppRoot.Current && AppRoot.Current.TryGetSelectedSong(out _))
             {
-                SceneManager.LoadScene("MusicSelect");
+                AppRoot.NavigateToScene("MusicSelect");
                 return;
             }
             notePresenter?.ResetJudgements();
@@ -182,12 +184,13 @@ namespace REmind.Gameplay.Demo
         public void ReturnToMusic()
         {
             gameManager?.StopGame();
-            SceneManager.LoadScene("MusicSelect");
+            AppRoot.NavigateToScene("MusicSelect");
         }
 
         private void BeginSong(bool enableAutoPlay)
         {
             if (!notePresenter || !notePresenter.IsReady || !gameManager) return;
+            resultDispatched = false;
             ResetCounts();
             notePresenter.SetAutoPlayEnabled(enableAutoPlay);
             Show(gameManager.StartGame() ? Screen.Playing : Screen.Error);
@@ -270,6 +273,8 @@ namespace REmind.Gameplay.Demo
 
         private void FinishSong()
         {
+            if (resultDispatched) return;
+            resultDispatched = true;
             if (AppRoot.Current &&
                 AppRoot.Current.TryGetSelectedSong(out AppRoot.SongSelection selection) &&
                 chartSession && chartSession.CurrentChart != null &&
@@ -285,7 +290,7 @@ namespace REmind.Gameplay.Demo
                     sessionState.TotalNoteCount, sessionState.IsCleared,
                     sessionState.IsFailed, autoPlay);
                 AppRoot.Current.PublishResult(result);
-                SceneManager.LoadScene("Result");
+                AppRoot.NavigateToScene("Result");
                 return;
             }
             Show(Screen.Result);

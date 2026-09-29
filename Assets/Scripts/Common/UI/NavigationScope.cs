@@ -16,6 +16,8 @@ namespace REmind.Common.UI
         [SerializeField] private UnityEvent onCancel = new UnityEvent();
 
         public MenuNavigationController Controller => controller;
+        public void BindController(MenuNavigationController value) =>
+            controller = value;
         public bool HasCancelAction => onCancel.GetPersistentEventCount() > 0;
         public NavigationNode FirstAvailableNode
         {
@@ -30,6 +32,11 @@ namespace REmind.Common.UI
         }
 
         private void Awake()
+        {
+            RebuildNavigation();
+        }
+
+        public void RebuildNavigation()
         {
             foreach (var node in nodes)
             {
@@ -72,7 +79,8 @@ namespace REmind.Common.UI
             int bestDistance = int.MaxValue;
             foreach (var candidate in nodes)
             {
-                if (!candidate || candidate == source) continue;
+                if (!candidate || candidate == source ||
+                    !candidate.IsAvailable) continue;
                 int deltaRow = candidate.Row - source.Row;
                 int deltaColumn = candidate.Column - source.Column;
                 int distance = rowStep != 0 ? deltaRow * rowStep :

@@ -1,6 +1,6 @@
 # ReMind Product
 
-> 상태: Draft Skeleton  
+> 상태: 제품 목표 — 첫 출시 세부 범위 결정 대기
 > 목적: ReMind 프로젝트가 최종적으로 무엇을 완성해야 하는지 정의한다.
 
 ## 1. Project Goal
@@ -195,3 +195,36 @@ Actual Gameplay
 ```
 
 ChartMaker에서 제작한 콘텐츠가 실제 Game에서 안정적으로 재생되고, Game에서 요구하는 규칙을 ChartMaker에서도 충분히 제작·검증할 수 있어야 한다.
+
+## 9. 첫 출시 범위 결정
+
+위 제품 목표는 유지한다. 다음 항목의 첫 출시 포함 여부와 수용 기준은 아직 별도
+결정이 필요하며, 현행 구현이나 초기 데모의 제외 목록만으로 확정하지 않는다.
+
+| 결정 항목 | 결정해야 할 범위 |
+| --- | --- |
+| 메뉴별 제품 기능 | Story, Character, ReMind, Option 및 임시 Music 화면의 실제 역할 |
+| 진행과 콘텐츠 | 해금, 기억 조각의 소비/추가 지급, 곡별 서사, 정식 곡·난이도 |
+| 설정과 입력 | 빈 설정 카테고리, Voice, Visual Offset, 포커스 이탈 정책, 추가 입력 장치 |
+| ChartMaker Test Play | 실제 입력 검증 범위와 공용 GameRule 의미의 적용 |
+| 배포 환경 | 지원 플랫폼, 최소 하드웨어, 해상도/화면 비율, 콘텐츠 배포 방식 |
+
+결정은 [ROADMAP.md](ROADMAP.md)의 D1에서 관리한다. 현재 완료 여부는
+[TASKS.md](TASKS.md)에서 확인하며 이 문서를 일일 작업 로그로 사용하지 않는다.
+
+## 10. 문서 안내
+
+| 목적 | 문서 |
+| --- | --- |
+| 항상 지킬 개발 규칙 | [AGENTS.md](../../AGENTS.md) |
+| 제품 소개 | [GameOverview.md](GameOverview.md) |
+| 장기 책임 경계 / 현행 이전 상태 | [ARCHITECTURE.md](ARCHITECTURE.md), [MIGRATION.md](MIGRATION.md) |
+| 실제 Game 구성 / 시간·입력·판정 계약 | [GameplayStructure.md](GameplayStructure.md), [RhythmSystem.md](RhythmSystem.md) |
+| 제작 파일 / 곡 카탈로그 계약 | [ChartFormat.md](ChartFormat.md), [MusicContent.md](MusicContent.md) |
+| Effect 제작·확장 / 작업 재개 | [EffectGimmickGuide.md](EffectGimmickGuide.md), [EffectGimmickHandoff.md](EffectGimmickHandoff.md) |
+| 전환 표시 에셋 편집 | [CrystalTransition.md](CrystalTransition.md) |
+| 앞으로의 작업 / 최신 현황·검증 | [ROADMAP.md](ROADMAP.md), [TASKS.md](TASKS.md) |
+| 과거 설계·검증 기록 | [ChartCoreRefactoring.md](ChartCoreRefactoring.md), [Milestones.md](Milestones.md), [EffectGimmickWorkLog.md](EffectGimmickWorkLog.md) |
+
+과거 기록의 체크박스·테스트 개수·개인 PC 경로는 당시 상태다. 현행 계약과 충돌하면
+현재 코드와 대응 테스트, 위 현행 문서를 대조하고 차이를 기록한다.

@@ -276,7 +276,7 @@ namespace REmind.Gameplay.Demo
         public void Back()
         {
             if (AppRoot.Current && AppRoot.Current.IsTransitioning) return;
-            SceneManager.LoadScene("Home");
+            AppRoot.NavigateToScene("Home");
         }
 
         private void StartPreview(MusicTrackRow track)
@@ -286,7 +286,7 @@ namespace REmind.Gameplay.Demo
             AudioClip clip = track.PreviewAudio;
             if (clip.samples <= 0) return;
             previewTargetVolume = track.PreviewVolume * (AppRoot.Current
-                ? AppRoot.Current.Settings.MusicVolume : 1f);
+                ? AppRoot.Current.MusicGain : 1f);
             previewStartSample = (int)Math.Min(clip.samples - 1d, Math.Max(0d,
                 Math.Round(track.PreviewStartMs * clip.frequency / 1000d)));
             previewEndSample = (int)Math.Min(clip.samples, Math.Max(

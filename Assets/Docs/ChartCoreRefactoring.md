@@ -1,8 +1,30 @@
 # Chart Core 구조 개편
 
-> 문서 상태: Phase 4 진행 중  
+> 문서 상태: 보관 — 2026-08 구조 개편 설계 및 당시 체크리스트
 > 최초 작성: 2026-08-25  
 > 목적: 에디터, Preview, 테스트 플레이, 실제 Gameplay가 동일한 채보 해석 결과를 사용하도록 공용 Chart Core의 경계와 이전 절차를 고정한다.
+
+## 현행 대응 — 2026-09-29
+
+현재 이전 상태는 [MIGRATION.md](MIGRATION.md), 목표 경계는
+[ARCHITECTURE.md](ARCHITECTURE.md), 작업 순서는 [ROADMAP.md](ROADMAP.md)를 따른다.
+아래 Phase 0~7은 이 문서의 옛 단계이며 전역 ROADMAP Phase나 Effect 1~7단계와 다르다.
+
+- Game 판정은 이미 Snapshot과 `PlayableJudgementSession`을 직접 사용한다.
+- NoteType/Scratch 규칙, Runtime Package와 codec, 공용 표시 assembly 분리는 반영됐다.
+- 편집 원본은 현재 `ChartHolder`이며 `ChartDocument`는 컴파일을 위한 투영이다.
+  아래 “ChartDocument가 저장·Undo의 직접 원본” 설명은 목표 설계다.
+- `NoteTrajectory`, `TimingTransform`, `JudgementEngine` 등의 이름은 설계 용어다.
+  이름을 맞추려고 같은 책임의 새 시스템을 만들지 않는다.
+- 시간·보정 부호·확정 판정 창은 [RhythmSystem.md](RhythmSystem.md)를 따른다.
+  당시 D-004/D-005를 그대로 미정 상태로 다시 적용하지 않는다.
+- 현행 좌표는 4800 units/measure, 양수 Line Speed이며 저장 형식은
+  [ChartFormat.md](ChartFormat.md)의 단일 `.rd` 형식 버전 1이다.
+- 기존 체크박스는 당시 상태로 보존한다. 미완료 표시만으로 새 작업을 배정하지 않는다.
+
+## 보관된 설계
+
+이하에서 “현재”, “확정”, “결정 필요”는 2026-08 설계 시점을 가리킨다.
 
 ## 1. 구조 개편을 진행하는 이유
 

@@ -3,6 +3,39 @@
 > 상태: Working Document  
 > 현재 작업과 바로 다음 작업만 기록한다.
 
+## 현황 검토 — 2026-09-29
+
+기준 커밋은 `a5f6026`이며 그 이후의 로컬 변경을 포함해 조사했다.
+현재 평가는 **핵심 제작→Game 실행 경로와 기본 사용자 기능을 구현했고,
+최신 UI/전환 통합 및 실제 사용 검수를 진행해야 하는 상태**다.
+전체 제품 완료율을 테스트 개수나 연결된 메뉴 수로 환산하지 않는다.
+
+| 영역 | 코드에서 확인한 상태 | 남은 확인/작업 |
+| --- | --- | --- |
+| Shared / 제품 분리 | 공용 컴파일·시간·판정·Effect와 별도 assembly, Play/Chart Build Profile | 최신 변경과 두 제품 빌드의 검증 대상 일치 확인 |
+| ChartMaker / 콘텐츠 | 단일 `.rd` 저장, 복구·Preview·패키지 출력, 복합 채보 자동 검사 | 실제 제작 UI와 Game 화면/청음 대조, 수동 Test Play 요구 확정 |
+| 판정 | 일반/Start ±50ms Perfect·±100ms Good, Mid ±100ms·End ±75ms Perfect | 수치 재결정이 아니라 실제 입력·표시·청음 검수 |
+| 결과 / 진행 | 최고 기록·즐겨찾기·횟수·클리어·최고 콤보, 첫 클리어 기억 조각 | 반복 플레이·재실행 검수, 추가 진행·서사 정책 |
+| 설정 | AppRoot 영속 모달, 저장 형식 v2/v1 이행, 음량·판정 보정·10레인 키 설정 | 물리 키·오디오·화면 검수; Voice 소스와 빈 카테고리는 미완성 |
+| Bootstrap / 전환 | 일반 Intro/Loop/Outro와 곡 선택 전용 흰 결정 연출 | 최신 전환 회귀 및 실패/중단 경계 검수; 시작 백분율은 시간 기반 연출 |
+| 최종 제품 범위 | 두 곡 테스트 콘텐츠와 일부 임시 메뉴 | 정식 콘텐츠, 메뉴별 출시 범위, 성능·배포 환경 검수 |
+
+이번 검토에서 `dotnet build remind.slnx --verbosity quiet`를 실행해 **경고 0, 오류 0**을
+확인했다. 먼저 수행한 `--no-restore`는 Temp의 테스트 프로젝트 복원 산출물 부재로
+실패했고, 일반 빌드가 복원 후 통과했다. 코드 수정으로 오류를 숨기지 않았다.
+Unity Test Runner·PlayMode·제품 빌드·수동 조작은 이번 검토에서 재실행하지 않았다.
+아래 Verified의 114개 통과 등은 기존 작업의 검증 기록이며, 이번 조사에서는 그 실행의
+XML/로그 원본과 최신 변경 전체의 일치까지 확인하지 않았다. 다음 A 작업에서 연결한다.
+
+이전 제안의 **실패 테스트 4개 복구, 복합 채보 검사, 판정 창 확정, 설정·기본 보상,
+Build Profile 추가는 이미 반영됐다.** 이를 신규 구현으로 중복 배정하지 않는다.
+다만 최신 수정에 영향받는 검사는 다시 실행한다.
+
+현재 미커밋 변경은 설정 모달/오디오, Bootstrap/씬 전환/결정 아트,
+DemoPlay의 테스트 fixture 이동, 이에 따른 프로필·회귀 검사·문서로 묶는다.
+사용자의 씬·아트 변경을 보존하고 같은 파일의 동시 수정을 피한다.
+장기 작업 ID·선행 조건·완료 기준은 [ROADMAP.md의 실행 작업 트리](ROADMAP.md#실행-작업-트리)를 따른다.
+
 ## Current
 
 - `Result` 씬에 참고 이미지 기준의 곡 정보, 난이도, 점수·랭크, 판정 통계,
@@ -31,10 +64,15 @@
   자동 저장·재열기 검사는 통과했고 실제 UI 화면 확인은 남아 있다.
 - Game 전용 `Bootstrap` 씬과 하이어라키의 `AppRoot`를 추가하고 Game 빌드의
   첫 씬으로 지정했다. 루트는 Home 진입, 곡/난이도 선택, 결과 요약의 1회 전달을 맡는다.
-  Music Select의 Play에서 선택을 기록하고 기존 `MusicSelected` 48프레임
-  애니메이션을 AppRoot 자식의 전체 화면 오버레이로 재생한 후 Game 씬에 진입한다.
-  중복 Play와 전환 중 ESC 복귀를 막고 Game 진입 후 오버레이를 닫는다. 실행 패키지와
-  재생 세션은 Game 씬이 소유한다.
+  Bootstrap→Home을 포함한 일반 씬 이동에는 투명 결정 오버레이의 1초 Intro,
+  Intro 시작 0.25초 뒤 씬 로드 요청,
+  로딩 중 0.8초 반복 Loop, 1초 Outro와 어두운 덮개를 사용한다. 로딩이 빠르면
+  Loop를 생략해 기본 전환은 2초다. Bootstrap의 배경 이미지 없는 UI 계층은
+  HomeUI/ResultUI 장식을 재사용해 로고·문구·진행 표시를 보여준다.
+  자동 진입을 끄고 씬 전용 컨트롤러가 로딩 완료 후 새 키·클릭·터치·게임패드
+  버튼 입력을 받으면 `CompleteBootstrapLoading()`을 호출한다.
+  Music Select→Game에만 별도의 흰 결정 연출을 사용한다. 실행 패키지와 재생
+  세션은 Game 씬이 소유한다.
 - `Assets/Data/Music/i`를 `data.json` 형식 버전 1, 음원, 재킷, 단일 채보 파일로
   정리했다. 공용 `SongContentCodec`와 ChartMaker 저장·열기 검증, Music Select
   행의 곡명·아티스트·레벨 읽기를 연결했다. `level: 0`과 `Unknown`은 테스트
@@ -43,7 +81,7 @@
 - Home 메뉴의 씬 배치 버튼에 공통 선택 Scope/Node와 UI 입력 모듈을 연결했다.
   Game의 선택·일시정지·결과·오류 메뉴도 씬의 `GameFlowCanvas`로 옮겼다.
   Home 중앙은 Music으로 바꾸고 Gallery를 ReMind로 교체했다. Story, Music,
-  Character, ReMind, Option, Settings에는 각각 독립 임시 씬과 Home 복귀를
+  Character, ReMind, Option에는 각각 독립 임시 씬과 Home 복귀를
   연결했다. Music의 샘플 버튼은 Game으로, Game 곡 선택의 Cancel은 Music으로,
   Home의 Exit는 종료로 연결한다.
   이번 UI 변경은 C# 빌드와 씬 YAML 구조를 확인했다. Unity Editor에서
@@ -55,11 +93,17 @@
   게임 입력이 같은 프레임에 들어와도 Pause/Resume이 중복 전환되지 않게 했다.
   두 곡 PlayMode 스모크에서 같은 프레임 차단과 다음 프레임 재개를 확인했고,
   실제 ESC 키 입력도 확인했다.
-- Settings 임시 화면을 작동하는 메뉴로 교체했다. 음악 음량 0~100%, 판정 보정
-  -200~+200ms(5ms 단위), 10레인 키 변경·초기화를 제공한다. 설정은 진행 기록과
-  분리된 `player-settings-v1.json`에 즉시 저장한다. 곡 선택 미리듣기와 Game
-  음량은 곡별 볼륨에 사용자 음량을 곱하고, 판정 보정과 키 변경은 다음 세션의
-  판정·입력에 적용한다. ChartMaker에는 적용하지 않는다.
+- Settings를 Bootstrap `AppRoot` Canvas에서 Home 위에 뜨는
+  `SettingsOverlay.prefab`으로 옮겼다. Home은 AppRoot를 통해 모달을 열고,
+  씬 변경 시 오버레이의 탐색 참조를 정리한다. 이미지의
+  Audio 페이지를 마스터/BGM/SFX/Voice 볼륨, 히트 사운드 스타일, 시스템 기본
+  출력 장치 링크, 공간 음향, 비활성화·배경 재생 옵션으로 구성했다. Rhythm에는
+  판정 보정 -200~+200ms(5ms 단위), Controls에는 10레인 키 변경·초기화를 둔다.
+  값은 진행 기록과 분리된 `player-settings-v1.json`의 형식 버전 2에 즉시 저장한다.
+  기존 버전 1 데이터는 설정값을 보존해 읽는다. BGM은 미리듣기·Game에,
+  마스터는 AudioListener에, SFX/히트 스타일은 판정 효과음에 적용한다.
+  Voice 음원은 아직 없으며 나머지 카테고리는 탐색용 자리다. ChartMaker에는
+  Game 플레이어 설정을 적용하지 않는다.
 - Result의 기존 기억 영역에 곡·난이도별 누적 플레이 횟수, 최고 콤보, 클리어 이력과
   첫 클리어 표시를 연결했다. 실패한 플레이도 횟수에 포함하고 Auto Play는 저장하지
   않는다. `player-progress-v1.json`의 기록만 사용한다. 곡·난이도 첫 클리어마다
@@ -87,14 +131,16 @@
   상태 이미지는 직렬화된 참조로 갱신한다.
   Track 1의 곡명·아티스트에는 넘칠 때만 이동하고 끝에서 페이드 후 처음으로
   돌아오는 TMP 표시 영역을 하이어라키에 연결했다. Unity 화면 동작은 미확인이다.
-  ReMind UI PNG 팩의 런타임 스프라이트 44개를 `Assets/Art/Sprites/UI/ReMindUI`에
+  ReMind UI PNG 팩의 런타임 스프라이트 44개를 `Assets/Art/UI/ReMindUI`에
   가져왔다. Sprite/9-slice 설정은 `.meta`에 기록했다. MusicSelect의 곡 Slot,
   Favorite 아이콘, 재킷 프레임, 분류 탭, 난이도 링, 시작 버튼에 대응하는
   Sprite를 연결했다.
   그중 상태별 중심이 어긋난 19개 PNG의 픽셀 위치를 보정했다. Unity 화면은 미확인이다.
   씬 YAML 참조와 C# 빌드는 확인했고 실제 화면 입력 확인은 남아 있다.
 
-## 미커밋 변경 묶음 (2026-09-28 기준선)
+## 이전 기준선 변경 묶음 (2026-09-28 이력)
+
+아래는 당시의 변경 분류다. 다수는 `a5f6026`에 반영됐으며 현재 미커밋 목록으로 사용하지 않는다.
 
 - 곡 콘텐츠와 카탈로그: `i`·`designant`의 `data.json`, 음원·재킷·`.rd` 경로,
   `rmp/` 실행 패키지, 카탈로그 참조.
@@ -109,6 +155,22 @@
 
 ## Verified
 
+- 2026-09-30 `SettingsOverlay`를 Bootstrap의 영속 `AppRoot` Canvas에 연결한 뒤
+  `dotnet build remind.slnx` 경고·오류 0개와 격리된 Unity Game PlayMode 전체
+  스모크를 확인했다. Home 열기·설정 저장·닫기, 열린 상태의 씬 이동 뒤
+  모달 비활성화와 탐색 참조 해제를 검사했다. 실제 화면 클릭과 비율은 미확인이다.
+- 일반 화면 전환의 씬 로드 요청을 Intro 시작 0.25초 뒤로 옮긴 뒤
+  `dotnet build remind.slnx`와 격리된 Unity Game PlayMode 전체 스모크가
+  통과했다. 실제 화면의 끊김 감소는 수동 확인이 필요하다.
+- 2026-09-29 격리된 Unity 6000.3.15f1 복사본에서 Bootstrap 로딩 완료 뒤
+  입력 전 자동 전환이 없고 `TryContinue()` 호출 뒤 Home 전환이 시작되는 것을
+  전체 Game PlayMode 스모크로 확인했다. 실제 키·마우스·터치·게임패드 입력은
+  직접 조작해 확인하지 않았다.
+- 2026-09-29 격리된 Unity 6000.3.15f1 프로젝트에서 Settings Prefab 생성과
+  당시 Home 인스턴스 연결, EditMode 114개, 두 곡 PlayMode 스모크, Game·ChartMaker
+  Windows 빌드가 통과했다. 오버레이를 열어 값 변경·저장, 키 변경 취소,
+  닫은 뒤 Home 복귀를 검사했다. 제거된 DemoPlay 런타임 씬의 기존 검사 규칙은
+  `Assets/Tests/Fixtures/Scenes/DemoPlay.unity`에서 유지한다.
 - Music Select에서 두 곡 각각 Play→48프레임 전환→Game→Result→Music Select를
   격리된 Unity PlayMode 스모크로 확인했다. 프레임 진행, 중복 Play 차단,
   Game 진입 뒤 오버레이 정리도 검사했다. Unity EditMode 113개와 Game Windows
@@ -125,7 +187,7 @@
   추가된 복합 채보 검사는 Tap·Hold·Scratch·Long Scratch·BPM·스크롤·Effect를
   편집 상태에서 저장→재열기→Preview→패키지 출력→Game 구성요소 실행까지
   통과시키고 노트 지점·시간·바닥 위치·Effect 설정을 양쪽에서 대조한다.
-- 설정 저장·재로드·백업 복구·값 검증 테스트와 Settings 씬 버튼→Home→
+- 설정 저장·재로드·백업 복구·값 검증 테스트와 Home Settings 오버레이→Home→
   두 곡 Game 스모크가 통과했다. 저장한 음량·판정 보정·레인 키가 Game에
   반영되는 것을 확인했다. 새 Settings 화면의 실제 표시·물리 키 변경은 수동
   확인이 남아 있다.
@@ -154,23 +216,34 @@
 - 두 곡과 ChartMaker UI의 화면·청음·물리 키 입력을 수동 검수한다.
   10레인 입력, 음원·판정 표시 동기화, Long/Scratch 길이·깊이·레인,
   Effect 카메라, 일시정지·재시도·결과, Music Select 미리듣기와 UI 탐색을 확인한다.
-- Settings의 실제 표시, 음량·판정 보정 체감, 레인 키 재지정·중복 거부·ESC 취소,
+- Settings Prefab의 실제 화면 비율·겹침, 오디오 항목의 청음, 판정 보정 체감,
+  레인 키 재지정·중복 거부·ESC 취소,
   게임 재실행 뒤 설정 유지와 플레이 반영을 확인한다. 사용자가 나중에 확인한다.
   자동 메서드 호출과 버튼 스모크를 물리 입력 성공으로 간주하지 않는다.
-- Music Select→Game의 48프레임 전환이 실제 화면 비율에서 잘리지 않고
-  의도한 속도로 보이는지, 전환 중 클릭·ESC와 Game 진입 뒤 화면·음원이
-  자연스러운지 직접 확인한다.
+- 일반 씬의 Intro/Loop/Outro·어두운 덮개와 Music Select→Game의 흰 결정 연출이
+  실제 화면 비율에서 잘리지 않고 의도한 속도로 보이는지, 전환 중 클릭·ESC와
+  Game 진입 뒤 화면·음원이 자연스러운지 직접 확인한다.
 - 정식 화면 아트와 곡 레벨·채보 제작자 메타데이터가 준비되면 임시 표시를
   교체하고 Game/ChartMaker 빌드에서 화면·입력을 직접 다시 확인한다.
 
 ## Next — 작업 순서
 
-1. 정식 곡 메타데이터·아트와 서사 데이터가 준비되면 임시 표시를 교체한다.
-2. 실제 화면·청음·물리 입력으로 판정 창, UI 탐색, Game/ChartMaker 빌드를
-   검수한다. 자동 검사와 별도 확인이 필요하다.
-3. 실제 하드웨어에서 프레임 시간·GC·메모리와 배포 호환성을 측정한다.
-   구형 `ChartLoader`/`NoteData`는 현행 Game 호출부에서 사용되지 않지만
-   `ChartLoadService` 내부가 아직 사용하므로 별도 정리에서 제거 여부를 결정한다.
+1. **A1~A3: 최신 통합 기준선.** 설정 모달·Bootstrap·전환·fixture 이동이 포함된
+   대상 파일을 고정하고 EditMode, 두 곡 PlayMode smoke, Play/Chart 빌드를 확인한다.
+   일반 Intro/Loop/Outro와 흰 결정 경로를 구분한다. 예전 48프레임 스모크의 통과를
+   최신 전환 전체 검증으로 간주하지 않는다. 로그·XML·대상 파일 해시를 연결해 남긴다.
+2. **D1: 출시 범위 결정.** 임시 메뉴, 빈 설정 카테고리·Voice, 수동 Test Play,
+   진행·해금·서사, 목표 하드웨어/지원 환경을 출시 필수와 후속으로 구분한다.
+   사용자 기획 결정은 임의로 확정하지 않으며 A와 병행해 준비한다.
+3. **B/C: 실제 Game·ChartMaker 검수.** 사용자 수동 확인 일정에 맞춰 위 확인 목록과
+   복합 채보 제작→Game 대조를 수행한다. 정식 아트가 없어도 테스트용 콘텐츠로 진행한다.
+   ESC 확인 이력은 보존하되 전체 물리 입력 검수로 확대 해석하지 않는다.
+4. **E2 초기 측정.** 합의한 하드웨어에서 프레임 시간·GC·메모리·전환 비용을 계측한다.
+   최종 콘텐츠가 들어오면 영향을 받은 구간을 다시 측정한다.
+
+이후의 기능·콘텐츠·레거시 정리·배포 작업은 ROADMAP의 D2~F에서 관리한다.
+`ChartLoader`/`NoteData`는 `ChartLoadService` 내부 참조와 직렬화 사용까지 확인한 뒤
+별도 작업으로 정리한다. 위 계획 작성은 구현·배포·commit/push 실행을 뜻하지 않는다.
 
 ## Notes
 

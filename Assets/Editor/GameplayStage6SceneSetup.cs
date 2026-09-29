@@ -17,7 +17,8 @@ using UnityEngine.SceneManagement;
 public static class GameplayStage6SceneSetup
 {
     private const string UndoName = "Connect Effect Sample to DemoPlay";
-    private const string ScenePath = "Assets/Scenes/DemoPlay.unity";
+    private const string ScenePath =
+        "Assets/Tests/Fixtures/Scenes/DemoPlay.unity";
     private const string PackagePath =
         "Assets/Tests/Fixtures/rmp/EffectGameplaySample.rmp.json";
     private const string SampleMusicId = "effect_gameplay_sample";

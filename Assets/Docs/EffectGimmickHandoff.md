@@ -1,8 +1,32 @@
 # Effect / MusicGimmick 작업 재개 메모
 
-최종 갱신: 2026-09-09 (한국 시간)
+현행 연결 검토: 2026-09-29 (한국 시간)
 
-## 지금 멈춘 위치 — 다음 작업자는 먼저 읽을 것
+## 현재 재개 기준
+
+먼저 [AGENTS.md](../../AGENTS.md), [TASKS.md](TASKS.md),
+[MIGRATION.md](MIGRATION.md)와 로컬 변경을 확인한다. 구현/확장 방법은
+[EffectGimmickGuide.md](EffectGimmickGuide.md)를 따른다.
+
+- 제작 형식은 `REmindChart` 형식 버전 1의 단일 `.rd`다. Effect 파라미터는
+  `eventDictionary[].parameters`에 있다. 별도 sidecar는 이전 형식 호환/회귀 범위다.
+- Game은 `.rmp.json`을 준비하며 ChartMaker 저장 코드에 의존하지 않는다.
+- Game 판정은 `PlayableJudgementSession`, 공용 표시는 `LaneHitEffectPlayer`를 쓴다.
+  Game/ChartMaker assembly와 Play/Chart Build Profile은 이미 분리됐다.
+- Game의 곡 선택·결과·설정·로컬 진행은 구현되어 있다. Effect의 곡 전환 요청 capability는
+  앱이 별도로 연결해야 하며 일반 메뉴 씬 이동과 구분한다.
+- DemoPlay 씬은 `Assets/Tests/Fixtures/Scenes/DemoPlay.unity`,
+  샘플은 `Assets/Tests/Fixtures/EffectGameplaySample.rd`와 `rmp/` 패키지다.
+- 과거 75/75와 수동 DemoPlay 확인은 당시 결과다. 최신 변경의 검증 여부는 TASKS에서 확인한다.
+- 아래 개인 Downloads 경로와 옛 중단 조건은 당시 작업의 출처다. 현재 작업의 필수
+  외부 의존이나 승인 조건으로 승계하지 않는다. 현재도 불명확한 게임 규칙은 별도로 확인한다.
+
+## 보관된 2026-09-09 인수인계
+
+이하의 “현재”, “다음”, 검사 개수와 경로는 당시 기록이며 신규 실행 지시가 아니다.
+구체적 원인과 수용 이력을 보존한다.
+
+## 당시 멈춘 위치
 
 - 사용자와 합의한 **1~4단계(기준선, 저장/Undo 안전성, 설정 검증 통합, 실행 시각·세션 수명)를 완료**했다.
 - Unity 6000.3.15f1 EditMode의 최신 전체 실행은 **75/75 통과**했다. 공용 보간/세션 분리와 강화한 Camera/JSON 검사까지 포함하며 솔루션 빌드도 경고 0·오류 0이다.

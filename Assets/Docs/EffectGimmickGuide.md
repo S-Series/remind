@@ -1,13 +1,14 @@
 # Effect / MusicGimmick 사용 및 확장 가이드
 
-> 적용 범위: 현재 ChartMaker Preview와 `DemoPlay` 통합 하네스  
+> 적용 범위: ChartMaker Preview, ReMind Game, 테스트 DemoPlay 하네스
 > 데이터 형식: ChartMaker Editor JSON 형식 버전 1 (`.rd` 단일 파일)
-> 최종 갱신: 2026-09-09
+> 최종 검토: 2026-09-29
 
 이 문서는 Effect를 배치하고 안전하게 저장하는 방법, Preview와 실행 시의 공통
 규칙, 새 Effect 또는 곡 전용 MusicGimmick을 추가하는 방법을 설명한다.
 `DemoPlay`는 최종 ReMind Game 씬이 아니라 공용 실행 계약을 기존 판정·규칙·카메라에
-연결해 보는 과도기 통합 하네스다.
+연결해 보는 테스트 하네스다. 현행 Game은 카탈로그의 `.rmp.json`을 준비해 같은
+Shared 실행 계약을 사용한다. DemoPlay 씬은 `Assets/Tests/Fixtures/Scenes/`에 있다.
 
 ## 1. 책임과 데이터 원본
 
@@ -42,6 +43,8 @@ Preview 중에는 문서 변경, 저장/열기, 음악 교체를 막는다. 외�
 
 ## 3. `.rd`의 Effect 파라미터 형식
 
+다음은 Camera Effect 하나의 형식 예제다. 7절의 번들 샘플 전체 내용과는 다르다.
+
 ```json
 {
   "format": "REmindChart",
@@ -50,7 +53,7 @@ Preview 중에는 문서 변경, 저장/열기, 음악 교체를 막는다. 외�
   "difficultyId": "demo",
   "baseBpm": 120,
   "musicStartCorrectionMs": 0,
-  "revision": "stage6_demo_004",
+  "revision": "camera_format_example",
   "notes": ["000|0000|--------|--------|00000000|-1|-|T|-"],
   "eventDictionary": [
     {
@@ -114,7 +117,7 @@ envelope를 사용한다. 프레임이 늦어져도 그 프레임의 실제 경�
 
 준비 단계에서만 파일을 읽고 다음을 모두 검사한다.
 
-- `.rd`의 곡·난이도 정보와 revision
+- ChartMaker는 `.rd`의 곡·난이도 정보와 revision, Game은 실행 패키지의 metadata
 - Effect 행과 정의의 1:1 대응, 고유 `effectId`, 동일 시각의 고유 order
 - 등록된 Effect 종류, MusicGimmick과 명령
 - JSON 구조·타입·필수 값·범위
@@ -125,9 +128,9 @@ ChartMaker의 holder나 JSON 문자열을 넘기지 않고 준비된 계획만 �
 
 실행 순서는 다음과 같다.
 
-1. 도달한 Effect를 예약 시각과 명시 order 순으로 한 번씩 시작한다.
-2. 해당 시각까지 도착한 입력을 도착 sequence 순으로 판정한다.
-3. 자동 판정/Miss를 처리한다. 정확한 마감 시각은 기존 판정 규칙처럼 입력이 먼저다.
+1. Effect 예약 시각, 입력의 원래 평가 시각, 자동 판정 시각 중 가장 이른 경계를 고른다.
+2. 같은 시각이면 Effect의 명시 order → 입력의 sequence → 자동 판정/Miss 순서로 처리한다.
+3. 현재 시각까지 시간순 병합을 반복한다. 정확한 Miss 마감 시각은 입력이 먼저다.
 4. 활성 Effect와 MusicGimmick을 현재 프레임 chart time으로 한 번 갱신한다.
 5. 프레임이 끝난 뒤 승인된 곡 전환 요청을 앱의 안전한 경계에서 처리한다.
 
@@ -140,25 +143,28 @@ cancellation과 전환 mailbox를 모두 새 세대로 교체한다.
 실패 또는 취소 시에도 소유한 자원을 모두 정리하고, 실행 실패와 정리 실패가 함께 나면
 둘 다 보존해 보고한다.
 
-## 5. Preview와 DemoPlay의 범위
+## 5. Preview, Game과 DemoPlay의 범위
 
 ChartMaker Preview는 같은 Snapshot, Effect 계획, 시간 계산, 카메라 envelope와 세션
 수명 규칙을 사용한다. 다만 Preview의 게임 상태는 명시적인 테스트 값이며 규칙 서비스는
 handle 수명만 재현한다. 계정, 해금, 영구 진행, 실제 씬 전환을 변경하지 않는다.
 상태 이력을 복원할 수 없는 MusicGimmick이 있으면 중간 시각 시작을 거부한다.
 
-`DemoPlay`는 공용 계획을 기존 `NoteJudgementSystem`, 실제 `GameRule`,
-`GameplaySessionState`, 카메라 pivot에 연결한 통합 하네스다. 현재 확인할 수 있는 것은
-이 연결의 시간·수명·서비스 계약이다. 최종 Game의 곡 선택, 로딩, Player 진입,
-씬 전환, 콘텐츠 카탈로그는 아직 구현 대상이 정해지지 않았으며 이 하네스를 최종
-Gameplay로 간주하지 않는다.
+Game은 `GameplayChartPreparation`으로 실행 패키지를 준비하고
+`GameplayChartSessionController`가 판정·GameRule 상태·Effect 서비스에 연결한다.
+Bootstrap·곡 선택·로딩·결과·로컬 기록 흐름이 있으며 실제 사용 검수는 별도다.
+`DemoPlay`는 같은 시간·수명·서비스 계약을 검사하는 fixture이고 제품 진입 씬이 아니다.
+`music.call`의 곡 전환 요청은 앱이 대상 검증과 전환 수신자를 연결해야 사용할 수 있다.
+메뉴의 `SceneTransitionController`만 존재한다고 기믹의 곡 전환 capability까지
+자동으로 제공되는 것은 아니다.
 
 공용 카메라·배치·판정의 원칙은 다음과 같다.
 
 - chart time/position 변환, 카메라 timeline/easing, Effect 실행 의미는 Shared에 둔다.
-- 판정 결과가 같아야 하는 규칙과 시간 경계도 Shared 후보로 분류한다.
+- 공용 `PlayableJudgementSession`이 지점/구간 lifecycle을 소유한다. Preview 수동
+  입력에 필요한 GameRule 등급·modifier의 추가 공유는 별도 검토한다.
 - ChartMaker의 편집 UI/Preview 표시와 Game의 실제 입력/Transform 표시는 앱별 adapter다.
-- 기존 Long/Scratch 판정을 이 Effect 작업에서 새로 만들거나 바꾸지 않는다.
+- Long/Scratch 판정은 [RhythmSystem.md](RhythmSystem.md)를 따르며 Effect UI에서 복제하지 않는다.
 
 ## 6. 확장 방법
 
@@ -169,8 +175,9 @@ Gameplay로 간주하지 않는다.
    `EffectRegistration`에 명시한다.
    내장 타입 외의 parameter 객체를 쓰면 `copyParameters`를 등록해 원본과 각
    실행 세션에 서로 다른 독립 복사본을 제공한다. 복사 함수가 없으면 준비를 거부한다.
-3. 현재 authoring adapter인 `ChartEffectJsonCodec`에 동일 필드의 decoder와 새 설정의
-   기본 JSON을 추가한다.
+3. 공용 `ChartEffectParameterCodec`에 decoder와 새 설정의 기본 JSON을 등록한다.
+   ChartMaker의 `ChartEffectJsonCodec`은 이 공용 codec을 호출한다. Game 전용 또는
+   ChartMaker 전용 decoder를 별도로 구현하지 않는다.
 4. 절대 chart time, 지연 프레임, 종료/취소 정리, 겹침을 Core 테스트로 고정한다.
 5. ChartMaker Preview와 Game presenter는 필요한 표시 변환만 각각 연결한다.
 
@@ -185,9 +192,9 @@ Gameplay로 간주하지 않는다.
 5. ChartMaker에서 선택 가능한지, 한 세션에서 상태를 공유하는지, Restart/예외 때
    정리되는지 검사한다.
 
-현재 registry와 JSON decoder 등록은 한 곳으로 완전히 통합되지 않은 과도기 경계다.
-새 확장에서 중복 등록이 필요하면 두 등록이 같은 parameter 타입과 검증을 사용하도록
-테스트하고, 장기적으로는 Shared schema/codec 경계로 이동한다.
+현재 registry와 JSON codec은 모두 Shared에 있지만 실행 등록과 decoder 등록은
+서로 다른 API다. 양쪽이 같은 ID·parameter 타입·기본값·검증을 사용하고 Game과
+ChartMaker의 준비 경로에 모두 등록되는지 검사한다.
 
 ## 7. 번들 샘플과 확인 방법
 
@@ -204,7 +211,7 @@ Gameplay로 간주하지 않는다.
 .\Tools\Run-EffectBaseline.ps1
 ```
 
-수동 확인은 `Assets/Scenes/DemoPlay.unity`에서 Auto가 켜진 상태로 Play한다. 초기
+수동 확인은 `Assets/Tests/Fixtures/Scenes/DemoPlay.unity`에서 Auto가 켜진 상태로 Play한다. 초기
 1초가 비어 있는지, Camera가 순간이동하지 않고 부드럽게 이동·회전·복귀하는지,
 Pause/Resume에서 위치가 튀지 않는지, Reset 후 임시 카메라와 규칙이 남지 않는지,
 Console 오류가 없는지 확인한다. Auto는 물리 입력 대신 샘플 Tap을 자동 판정해 Effect
@@ -225,4 +232,5 @@ Console 오류가 없는지 확인한다. Auto는 물리 입력 대신 샘플 Ta
   연출이 필요하면 두 값을 명시하고 합이 duration을 넘지 않게 한다.
 
 구조의 장기 경계와 남은 과도기 의존성은 `ARCHITECTURE.md`, `MIGRATION.md`,
-현재 진행 상태는 `EffectGimmickWorkLog.md`에서 관리한다.
+현재 진행·검증 상태는 [TASKS.md](TASKS.md)에서 관리한다.
+[EffectGimmickWorkLog.md](EffectGimmickWorkLog.md)는 2026-09-09까지의 역사 기록이다.

@@ -1,8 +1,16 @@
 # Effect / MusicGimmick 장기 작업 기록
 
-최종 갱신: 2026-09-09 (한국 시간)
+> 상태: 보관 — 2026-09-07~09 Effect 작업과 검증 이력
+> 현행 문서 연결 검토: 2026-09-29
 
-이 문서는 장기 작업 중 **완료한 범위, 현재 수정 중인 지점, 검증 결과, 다음 재개 지점**을 계속 기록한다. 설계의 원본은 `C:\Users\inwea\Downloads\REmind_Effect_Gimmick_Codex_Instructions.md`이며, 상세 재개 지침은 `Assets/Docs/EffectGimmickHandoff.md`에 있다.
+이 문서는 당시 구현·수정·수동 수용 기록을 보존한다. 아래 “현재/최신/다음”과
+테스트 개수, sidecar·NoteData·Game→ChartMaker 의존 설명은 기록 당시의 상태다.
+현행 단일 `.rd`·Runtime Package·공용 판정·독립 빌드 기준으로 읽지 않는다.
+
+최신 진행은 [TASKS.md](TASKS.md), 이전 상태는 [MIGRATION.md](MIGRATION.md),
+현행 재개 안내는 [EffectGimmickHandoff.md](EffectGimmickHandoff.md)를 따른다.
+당시 출처인 개인 Downloads 문서는 이 역사 기록의 참고이며 현재 작업의 필수 의존이 아니다.
+아래 검증 이력은 이번 문서 검토에서 재실행하지 않았다.
 
 ## 단계 현황
 
@@ -61,7 +69,7 @@
 - Effect 카메라의 Attack/Hold/Release를 공용 절대 chart time smooth-step으로 계산한다. 카메라 합성, Preview 테스트 상태/규칙 handle, 전환 mailbox도 Unity 비의존 Shared Core로 이동했고 ChartMaker와 Demo 하네스는 표시 adapter만 가진다.
 - `GameplayChartEffectController`는 이제 `PreparedEffectPlan`과 식별자만 받는다. 다만 최종 독립성은 아직 아니며, 번들 파일 준비 adapter의 Game→ChartMaker 저장 의존과 `ChartTestPlay`의 `LaneHitEffectPlayer` 표현 의존이 남아 있다.
 
-## 현재 완료 상태
+## 당시 완료 상태 (2026-09-09)
 
 첫 사용자 수동 확인에서 `DemoPlay` 카메라의 트리거·이동·복귀는 작동했지만 움직임이 순간적으로 바뀌는 결함이 발견됐다. 원인은 공용 `CameraEffect`가 지속시간 내내 고정 pose를 즉시 적용/해제하던 것이며, Shared absolute-time smooth-step Attack/Hold/Release로 수정했다.
 
@@ -69,7 +77,7 @@
 
 `DemoPlay`는 Build Settings/Home에서 들어가는 최종 Player Gameplay가 아니다. 최종 씬, 곡 선택·로딩·씬 전환과 독립 Game/ChartMaker build는 후속 범위로 남기며 이번 Effect 7단계 완료를 그 범위의 완료로 과장하지 않는다.
 
-## 마지막 확인 결과
+## 당시 마지막 확인 결과
 
 - 최신 전체 실행: Unity 6000.3.15f1 EditMode **75/75 성공**, 실패 0, 건너뜀 0.
 - 결과: `Logs/EffectBaselineResults/20260909-190759-5157b189/results.xml`
@@ -81,7 +89,7 @@
 - 최종 저장 Effect는 `camera.offset`이며 JSON 설정도 유효하다. 수동 테스트 중 먼저 발생한 `EFFECT_TYPE` 로그는 타입 적용·저장 전 Preview 시도의 기록이고 최종 파일의 타입 유실이 아니다.
 - no-type 안내 보완 후 솔루션 빌드와 원본 프로젝트 전체 Unity 회귀가 모두 통과했다. 앞서 실패한 임시 프로젝트 검사는 라이선스 채널 충돌 때문이었고 임시 복제본은 정리했다.
 
-## 후속 작업 시작 지점
+## 당시 후속 작업 시작 지점 — 현행 상태는 MIGRATION 참조
 
 Effect 작업 1~7단계는 완료됐다. 다음 작업은 현재 범위를 자동으로 확대하지 않는다.
 

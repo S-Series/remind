@@ -1,4 +1,6 @@
 using System;
+using REmind.Common.UI;
+using REmind.Gameplay.Demo;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -28,13 +30,20 @@ namespace REmind.Gameplay
         private GameResultSnapshot pendingResult;
         private LocalPlayerDataStore playerData;
         private LocalGameSettingsStore settings;
+        private bool hasFocus = true;
+        private bool applicationPaused;
+        private bool voicePlaybackActive;
         [SerializeField] private SceneTransitionController sceneTransition;
+        [SerializeField] private SettingsMenuController settingsOverlay;
+        [SerializeField] private bool autoEnterHomeOnStart = true;
         private bool duplicate;
 
         public bool LastResultIsNewRecord { get; private set; }
         public bool LastResultWasFirstClear { get; private set; }
         public int MemoryFragmentCount => playerData.MemoryFragmentCount;
         public LocalGameSettingsStore Settings => settings;
+        public float MusicGain => settings.MusicVolume *
+            (voicePlaybackActive && settings.ReduceBgmDuringVoice ? 0.4f : 1f);
         public bool IsTransitioning => sceneTransition &&
             sceneTransition.IsTransitioning;
 
@@ -45,10 +54,54 @@ namespace REmind.Gameplay
             return sceneTransition.BeginMusicSelected();
         }
 
+        public bool TryTransitionToScene(string sceneName) =>
+            sceneTransition && sceneTransition.TransitionTo(sceneName);
+
+        public bool TryOpenSettings(MenuNavigationController navigation)
+        {
+            if (duplicate || IsTransitioning || !settingsOverlay || !navigation)
+                return false;
+            if (settingsOverlay.IsOverlayOpen) return true;
+            settingsOverlay.OpenOverlay(navigation);
+            return settingsOverlay.IsOverlayOpen;
+        }
+
+        /// <summary>Called when Bootstrap has finished presenting its logo and loading its startup data.</summary>
+        public void CompleteBootstrapLoading()
+        {
+            if (duplicate || SceneManager.GetActiveScene().name != "Bootstrap" ||
+                IsTransitioning) return;
+            if (!TryTransitionToScene("Home"))
+                Debug.LogError("Bootstrap scene transition is not configured.", this);
+        }
+
+        public static bool NavigateToScene(string sceneName)
+        {
+            if (Current) return Current.TryTransitionToScene(sceneName);
+            if (string.IsNullOrEmpty(sceneName) ||
+                !Application.CanStreamedLevelBeLoaded(sceneName)) return false;
+            SceneManager.LoadScene(sceneName);
+            return true;
+        }
+
         public void SetMusicVolume(float value)
         {
             settings.SetMusicVolume(value);
             SaveSettings();
+        }
+
+        public void SetVoicePlaybackActive(bool active)
+        {
+            voicePlaybackActive = active;
+        }
+
+        public void ApplyAudioPreferences()
+        {
+            if (settings == null) return;
+            AudioListener.volume =
+                (!hasFocus && settings.MuteWhenUnfocused) ||
+                (applicationPaused && !settings.KeepAudioInBackground)
+                    ? 0f : settings.MasterVolume;
         }
 
         public void SetJudgementOffsetMs(double value)
@@ -162,6 +215,19 @@ namespace REmind.Gameplay
             settings = LocalGameSettingsStore.Load(
                 System.IO.Path.Combine(Application.persistentDataPath,
                     "player-settings-v1.json"));
+            ApplyAudioPreferences();
+        }
+
+        private void OnApplicationFocus(bool focus)
+        {
+            hasFocus = focus;
+            ApplyAudioPreferences();
+        }
+
+        private void OnApplicationPause(bool paused)
+        {
+            applicationPaused = paused;
+            ApplyAudioPreferences();
         }
 
         private void SaveSettings()
@@ -176,8 +242,7 @@ namespace REmind.Gameplay
 
         private void Start()
         {
-            if (!duplicate && SceneManager.GetActiveScene().name == "Bootstrap")
-                SceneManager.LoadScene("Home");
+            if (autoEnterHomeOnStart) CompleteBootstrapLoading();
         }
 
         private void OnDestroy()

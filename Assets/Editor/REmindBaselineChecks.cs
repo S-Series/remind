@@ -2315,7 +2315,8 @@ public static class REmindBaselineChecks
 
     private static void GameplayScene_ConnectsSnapshotStateAndCamera()
     {
-        const string scenePath = "Assets/Scenes/DemoPlay.unity";
+        const string scenePath =
+            "Assets/Tests/Fixtures/Scenes/DemoPlay.unity";
         Scene scene = SceneManager.GetSceneByPath(scenePath);
         bool opened = !scene.IsValid() || !scene.isLoaded;
         if (opened)

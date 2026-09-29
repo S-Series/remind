@@ -2,7 +2,8 @@
 
 > 상태: Living Target  
 > 이 문서는 ReMind의 **장기 목표 아키텍처**를 정의한다.  
-> 현재 코드 상태와 마이그레이션 세부사항은 `MIGRATION.md`에서 관리한다.
+> 현재 코드 상태와 마이그레이션 세부사항은 [MIGRATION.md](MIGRATION.md)에서 관리한다.
+> 검토: 2026-09-29. 현행 구현 설명과 장기 목표를 구분한다.
 
 ## 1. Architecture Goal
 
@@ -39,7 +40,7 @@ Shared는 두 앱에서 우연히 재사용할 수 있는 모든 코드를 뜻�
 난이도별 채보는 BPM·박자·시간 보정, 노트와 Effect·연출 규칙을 소유한다.
 재킷이 난이도마다 다르면 해당 `.rd`의 선택적 `jacketFile`로 지정한다.
 지정하지 않으면 `<difficultyId>.jpg`를 먼저 찾고, 없으면 곡의 `art.jpg`를
-사용한다. 배경이 난이도마다 다르면 난이도 목록의 표시 정보로 두며,
+사용한다. 난이도별 배경 metadata 확장은 별도 계약을 정한 뒤 도입하며,
 플레이 결과·점수·즐겨찾기는 별도 사용자 저장 데이터다.
 플레이어 음악 음량·판정 보정·Game 레인 키는 Game 전용 설정 데이터로
 진행 기록과 분리한다. ChartMaker Preview는 이 플레이어 설정을 읽지 않는다.
@@ -62,9 +63,10 @@ Shared는 두 앱에서 우연히 재사용할 수 있는 모든 코드를 뜻�
 
 이 표는 목표 소유권과 이름이다. 현행 `.rd`와 로더에 없는 필드를 이미 지원한다고
 간주하지 않는다. 선택 화면의 BPM 표기는 채보의 시간 데이터에서 산출하며, 곡 파일에
-독립된 BPM 원본을 중복 저장하지 않는다. 원본 포맷의 버전 번호는 해당 포맷을 읽는
-도구의 정보이고, ReMind 파일은 각자 `formatVersion`을 가진다.
-현행 곡 목록 계약과 `i` 샘플의 파일 배치는 `MusicContent.md`에 기록한다.
+독립된 BPM 원본을 중복 저장하지 않는다. 버전은 파일 계약마다 따로 관리한다.
+현재 곡 `data.json`과 `.rd`는 `formatVersion`, Runtime Package는 `Version`을 쓴다.
+현행 곡 목록 계약과 샘플의 파일 배치는 [MusicContent.md](MusicContent.md),
+제작/실행 파일 계약은 [ChartFormat.md](ChartFormat.md)에 기록한다.
 
 장기 개념 목표:
 
@@ -97,13 +99,15 @@ Validated Runtime Package
 - 예약 시각 기반 `EffectRunner`와 세션 취소/정리 계약
 - Camera Effect의 절대시간 easing과 additive offset 합성
 - Preview용 제한된 상태·규칙 handle·전환 mailbox 계약
+- Runtime chart package codec과 공용 Effect parameter decoder
+- Note/Long/Scratch 지점·구간, `PlayableJudgementSession`의 입력/유지/재합류 lifecycle
+- `REmind.NoteRules`의 NoteType과 Scratch motion/rules/path
 
-공용 후보지만 아직 물리적 경계가 완성되지 않은 책임:
+추가 공용화 또는 제품 간 대조가 필요한 책임:
 
-- Note/Long/Scratch 의미와 완전한 Runtime Chart 모델
-- 입력과 무관한 판정 시간 경계 및 결과 규칙
-- GameRule modifier의 공통 의미
-- Camera Note와 Scratch 카메라가 최종 Game에서도 가져야 할 정확한 표시 의미
+- Preview 수동 Test Play에 필요한 GameRule의 등급·수치·modifier 의미
+- Camera Note/Scratch 공용 계산을 적용하는 앱별 lane/prefab/Transform의 화면 일치
+- 현재 ChartHolder 편집 상태와 공용 ChartDocument 사이의 소유권 정리
 
 후보를 곧바로 새 구현으로 만들지 않는다. 현재 ChartMaker와 Game 양쪽의 실제 사용
 관계를 조사하고 Source of Truth를 정한 뒤 이동한다.
@@ -115,9 +119,16 @@ Validated Runtime Package
 - Game 빌드는 `Bootstrap` 씬에서 시작한다. 하이어라키의 `AppRoot`만
   `DontDestroyOnLoad`로 유지하며 Home을 연다. 이 루트는 곡/난이도 선택처럼
   씬 사이의 선택·결과 요약과 로컬 플레이어 기록 저장소를 소유한다. 그 자식의
-  `SceneTransitionController`는 씬 위에 표시할 Music Select 전환 오버레이와
-  Game 씬 로드를 맡는다. `GameManager`, 채보·판정·Effect·오디오
+  `SceneTransitionController`는 Bootstrap→Home을 포함한 Game의 씬 이동을 맡는다.
+  투명 `CrystalOverlayTransition`의 Intro를 시작하고, 씬 로딩이 길어지면
+  Loop를 반복한 뒤 Outro로 새 화면을 드러낸다. 일반 이동은
+  어두운 덮개로 로드 순간을 가린다. Music Select→Game에서만
+  `CrystalTransition`의 흰 화면을 사용한다. `GameManager`, 채보·판정·Effect·오디오
   세션은 계속 Game 씬이 소유하고 씬 종료 시 정리한다.
+  Bootstrap의 씬 전용 Canvas는 로고·문구·장식과 진행 표시를 보여준다.
+  `BootstrapLoadingController`가 표시 시간을 마친 뒤 새 키·클릭·터치·게임패드
+  버튼 입력을 기다린다. 입력을 받으면 `AppRoot.CompleteBootstrapLoading()`을
+  호출해 기존 전환으로 Home을 연다.
 - 실제 입력 장치와 입력 routing
 - 공용 Runtime package를 세션에 게시하는 composition root
 - 실제 `GameRule`, 체력·점수·콤보·실패/클리어 상태 adapter
@@ -127,11 +138,17 @@ Validated Runtime Package
   정의한다. `MenuNavigationController`는 활성 범위와 선택 복원만 맡고,
   방향 이동·Submit은 `InputSystemUIInputModule`/`Selectable`에 맡긴다.
   실제 플레이 중 Pause 진입만 Gameplay 입력에서 처리한다.
+- Settings는 별도 씬을 열지 않는다. `SettingsOverlay.prefab` 인스턴스는
+  Bootstrap의 영속 `AppRoot` Canvas 아래에 둔다. Home은 `AppRoot`에 열기를
+  요청하고 현재 `MenuNavigationController`의 모달 Scope로 Push/Pop한다.
+  씬이 바뀌면 오버레이와 씬 소유 탐색 참조를 정리한다. 설정 데이터는
+  `LocalGameSettingsStore`가 소유하며 Prefab은 표시와 입력만 맡는다.
+  기존 Settings 씬은 빌드 목록에서 제외했다.
 - Home의 MUSIC 버튼은 하이어라키에 저장된 `MusicSelect` 곡 선택 화면을 연다.
   Play를 누르면 선택한 곡 ID와 난이도 ID를 `AppRoot`에 기록하고 Game 씬으로
-  이동한다. Music Select→Game에서는 AppRoot의 `MusicSelected` 48프레임
-  애니메이션을 전체 화면 UI로 표시하고, 마지막 프레임 뒤 Game을 로드해 오버레이를
-  걷는다. 전환 중 중복 Play와 Music Select의 ESC 복귀를 막는다. Game 씬은
+  이동한다. Music Select→Game에서는 흰 결정 연출이 화면을 덮은 뒤 Game을
+  로드하고, 새 씬 위에서 투명 오버레이의 후반부를 이어 재생한다. 전환 중
+  중복 Play와 Music Select의 ESC 복귀를 막는다. Game 씬은
   `MusicCatalog`에서 해당 ID의 검증된 실행 패키지와 음원을
   찾아 패키지 ID를 다시 확인한 뒤 세션을 준비한다. 음원 로드가 끝나면 재생을
   시작한다. 실패하면 Game 오류 화면으로 이동한다. 패키지와 재생 세션은 Game 씬이
@@ -172,14 +189,15 @@ Validated Runtime Package
 모든 실행 의미는 프레임 수가 아니라 공용 chart time을 기준으로 한다. 예약 시각과
 늦은 프레임의 현재 처리 시각을 별도로 보존한다. 한 프레임에서 여러 경계를 지나면:
 
-1. Effect를 예약 시각과 명시 order 순으로 실행한다.
-2. 입력을 원래 평가 시각과 도착 sequence 순으로 처리한다.
-3. 자동 판정/Miss를 처리한다.
+1. 다음 Effect·입력·자동 판정 경계 중 가장 이른 시각을 선택한다.
+2. 같은 시각이면 Effect의 명시 order, 입력의 sequence, 자동 판정/Miss 순으로 처리한다.
+3. 현재 프레임 시각까지 위 병합을 반복한다. 미래 Effect를 과거 입력보다 먼저 적용하지 않는다.
 4. 활성 Effect와 곡 기믹을 현재 프레임 시각으로 한 번 갱신한다.
 
 시각 T의 규칙 변경은 T 이전 입력에 소급하지 않는다. 같은 시각에는 Effect가 먼저이며,
-정확한 Miss 마감 시각에서는 기존 판정 계약대로 입력을 먼저 처리한다. 시간 역행과
-같은 시각 중복 update를 허용하지 않는다.
+정확한 Miss 마감 시각에서는 기존 판정 계약대로 입력을 먼저 처리한다. 프레임 시간 역행과
+같은 시각의 중복 Effect 갱신은 막는다. 다음 프레임에 늦게 도착한 입력의 허용/폐기 경계와
+보정 부호는 [RhythmSystem.md](RhythmSystem.md)를 따른다.
 
 노트 배치의 Y/시간/scroll 계산은 Snapshot의 Timing/Scroll 결과를 공유한다. X 위치,
 prefab, Animator와 물리 입력은 앱별 표현이다. `PlayableJudgementSession`은
@@ -220,6 +238,6 @@ Effect 안에서 Scene을 즉시 바꾸지 않고 요청만 제출하며 앱의 
 
 `REmind.ChartCore`, `REmind.NoteRules`는 Unity 비의존 assembly이고,
 `REmind.Gameplay`와 `REmind.ChartMaker`는 별도 제품 assembly다. Game/ChartMaker
-Windows 빌드에서 상대 제품 DLL이 포함되지 않음을 확인했다. `Play`와 `Chart`
+Windows 빌드의 상대 제품 DLL 제외 검증 이력은 [TASKS.md](TASKS.md)에 둔다. `Play`와 `Chart`
 Build Profile은 제품별 씬과 define을 소유한다. 플랫폼별 추가 설정과 수동 실행
 검증은 `MIGRATION.md`와 `TASKS.md`에서 관리한다.

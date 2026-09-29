@@ -17,7 +17,7 @@ using UnityEngine.UI;
 public static class GallerySceneLayoutBuilder
 {
     private const string ScenePath = "Assets/Scenes/ReMind.unity";
-    private const string ArtRoot = "Assets/Art/ai/GalleryUI/";
+    private const string ArtRoot = "Assets/Art/UI/GalleryUI/";
     private static readonly Color Ivory = Hex("E9EDFF");
     private static readonly Color Muted = Hex("A9B7DD");
     private static readonly Color Blue = Hex("9AB1FF");
@@ -62,7 +62,7 @@ public static class GallerySceneLayoutBuilder
                 "Assets/Art/Fonts/NanumMyeongjo SDF.asset");
             temporaryArt = new[]
             {
-                Load("Assets/Art/Sprites/UI/MusicSelect/StellarPromise_Jacket.png"),
+                Load("Assets/Art/UI/MusicSelectUI/StellarPromise_Jacket.png"),
                 Load("Assets/Art/Sprites/AI Generated/HomeBackground.png")
             };
             if (!font || !temporaryArt[0] || !temporaryArt[1])
@@ -88,7 +88,7 @@ public static class GallerySceneLayoutBuilder
 
             RectTransform header = Group("01_Header", layout, 28, 22, 1864, 108);
             Icon("Header_Compass_1x1_SpriteSlot", header, 30, 26, 78,
-                Art("Icons/header_compass.png"));
+                Load("Assets/Art/UI/CommonUI/header_compass.png"));
             Text("Gallery_Title", header, "G A L L E R Y", 134, 33, 340, 53, 34, Ivory);
             Text("Gallery_Subtitle", header, "기억의 조각들을 다시,", 137, 82, 320, 34, 19, Muted);
             Text("Header_Motto", header, "THE STARS REMEMBER.\nAND SO DO WE.",
@@ -114,11 +114,11 @@ public static class GallerySceneLayoutBuilder
                 if (index == 0)
                 {
                     Image("Selected_Glass", item, 44, y, 278, 91,
-                        Color.white, Art("Containers/sidebar_selected_tab.png"));
+                        Color.white, Art("sidebar_selected_tab.png"));
                     Image("Selected_Edge", item, 44, y, 2, 91, Blue);
                 }
                 Icon("Icon_1x1_SpriteSlot", item, 70, y + 21, 48,
-                    Art("Icons/" + categoryIcons[index]),
+                    Art(categoryIcons[index]),
                     index == 0 ? Ivory : new Color(.64f, .69f, .86f, 1f));
                 Text("Category_Label", item, categories[index], 140, y + 17,
                     174, 34, index == 0 ? 24 : 22, index == 0 ? Ivory : Muted);
@@ -141,7 +141,7 @@ public static class GallerySceneLayoutBuilder
                 int x = 380 + index * 158;
                 RectTransform tab = Group("Chapter_" + index, chapters, x, 86, 148, 87);
                 Icon("Star_1x1_SpriteSlot", tab, x + 65, 87, 21,
-                    Art("Icons/chapter_star.png"), index == 0 ? Blue : Muted);
+                    Art("chapter_star.png"), index == 0 ? Blue : Muted);
                 Text("Chapter_Label", tab, chapterNames[index], x, 112, 148, 30,
                     index == 0 ? 20 : 18, index == 0 ? Ivory : Muted,
                     TextAlignmentOptions.Center);
@@ -176,8 +176,8 @@ public static class GallerySceneLayoutBuilder
                 Image("Caption_Strip", card, x + 5, y + 122, 292, 47,
                     new Color(.055f, .076f, .16f, .88f));
                 Image("Frame", card, x, y, 302, 174, Color.white,
-                    Art(index == 0 ? "Containers/thumbnail_frame_selected.png" :
-                        "Containers/thumbnail_frame_normal.png"));
+                    Art(index == 0 ? "thumbnail_frame_selected.png" :
+                        "thumbnail_frame_normal.png"));
                 Text("Number", card, (index + 1).ToString("00"),
                     x + 17, y + 124, 52, 39, 31,
                     index >= 10 ? Muted : Ivory);
@@ -188,11 +188,11 @@ public static class GallerySceneLayoutBuilder
                     Image("Locked_Veil", card, x + 3, y + 3, 296, 166,
                         new Color(.04f, .055f, .13f, .60f));
                     Icon("Lock_1x1_SpriteSlot", card, x + 129, y + 64, 44,
-                        Art("Icons/card_lock.png"));
+                        Art("card_lock.png"));
                 }
                 else
                     Icon("Play_1x1_SpriteSlot", card, x + 255, y + 127, 32,
-                        Art("Icons/card_play.png"));
+                        Art("card_play.png"));
             }
 
             RectTransform detail = Group("05_Detail", layout, 1350, 178, 538, 792);
@@ -209,7 +209,7 @@ public static class GallerySceneLayoutBuilder
             Image("Temp_Featured_Artwork", feature, 1378, 212, 482, 263,
                 Color.white, temporaryArt[0]);
             Image("Image_Frame", feature, 1371, 205, 496, 277,
-                Color.white, Art("Containers/detail_image_frame.png"));
+                Color.white, Art("detail_image_frame.png"));
             Text("Selected_Number", detail, "01", 1378, 500, 91, 65, 52, Ivory);
             Text("Selected_Title", detail, "처음의 약속", 1461, 505, 391, 58, 41, Ivory);
             Text("Selected_Chapter", detail, "Prologue", 1467, 558,
@@ -224,7 +224,7 @@ public static class GallerySceneLayoutBuilder
             RectTransform replay = Group("Replay_Button", detail, 1468, 866, 303, 69);
             Image buttonFace = Image("Button_Glass", replay, 1468, 866, 303, 69,
                 new Color(.32f, .42f, .75f, .75f),
-                Art("Containers/replay_button.png"));
+                Art("replay_button.png"));
             buttonFace.raycastTarget = true;
             Text("Replay_Label", replay, "▶  다시 보기", 1509, 884,
                 221, 34, 22, Ivory, TextAlignmentOptions.Center);
@@ -237,7 +237,7 @@ public static class GallerySceneLayoutBuilder
             Text("Footer_English", footer, "A city where stars meet again.",
                 1483, 1021, 352, 33, 16, Muted, TextAlignmentOptions.Right);
             Icon("Footer_Star_1x1_SpriteSlot", footer, 1849, 1009, 39,
-                Art("Lines/star_flare.png"));
+                Art("star_flare.png"));
 
             RectTransform navigation = Group("07_Navigation", layout, 365, 1001, 194, 59);
             RectTransform back = Group("Back_Button", navigation, 365, 1006, 184, 50);

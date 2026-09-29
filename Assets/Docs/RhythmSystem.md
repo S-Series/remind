@@ -1,369 +1,167 @@
 # Rhythm System
 
-> 문서 상태: Draft 0.1  
-> 최종 갱신: 2026-07-21  
-> 구현 기준: Unity 6.0, Unity Input System  
-> 목적: 입력 시각, 오디오 재생 시각, 채보 시각과 판정 결과 사이의 규칙을 하나로 고정한다.
+> 상태: 현행 코드의 시간·입력·판정 계약
+> 검토 기준: 2026-09-29, Unity 6000.3.15f1
+> 구현 변경 시 관련 공용·Game 테스트와 이 문서를 함께 갱신한다.
 
-## 1. 사양 표기 규칙
+## 1. 적용 범위와 원본
 
-- **확정**: 현재 구현이 반드시 따라야 하는 규칙
-- **임시**: 데모 구현을 위한 초기값이며 플레이 테스트 후 변경 가능
-- **미정**: 구현 전에 별도 결정이 필요한 항목
-- 판정 로직은 렌더링 프레임과 분리한다.
-- 모든 런타임 시간 계산은 `double` 초 단위로 수행한다.
-- 채보 파일의 원본 시간 단위는 정수 밀리초(`timeMs`)를 사용한다.
+시간·노트 구간 lifecycle은 `REmind.ChartCore`, 노트/Scratch 의미는
+`REmind.NoteRules`가 소유한다. Game의 `NoteJudgementSystem`은 입력·Effect 순서와
+`GameRule`을 공용 `PlayableJudgementSession`에 연결한다.
+ChartMaker의 자동 Preview는 같은 Snapshot의 target을 사용한다.
 
-## 2. 레인과 입력키
+판정 시간 창은 `NoteJudgeWindowProfile`과 `GameRuleConfig`를 확인한다.
+이 문서는 기본 규칙을 설명하며 RuleModifier가 적용된 결과를 별도 고정값으로
+중복 구현하지 않는다. 테스트 통과 이력과 실제 플레이 검수는 [TASKS.md](TASKS.md)에 둔다.
 
-### 2.1 레인 규칙
+## 2. 레인과 입력
 
-- 레인 수는 **10개로 고정**한다.
-- 레인 번호는 `0`~`9`이며 `0~3`은 Ground Main 1~4, `4~7`은
-  AirMain 1~4, `8~9`는 Ground Left/Right다.
-- AirMain은 단일 판정 노트만 지원하며 공중 Long Note는 지원하지 않는다.
-- 채보에는 실제 키가 아니라 레인 번호만 저장한다.
-- 키 설정을 변경해도 같은 채보를 그대로 사용할 수 있어야 한다.
+| 판정 레인 | 의미 | 기본 키 | Input System 경로 |
+| --- | --- | --- | --- |
+| 0~3 | Main 1~4 | Z / X / C / V | `<Keyboard>/z`, `x`, `c`, `v` |
+| 4~7 | AirMain 1~4 | M / , / . / / | `<Keyboard>/m`, `comma`, `period`, `slash` |
+| 8~9 | Ground Left/Right (Scratch) | Left Shift / Right Shift | `<Keyboard>/leftShift`, `rightShift` |
 
-### 2.2 기본 키 배치
+표의 생략된 경로도 모두 `<Keyboard>/` 접두사를 사용한다.
+AirMain에는 단일 판정 노트만 두고 Air Long을 지원하지 않는다.
+키 바인딩은 채보가 아니라 Game의 `LocalGameSettingsStore`에 저장한다.
+중복 키 배정을 거부하고 Game 진입 시 입력 액션의 런타임 복제본에 적용한다.
+ChartMaker 키 설정에는 영향을 주지 않는다.
 
-아래 배치는 **임시 기본안**이다.
+`RhythmInputRouter`는 `Rhythm/Lane01~Lane10`의 performed/canceled에서 레인,
+원래 `context.time`, press/release를 복사한다. `NoteJudgementSystem`이 sequence를
+부여하고 chart time·sequence 순서로 정렬한다. 콜백 수신 프레임 시각으로 대체하지 않는다.
+아래에서 **양입력은 누름(press), 음입력은 뗌(release)**을 뜻하며 두 키 동시 입력을
+뜻하지 않는다.
 
-| 레인 | 기본 키 | Input System 경로 |
-|---:|:---:|---|
-| 0 | A | `<Keyboard>/a` |
-| 1 | S | `<Keyboard>/s` |
-| 2 | D | `<Keyboard>/d` |
-| 3 | F | `<Keyboard>/f` |
-| 4 | G | `<Keyboard>/g` |
-| 5 | H | `<Keyboard>/h` |
-| 6 | J | `<Keyboard>/j` |
-| 7 | K | `<Keyboard>/k` |
-| 8 | L | `<Keyboard>/l` |
-| 9 | ; | `<Keyboard>/semicolon` |
+## 3. 시간과 편집 좌표
 
-규칙:
+- DSP 절대 시각과 Input System 이벤트 시각은 초 단위 `double`이다.
+- 곡 시간 `SongTimeMs`, 채보 시간 `ChartTimeMs`, 판정 오차는 밀리초 단위 `double`이다.
+- 편집 위치는 한 마디 4800 정수 units다. `TimingMap`이 BPM 구간별 chart time을
+  컴파일하며 소수 밀리초를 보존한다. `.rd` 노트를 정수 `timeMs`로 반올림해 저장하지 않는다.
+- `ScrollMap`의 Line Speed는 표시용 FloorPosition만 변경한다. BPM은 편집 위치의
+  판정 시각을 바꾸므로 BPM 변경과 Line Speed 변경은 같은 의미가 아니다.
 
-- 모든 레인은 사용자 키 재지정을 지원한다.
-- 한 키를 여러 레인에 동시에 배정할 수 없다.
-- 게임 도중 키 설정을 변경할 수 없다.
-- 키보드 자동 반복 입력은 새로운 입력으로 취급하지 않는다.
-- `KeyDown`과 `KeyUp`의 경계 이벤트만 저장하며, 매 프레임의 현재 키 상태는 보조 상태로만 사용한다.
-
-## 3. 지원 노트
-
-### 3.1 Tap
-
-- 해당 레인의 `KeyDown` 이벤트 하나로 판정한다.
-- 키를 누르고 있는 상태는 추가 Tap 입력을 발생시키지 않는다.
-- 하나의 입력 이벤트는 최대 하나의 노트만 소비한다.
-
-### 3.2 Hold
-
-- 시작 지점은 Tap과 같은 판정 구간으로 `KeyDown`을 판정한다.
-- 시작 판정에 실패하면 해당 Hold 전체를 Miss 처리한다.
-- 시작 판정에 성공한 뒤에는 같은 레인의 키가 눌린 상태여야 한다.
-- 종료 시각보다 `90ms` 이상 빠르게 키를 놓으면 `HoldBreak`로 처리한다. 이 값은 임시값이다.
-- 종료 시각 `-90ms` 이후에 놓거나 종료 시각까지 계속 누르고 있으면 Hold를 완료한다.
-- Hold 유지 중 키 자동 반복은 무시한다.
-- Hold 위에 같은 레인의 다른 노트를 배치하는 규칙은 **미정**이며, 데모 채보에서는 금지한다.
-
-## 4. 시간 기준
-
-### 4.1 기준 시계
-
-판정의 기준 시계는 `Time.time`, `Time.unscaledTime`, 프레임 번호가 아니라 **`AudioSettings.dspTime`**이다.
-
-이유:
-
-- 오디오 재생과 같은 절대 시간축을 사용할 수 있다.
-- 프레임 드롭이 발생해도 노트의 목표 시각이 흔들리지 않는다.
-- `AudioSource.PlayScheduled`로 재생 시작 시각을 미리 예약할 수 있다.
-
-### 4.2 곡 시작
-
-곡 시작 시 다음 값을 기록한다.
+`GamePlay`는 `DspSongClock`을 사용한다.
 
 ```text
-scheduledStartDspTime = AudioSettings.dspTime + startLeadInSec
+SongTimeMs = OriginSongTimeMs + (dspTime - OriginDspTime) * 1000
 ```
 
-- `startLeadInSec` 초기값은 `1.0초`다.
-- 오디오는 `AudioSource.PlayScheduled(scheduledStartDspTime)`으로 시작한다.
-- 오디오 파일의 샘플 0이 재생되는 DSP 시각을 `scheduledStartDspTime`으로 정의한다.
+새 Play/Restart 및 Resume 예약마다 DSP/Input System 시계 차이를 기록하고
+`AudioSource.PlayScheduled`를 호출한다. 코드의 예약 여유 기본값은 0.2초이며
+직렬화 설정이 우선한다. 시작 예약 시각에 도달하기 전 실제 입력은 받지 않는다.
+BPM이나 화면 프레임 이동량으로 DSP 시계를 수정하지 않는다.
 
-### 4.3 채보 시간 단위
-
-- 채보 파일에는 노트 시각을 정수 밀리초 `timeMs`로 저장한다.
-- `timeMs = 0`은 오디오 파일의 샘플 0을 의미한다.
-- BPM, beat, tick은 에디터의 배치와 표시를 위한 정보이며 런타임 판정의 기준값이 아니다.
-- 에디터는 저장 전에 beat/tick 위치를 최종 `timeMs`로 변환한다.
-- 런타임에서는 다음과 같이 변환한다.
+## 4. 보정값의 부호
 
 ```text
-noteTimeSec = timeMs * 0.001
+chartOffsetMs = -musicStartCorrectionMs
+inputDspTime = inputEventTime + InputTimeToDspOffset
+inputSongTimeMs = DspSongClock.SongTimeMsAt(inputDspTime)
+inputChartTimeMs = inputSongTimeMs - chartOffsetMs
+deltaMs = inputChartTimeMs - userOffsetMs - targetChartTimeMs
 ```
 
-결정 이유:
-
-- 변속 BPM이 있어도 런타임 판정식이 단순하다.
-- JSON diff가 안정적이다.
-- 정수 저장으로 부동소수점 직렬화 차이를 피할 수 있다.
-
-### 4.4 Line Speed와 판정의 관계
-
-Line Speed는 `SongTimeMs`에서 표시용 `FloorPosition`을 구할 때만 사용한다.
-
-```text
-judgeOffsetMs = inputSongTimeMs - userOffsetMs - noteTimeMs
-floorUnitsPerMs = bpmFloorUnitsPerMs * lineSpeed
-```
-
-따라서 동일한 `noteTimeMs`, 입력 시각, 오프셋을 주면 Line Speed와 무관하게 같은
-판정 결과가 나온다. 달라지는 것은 같은 판정 시간 창 동안 노트가 이동하는 화면
-거리뿐이다. 빠른 Line Speed에서는 시간 기준 `±30ms`가 더 넓은 화면 거리로,
-느린 Line Speed에서는 더 좁은 화면 거리로 보인다.
-
-`BPM 240 × LineSpeed 0.5`와 `BPM 120 × LineSpeed 1`은 화면 이동 기울기는 같지만,
-같은 편집 Position이 컴파일되는 `noteTimeMs`는 서로 다르다. BPM은 판정 시각을
-만들고 Line Speed는 그 결과의 표시 위치만 바꾼다.
-
-## 5. 오프셋
-
-오프셋은 역할별로 분리하며 서로 합쳐 저장하지 않는다.
-
-### 5.1 Chart Offset
-
-`chartOffsetMs`는 채보 전체의 콘텐츠 보정값이다.
-
-- 채보 파일에 저장한다.
-- 양수 값은 모든 노트의 목표 판정 시각을 오디오보다 늦춘다.
-- 음수 값은 모든 노트의 목표 판정 시각을 앞당긴다.
-
-```text
-targetDspTime = scheduledStartDspTime
-              + (note.timeMs + chartOffsetMs) / 1000.0
-```
-
-### 5.2 User Input Offset
-
-`userInputOffsetMs`는 사용자 장치와 개인 체감 지연을 보정한다.
-
-- 사용자 설정에 저장한다.
-- 채보 파일에는 저장하지 않는다.
-- 양수 값은 입력 이벤트를 더 늦게 발생한 것으로 계산한다.
-- 음수 값은 입력 이벤트를 더 일찍 발생한 것으로 계산한다.
-
-```text
-adjustedInputDspTime = inputEventDspTime
-                     + userInputOffsetMs / 1000.0
-```
-
-### 5.3 Visual Offset
-
-`visualOffsetMs`는 노트 표시 위치만 보정한다.
-
-- 판정 계산에는 절대 사용하지 않는다.
-- 양수 값의 화면상 의미는 UI 구현 전에 확정한다.
-- 판정용 오프셋과 같은 설정 항목으로 합치지 않는다.
-
-### 5.4 최종 판정 오차
-
-```text
-deltaMs = (adjustedInputDspTime - targetDspTime) * 1000.0
-```
-
-- `deltaMs < 0`: Early
-- `deltaMs > 0`: Late
-- `deltaMs = 0`: 목표 시각과 일치
-
-## 6. Input System 시간 변환
-
-Input System 이벤트 시각은 실시간 시계 계열이고, 판정은 DSP 시계를 사용한다. 입력을 받은 프레임의 현재 시각으로 덮어쓰지 않고 이벤트 자체의 타임스탬프를 DSP 시간축으로 변환한다.
-
-```text
-dspRealtimeOffset = AudioSettings.dspTime
-                  - Time.realtimeSinceStartupAsDouble
-
-inputEventDspTime = inputEvent.time + dspRealtimeOffset
-```
-
-규칙:
-
-- `dspRealtimeOffset`은 곡 시작 직전 기록하고 실행 중 주기적으로 갱신한다.
-- 일시정지 해제, 오디오 장치 변경, 포커스 복귀 뒤에는 반드시 다시 계산한다.
-- 입력 이벤트 포인터 자체를 보관하지 않는다. 레인, Down/Up, 이벤트 시각, 순번만 별도 값으로 복사한다.
-- 모든 입력 이벤트는 시간순으로 큐에 저장한다.
-- 같은 시각이면 수신 순번으로 정렬해 결과를 결정적으로 유지한다.
-
-## 7. 판정 구간
-
-아래 값은 **임시 초기값**이다.
-
-| 판정 | 절대 오차 범위 | 점수 배율 |
-|---|---:|---:|
-| Perfect | `0ms`~`25ms` | 1.00 |
-| Great | `25ms 초과`~`50ms` | 0.80 |
-| Good | `50ms 초과`~`90ms` | 0.50 |
-| Bad | `90ms 초과`~`120ms` | 0.00 |
-| Miss | 입력 없음 또는 `120ms` 초과 | 0.00 |
-
-경계 규칙:
-
-```text
-abs(deltaMs) <= 25   -> Perfect
-abs(deltaMs) <= 50   -> Great
-abs(deltaMs) <= 90   -> Good
-abs(deltaMs) <= 120  -> Bad
-abs(deltaMs) > 120   -> 해당 입력으로 판정 불가
-```
-
-- 노트 목표 시각에서 `+120ms`가 지나면 입력이 없어도 Miss로 확정한다.
-- `-120ms`보다 이른 입력은 노트와 매칭하지 않는다.
-- Early/Late는 판정 등급과 별도로 기록한다.
-- Perfect 내부를 세분화한 Critical Perfect는 현재 범위에서 제외한다.
-
-## 8. 입력과 노트 매칭
-
-레인별로 아직 판정되지 않은 노트를 시간순 큐로 관리한다.
-
-`KeyDown` 이벤트가 들어오면:
-
-1. 해당 레인의 판정되지 않은 노트만 조회한다.
-2. 입력 시각 기준 `±120ms` 안의 노트를 후보로 만든다.
-3. `abs(deltaMs)`가 가장 작은 노트를 선택한다.
-4. 값이 같으면 목표 시각이 더 이른 노트를 선택한다.
-5. 선택한 노트를 판정하고 입력 이벤트를 소비한다.
-6. 하나의 입력으로 두 노트를 동시에 판정하지 않는다.
-
-추가 규칙:
-
-- 판정 가능한 노트가 없는 빈 입력은 데모에서 점수와 콤보에 영향을 주지 않는다.
-- 빈 입력 페널티 도입 여부는 플레이 테스트 후 결정한다.
-- 이미 Miss가 확정된 노트는 이후 입력으로 복구하지 않는다.
-
-## 9. 동시 입력
-
-- 서로 다른 레인의 입력은 완전히 독립적으로 판정한다.
-- 같은 프레임에 들어온 입력이라도 각 이벤트의 타임스탬프를 사용한다.
-- 10개 레인을 동시에 눌러도 입력을 하나로 합치지 않는다.
-- 동시 노트는 구성 노트별로 각각 판정하며, 일부만 성공할 수 있다.
-- 결과 표시를 묶어 보여줄 수는 있지만 판정 데이터는 개별 노트 단위로 유지한다.
-- 키보드 하드웨어의 동시 입력 한계와 고스팅은 게임 로직으로 보정하지 않는다. 설정 화면에서 입력 테스트 기능을 제공하는 방향으로 한다.
-
-## 10. 프레임 드롭과 지연 처리
-
-프레임 드롭으로 입력 처리가 늦어진 경우에도 입력이 실제로 발생한 이벤트 시각으로 판정한다.
-
-규칙:
-
-- 입력 콜백에서는 최소 데이터만 복사해 큐에 넣는다.
-- 판정 시스템은 한 프레임에 큐에 쌓인 모든 이벤트를 시간순으로 처리한다.
-- 자동 Miss 검사는 현재 DSP 시각을 기준으로, 기한이 지난 모든 노트를 반복 처리한다.
-- 한 프레임에 여러 노트가 지나갔다면 첫 노트 하나만 Miss 처리하지 않고 모두 처리한다.
-- 노트 표시가 프레임을 건너뛰어 판정선 아래로 이동하더라도 판정 상태는 시간 계산으로 결정한다.
-- `Update()` 호출 횟수나 `deltaTime` 누적으로 곡 시간을 만들지 않는다.
-- 렌더링 오브젝트가 생성되지 않았더라도 런타임 노트 데이터는 판정 가능해야 한다.
-
-필수 검증 사례:
-
-- 의도적으로 메인 스레드를 `200ms` 멈춘 뒤, 그 사이 기록된 입력 이벤트가 원래 이벤트 시각으로 판정되어야 한다.
-- 한 프레임에 여러 자동 Miss가 발생해도 누락되지 않아야 한다.
-
-## 11. 일시정지
-
-일시정지 시점에 다음을 수행한다.
-
-1. `pauseStartedDspTime`을 기록한다.
-2. 오디오를 Pause한다.
-3. 판정과 노트 진행을 중단한다.
-4. 대기 중인 입력 이벤트 큐를 비운다.
-5. 현재 눌린 키 상태를 무효화한다.
-
-재개 시점에 다음을 수행한다.
-
-```text
-pauseDuration = AudioSettings.dspTime - pauseStartedDspTime
-scheduledStartDspTime += pauseDuration
-```
-
-- 재개 후 곡 시간은 일시정지 직전 위치와 같아야 한다.
-- 모든 키가 한 번 놓인 뒤에만 새 `KeyDown`을 허용한다.
-- 재개 카운트다운은 임시로 3초를 사용한다.
-- 카운트다운 중 입력은 판정하지 않는다.
-- 재개 시 Input System과 DSP 시계 변환 오프셋을 다시 계산한다.
-
-## 12. 포커스 이탈
-
-- `OnApplicationFocus(false)` 또는 이에 준하는 플랫폼 이벤트를 받으면 즉시 자동 일시정지한다.
-- 포커스를 잃은 상태에서 판정, 자동 Miss, 콤보 감소가 진행되면 안 된다.
-- 포커스가 돌아와도 자동으로 재개하지 않는다.
-- 사용자가 재개 버튼을 눌러야 한다.
-- 포커스 이탈 전후의 입력 큐는 폐기한다.
-- 포커스 이탈 순간 진행 중인 Hold는 일시정지 상태로 보존하며, 재개 후 키를 다시 누르게 할지 자동 유지할지는 **미정**이다. 데모에서는 재개 시 해당 Hold를 실패 처리한다.
-
-## 13. 재시작
-
-재시작은 현재 플레이 세션을 재사용하지 않고 새 세션을 시작하는 것과 동일하게 처리한다.
-
-초기화 대상:
-
-- 오디오 재생
-- `scheduledStartDspTime`
-- 입력 이벤트 큐
-- 현재 키 상태
-- 모든 노트 판정 상태
-- Hold 진행 상태
-- 점수, 콤보, 정확도
-- 결과 이벤트와 이펙트 큐
-- 노트 표시 오브젝트 풀의 활성 상태
-
-재시작 후 오디오는 다시 `PlayScheduled`로 예약한다.
-
-## 14. 시스템 처리 순서
-
-한 프레임의 권장 처리 순서:
-
-1. Input System 이벤트 수집
-2. 입력 이벤트 시간 변환 및 정렬
-3. 입력 기반 판정
-4. 현재 DSP 시각 기준 자동 Miss와 Hold 상태 갱신
-5. 점수와 콤보 갱신
-6. 노트와 판정 이펙트 표시 갱신
-
-판정 결과는 같은 입력 데이터와 같은 설정값에 대해 항상 동일해야 한다.
-
-## 15. 완료 조건
-
-다음 항목을 모두 통과하면 Rhythm System 1차 구현을 완료한 것으로 본다.
-
-- [ ] 10개 레인이 서로 독립적으로 입력된다.
-- [ ] 판정 경계 `25/50/90/120ms` 자동 테스트가 있다.
-- [ ] Early와 Late가 올바르게 기록된다.
-- [ ] 한 입력이 두 노트를 소비하지 않는다.
-- [ ] 같은 시각의 10키 동시 입력이 누락되지 않는다.
-- [ ] 키를 누르고 있어도 Tap이 반복 판정되지 않는다.
-- [ ] Hold 조기 해제와 정상 완료가 구분된다.
-- [ ] `200ms` 프레임 정지 테스트에서 이벤트 시각 기준 판정이 유지된다.
-- [ ] 일시정지 동안 곡 시간과 판정 상태가 진행되지 않는다.
-- [ ] 포커스 복귀 시 자동 재개되지 않는다.
-- [ ] 재시작 뒤 이전 세션의 입력과 판정이 남지 않는다.
-- [ ] Chart/User/Visual Offset이 서로 독립적으로 적용된다.
-
-## 16. 미정 사항
-
-- 최종 기본 키 배치
-- 최종 판정 구간과 점수 배율
-- 빈 입력 페널티
-- Hold 중첩 노트 지원 여부
-- Hold 종료 판정의 세분화 여부
-- 포커스 복귀 후 진행 중 Hold 처리
-- 사용자 오프셋 보정 UI와 측정 방식
-- 키보드 외 입력 장치 지원 범위
-
-## 17. 구현 참고
-
-- Unity `AudioSettings.dspTime`: https://docs.unity3d.com/6000.0/ScriptReference/AudioSettings.html
-- Unity `AudioSource.PlayScheduled`: https://docs.unity3d.com/6000.0/ScriptReference/AudioSource.PlayScheduled.html
-- Unity Input System: https://docs.unity3d.com/6000.0/Manual/com.unity.inputsystem.html
-- Unity `OnApplicationFocus`: https://docs.unity3d.com/6000.0/ScriptReference/MonoBehaviour.OnApplicationFocus.html
+| 값 | 소유자 | 양수의 의미 |
+| --- | --- | --- |
+| `musicStartCorrectionMs` | 제작용 `.rd` | 같은 song time에서 chart time을 앞쪽으로 진행시킨다. 노트의 대응 오디오 시각은 빨라진다. |
+| `chartOffsetMs` | 내보낸 Runtime Package | `song = chart + offset`. 노트의 대응 오디오 시각이 늦어진다. |
+| `userOffsetMs` | Game 사용자 설정 | 계산에서 입력 시각을 그만큼 빼므로 입력을 더 이르게 평가한다. |
+| Visual Offset | 후속 요구 | 현행 Game 설정으로 구현됐다고 간주하지 않는다. 추가하더라도 판정과 분리한다. |
+
+예: 목표 chart time 1000ms, chartOffset 0, 입력 song time 1020ms,
+사용자 보정 +20ms이면 delta는 0이다. delta가 음수면 Early, 양수면 Late다.
+설정 UI의 판정 보정은 -200~+200ms이며 5ms 단위로 조절한다.
+이전 초안의 “양수 User Offset은 입력을 늦춘다”는 설명은 현행 코드와 반대다.
+
+## 5. 판정 창과 후보 선택
+
+기본 Game 설정은 `JudgeWindows(50, 50, 100, 100)`이다.
+
+| 대상 | 입력 허용 창 | 결과 |
+| --- | --- | --- |
+| 일반 단일 노트, Hold 지점, Long Scratch Start | 절대 오차 ≤50ms | Perfect |
+| 같은 대상 | 50ms < 절대 오차 ≤100ms | Good |
+| Long Scratch Mid의 합류 입력 | 절대 오차 ≤100ms | Perfect |
+| Long Scratch End의 release | 절대 오차 ≤75ms | Perfect |
+
+Great는 결과 enum과 규칙 확장에 남아 있지만 기본 창에서 Perfect와 경계가 같아
+독립 구간이 없다. Bad 등급은 현행 enum에 없다. 기본 창 밖의 입력은 해당 지점을
+소비하지 않는다. 여기서 “간접 판정”은 같은 레인의 50ms 밖~100ms Good 입력을 뜻한다.
+
+단일 노트 미입력은 target + userOffset + MissWindow를 **넘은** 시각에 Miss다.
+Long 마지막 End 미입력도 해당 End 창을 넘으면 Miss다. 코드에서는 strictly outside를
+표현하기 위해 0.000001ms를 더한다. 정확한 마감 시각에는 입력이 먼저 처리된다.
+
+공용 세션은 Snapshot의 노트 순서(시작 시각, ID)로 같은 레인의 유효 후보를 찾는다.
+현행 알고리즘을 “절대 오차가 가장 작은 노트를 검색”하는 것으로 설명하지 않는다.
+하나의 press는 최초로 소비된 노트/합류 지점에서 처리를 끝낸다. 같은 레인·같은 시각의
+중복 시작은 컴파일러가 거부한다. 모든 구간 중첩 조합의 정책이 확정됐다는 뜻은 아니다.
+
+## 6. Long / Scratch lifecycle
+
+단일 Tap·Scratch·Air는 해당 레인의 press로 처리한다. 공용 Long은 순서 있는
+Start/Mid/End 지점과 그 사이 구간을 가진다. Long Tap(Hold)은 Start/End,
+Long Scratch는 0개 이상의 Mid를 포함한다.
+
+- Start press가 유효하면 구간 유지 상태에 합류하고 입력 등급을 보관한다.
+- Long Scratch Mid에서는 유지 상태로 앞 구간을 확정한다. 놓친 구간은 Miss이며
+  Mid의 새 press로 이후 구간에 재합류할 수 있다.
+- 마지막 End는 유효 창 안의 release로 끝낸다. 범위 밖 release는 유지 상태를 끊는다.
+- 구간 결과는 다음 지점에서 발생한다. Start를 별도 점수 한 번으로 중복 집계하지 않는다.
+  마지막 구간은 합류 등급과 End 등급 중 낮은 결과를 사용한다.
+- Long Scratch Mid/End의 입력 등급이 Perfect여도 첫 구간에 Start의 Good이
+  이어질 수 있다. 입력 등급과 최종 구간 결과를 구분한다.
+- Auto Play는 같은 구간 경계를 자동 처리한다. Game은 Auto Play 결과를 진행 저장에서 제외한다.
+
+이전 초안의 Hold “종료 90ms 전부터 자동 성공”과 “시작 실패면 모든 이후 구간 복구 불가”
+규칙은 현행 구현 기준이 아니다. Scratch motion은 공용 경로/표시 데이터이며
+`N/G/I/R`과 이동량의 파일 표현은 [ChartFormat.md](ChartFormat.md)에 둔다.
+
+## 7. 한 프레임의 처리와 지연 입력
+
+`NoteJudgementSystem.LateUpdate → ProcessFrame`은 다음 경계를 chart time으로 병합한다.
+
+1. 가장 이른 Effect 예약 시각, 입력 시각, 자동 판정 시각을 선택한다.
+2. 같은 시각은 **Effect order → 입력 sequence → 자동 판정/Miss** 순서다.
+3. 대기 경계를 처리한 뒤 활성 Effect/Gimmick을 현재 프레임 시각으로 한 번 갱신한다.
+4. finally의 프레임 완료 경계에서 Effect 전환 요청 등을 처리한다.
+
+“현재까지의 모든 Effect를 먼저 실행한 뒤 과거 입력을 처리”하는 순서가 아니다.
+시각 T의 규칙은 T보다 이른 입력에 소급하지 않는다. 프레임이 늦더라도 예약 시각과
+실제 처리 시각을 구분한다.
+
+다음 프레임에 늦게 전달된 입력도 원래 시각을 사용한다. 단, 그 시각 이후에 이미
+Effect 또는 자동 결과가 확정됐다면 되돌리지 않고 `DiscardedLateInputCount`에 기록한다.
+임의로 오래 지연된 입력을 항상 복구한다고 보장하지 않는다. 시간 역행은 오류로 보고
+세션 재시작이 필요하다.
+
+## 8. Pause / Resume / Restart와 포커스
+
+`GamePlay.Pause`는 곡 시각을 보존하고 AudioSource를 Stop한다. Resume은 보존 위치의
+샘플에서 다시 예약하며 논리 시각이 샘플 반올림 때문에 역행하지 않도록 한다.
+판정·Effect 세션은 Resume에 유지되고 성공한 Play/Restart에서 초기화/교체된다.
+Resume 시 실제로 놓인 키는 `BreakReleasedHolds`로 유지 상태를 끊는다.
+3초 재개 카운트다운이나 모든 키 해제 대기 기능이 있다고 가정하지 않는다.
+
+ESC Pause/Resume에는 같은 프레임 중복 전환 차단이 있다. 세션 정리와 입력 대기열
+관리는 앱 연결부의 실제 lifecycle을 따른다. 재시작·비활성화·실패 시 이전 세대의
+callback이 새 세션을 변경하지 않아야 한다.
+
+현재 `AppRoot.OnApplicationFocus/OnApplicationPause`는 오디오 음소거/백그라운드
+설정을 적용한다. **포커스 이탈 자동 게임 Pause와는 다르다.** 자동 Pause·장치 변경 후
+복구 정책은 제품 범위 결정 및 수동 검수 항목이며 구현 완료로 기록하지 않는다.
+
+## 9. 검증과 남은 결정
+
+자동 검사는 TimingMapTests, PlayableJudgementSessionTests, EffectRuntimeTests,
+EffectBaselineTests 및 Editor 브리지에 있다. 소수 시각, 판정 경계, 지연 입력,
+동일 시각 순서, Long 구간, Resume/Restart를 유지해야 한다.
+
+실제 10키 동시 입력, 고스팅, 청음·보정 체감, 전체 길이 재생, 포커스 전환과
+하드웨어 성능은 별도 검수다. 기본 판정 창은 위와 같이 확정되어 있으며,
+Visual Offset·입력 검사 화면·추가 입력 장치·포커스 정책 등의 출시 범위는
+[ROADMAP.md](ROADMAP.md)의 D1에서 결정한다. 현재 검증 결과는 [TASKS.md](TASKS.md)를 따른다.

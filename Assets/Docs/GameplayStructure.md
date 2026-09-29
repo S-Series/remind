@@ -1,553 +1,143 @@
 # Gameplay Structure
 
-> 문서 상태: Draft 0.1  
-> 최종 갱신: 2026-07-21  
-> 목적: Scene, Field, Prefab과 핵심 시스템의 책임을 분리하고 데이터 흐름을 고정한다.
+> 상태: 현행 구성 안내
+> 검토 기준: 2026-09-29 로컬 코드
+> 장기 책임 경계는 [ARCHITECTURE.md](ARCHITECTURE.md), 이전 상태는 [MIGRATION.md](MIGRATION.md)를 따른다.
 
-> 구조 개편 진행 기준은 [`ChartCoreRefactoring.md`](ChartCoreRefactoring.md)를
-> 따른다. 이 문서의 일부 클래스명은 목표 구조를 설명하며 아직 구현되지 않았을 수
-> 있다.
+## 1. assembly 경계
 
-## 1. 구조 원칙
+| assembly / 폴더 | 책임 |
+| --- | --- |
+| `REmind.ChartCore` / `ChartCoreDomain` | Unity 비의존 채보 컴파일·Snapshot·시간·판정 lifecycle·Effect |
+| `REmind.NoteRules` / `SharedNoteRules` | Unity 비의존 NoteType·Scratch 규칙/경로 |
+| `REmind.Common` / `Common` | 공용 Unity 노트 표시·메뉴 내비게이션 등 |
+| `REmind.Presentation` / `SharedPresentation` | 공용 타격 표시 `LaneHitEffectPlayer` |
+| `REmind.Gameplay` / `Gameplay` | 입력·GameRule·재생·진행·씬/UI |
+| `REmind.ChartMaker` / `ChartMaker` | 편집·파일·Preview·패키지 출력 |
 
-- 판정 로직은 화면 오브젝트와 분리한다.
-- 노트 Prefab이 존재하지 않아도 판정 시스템은 동작해야 한다.
-- 곡 시간은 `RhythmClock`만 제공한다.
-- 입력은 `InputRouter`만 수집한다.
-- 판정 결과는 이벤트 또는 명시적 결과 데이터로 전달한다.
-- Scene 오브젝트끼리 직접 탐색하는 `Find` 의존을 만들지 않는다.
-- 한 노트마다 독립적인 `Update()`를 사용하지 않는다.
-- 노트 표시는 풀링한다.
-- 채보 DTO를 그대로 게임 로직에서 사용하지 않고 검증된 런타임 모델로 변환한다.
+Game과 ChartMaker assembly는 서로를 참조하지 않는다. 제품 define은
+`REMIND_GAME`과 `REMIND_CHARTMAKER`이며 Editor에서는 양쪽을 사용할 수 있다.
+`Assets/Editor`의 빌드·카탈로그·검사 도구가 두 제품을 연결하는 것은 런타임 의존과 구분한다.
 
-## 2. 전체 흐름
-
-```text
-Chart JSON
-  -> ChartLoader
-  -> ChartValidator
-  -> RuntimeChart
-  -> GameplaySession
-
-Input System Event
-  -> InputRouter
-  -> InputEventQueue
-  -> JudgementSystem
-  -> JudgementResult
-  -> ScoreSystem / Presentation
-
-AudioSettings.dspTime
-  -> RhythmClock
-  -> JudgementSystem
-  -> NotePresenter
-```
-
-## 3. Scene 구성
-
-### 3.1 Bootstrap
-
-책임:
-
-- 게임 전역 서비스 초기화
-- 설정 파일 로드
-- 입력 설정 로드
-- 오디오 설정 로드
-- 첫 Scene 이동
-
-포함 대상:
-
-- `AppRoot`
-- `SceneFlowService`
-- `SettingsService`
-- `AudioService`
-- `SaveService`
-
-규칙:
-
-- 전역 서비스만 `DontDestroyOnLoad`를 사용한다.
-- 게임플레이 세션 데이터는 전역 오브젝트에 남기지 않는다.
-
-### 3.2 MainMenu
-
-책임:
-
-- 데모 시작
-- 설정 진입
-- 종료
-
-첫 데모에서는 SongSelect와 합쳐도 된다.
-
-### 3.3 SongSelect
-
-책임:
-
-- 곡 목록 표시
-- 난이도 선택
-- 채보 기본 정보 표시
-- Gameplay Scene에 넘길 선택값 생성
-
-전달 데이터 예시:
+## 2. 콘텐츠 준비 경로
 
 ```text
-GameplayRequest
-- songId
-- chartId
-- difficultyId
+ChartMaker: ChartHolder → ChartHolderDocumentAdapter → ChartDocument
+  → ChartCompiler → PlayableChartSnapshot → Preview
+  → ChartMakerRuntimePackageExporter → .rmp.json
+
+Game: MusicCatalog → 선택한 난이도의 RuntimePackage
+  → GameplayChartPreparation → RuntimeChartPackageCodec.Import
+  → 공용 컴파일·Effect 파라미터 검증
+  → PreparedGameplayChart
+  → GameplayChartSessionController
+      ├→ NoteJudgementSystem
+      ├→ GameplaySessionState
+      └→ GameplayChartEffectController
 ```
 
-### 3.4 Gameplay
-
-책임:
-
-- 채보 로드
-- 세션 생성
-- 곡 재생
-- 입력과 판정
-- 점수 표시
-- 일시정지와 재시작
-- 종료 조건 감지
-
-Gameplay Scene은 아래 Field와 시스템을 조립하는 Composition Root 역할을 한다.
-
-### 3.5 Result
-
-책임:
-
-- 최종 점수
-- 정확도
-- 최대 콤보
-- 판정별 개수
-- Early/Late 분포
-- 재시도 또는 SongSelect 복귀
-
-Result Scene에는 판정 로직을 두지 않는다.
-
-## 4. Field 정의
-
-`Field`는 Unity 기본 개념이 아니라, 이 프로젝트에서 **특정 화면 영역과 표시 책임을 묶는 프레젠테이션 단위**를 의미한다.
-
-### 4.1 LaneField
-
-책임:
-
-- 10개 레인의 위치와 크기 관리
-- 판정선 표시
-- 노트 표시 좌표 계산
-- 레인별 키 입력 시각 효과
-
-포함:
-
-- `LaneFieldView`
-- `LaneView[10]`
-- `JudgementLineView`
-- `NotePool`
-
-금지:
-
-- 직접 점수 계산
-- 직접 판정 구간 계산
-- `Time.deltaTime` 누적으로 곡 시간 계산
-
-### 4.2 GameplayHudField
-
-책임:
-
-- 점수
-- 콤보
-- 정확도
-- 현재 판정
-- Early/Late
-- 진행도
-
-### 4.3 PauseField
-
-책임:
-
-- 일시정지 메뉴 표시
-- 재개, 재시작, 나가기 요청 전달
-
-직접 오디오와 판정 시스템을 조작하지 않고 `GameFlowController`에 요청한다.
-
-### 4.4 DebugField
-
-개발 빌드 전용이다.
-
-표시 후보:
-
-- DSP 시각
-- 현재 곡 시각
-- 입력 이벤트 시각
-- 판정 deltaMs
-- 입력 큐 길이
-- 활성 노트 수
-- 프레임 시간
-- 적용 중인 오프셋
-
-## 5. 핵심 시스템
-
-### 5.1 GameFlowController
-
-책임:
-
-- 세션 상태 전환
-- 시작, 플레이, 일시정지, 재개, 종료, 재시작
-- 포커스 이탈 처리
-- Scene 이동 요청
-
-상태 예시:
-
-```text
-Loading
-Ready
-Countdown
-Playing
-Paused
-Finished
-Restarting
-Exiting
-```
-
-상태 전환은 한 곳에서만 수행한다.
-
-### 5.2 GameplaySession
-
-한 번의 플레이에만 존재하는 데이터 컨테이너다.
-
-포함:
-
-- `RuntimeChart`
-- `RhythmClock`
-- `InputEventQueue`
-- 노트 런타임 상태
-- 점수 상태
-- 현재 세션 설정
-
-재시작 시 기존 Session을 초기화해서 재활용하기보다 새 Session을 생성하는 방향을 우선한다.
-
-### 5.3 RhythmClock
-
-책임:
-
-- 예약된 오디오 시작 DSP 시각 보관
-- 현재 곡 시각 제공
-- 일시정지 시간 보정
-- DSP와 Input Event 시간축 변환 지원
-
-외부 공개값 예시:
-
-```text
-CurrentSongTimeSec
-CurrentSongTimeMs
-ScheduledStartDspTime
-IsRunning
-```
-
-금지:
-
-- 점수 계산
-- 노트 검색
-- 화면 오브젝트 이동
-
-### 5.4 AudioPlaybackService
-
-책임:
-
-- AudioClip 로드
-- `PlayScheduled` 호출
-- Pause, Resume, Stop
-- 오디오 장치 변경 대응
-
-`RhythmClock`과 시작 시각을 공유하되, 서로의 내부 상태를 임의로 변경하지 않는다.
-
-### 5.5 InputRouter
-
-책임:
-
-- Unity Input System 이벤트 수집
-- 키와 레인 매핑
-- Down/Up 구분
-- 이벤트 시각과 순번 복사
-- 입력 이벤트 큐에 전달
-
-입력 이벤트 데이터 예시:
-
-```text
-RhythmInputEvent
-- lane
-- phase: Down | Up
-- eventTime
-- sequence
-```
-
-금지:
-
-- 직접 노트 판정
-- 점수 갱신
-- 화면 효과 재생
-
-### 5.6 InputEventQueue
-
-책임:
-
-- 입력 이벤트 시간순 보관
-- 같은 시각이면 sequence 순으로 정렬
-- 일시정지, 재시작 시 비우기
-
-가능하면 GC 할당이 적은 구조를 사용한다.
-
-### 5.7 ChartLoader
-
-책임:
-
-- JSON 읽기
-- DTO 역직렬화
-- 오류 메시지 생성
-
-### 5.8 ChartValidator
-
-책임:
-
-- `ChartFormat.md` 규칙 검증
-- 오류와 경고 분리
-- 노트 ID, 레인, 시간, 중첩 검사
-
-검증 실패 시 Gameplay를 시작하지 않는다.
-
-### 5.9 RuntimeChartBuilder
-
-책임:
-
-- 검증된 DTO 정렬
-- 레인별 노트 배열 생성
-- 초 단위 `double` 값 사전 계산
-- 불변 `RuntimeChart` 생성
-
-### 5.10 JudgementSystem
-
-프로젝트의 핵심 순수 로직이다.
-
-입력:
-
-- 현재 곡 시각
-- 시간 변환된 입력 이벤트
-- 레인별 미판정 노트
-- 판정 설정값
-- 오프셋 설정값
-
-출력:
-
-- `JudgementResult`
-- 노트 상태 변경
-- Hold 시작, 완료, 실패 이벤트
-- 자동 Miss 결과
-
-가능한 한 Unity 오브젝트에 의존하지 않는 일반 C# 코드로 작성한다.
-
-결과 데이터 예시:
-
-```text
-JudgementResult
-- noteId
-- lane
-- grade
-- deltaMs
-- timing: Early | Exact | Late
-- inputSequence
-- judgedSongTimeMs
-```
-
-### 5.11 ScoreSystem
-
-책임:
-
-- 판정 결과를 점수로 변환
-- 콤보
-- 최대 콤보
-- 정확도
-- 판정별 개수
-
-판정 구간을 다시 계산하지 않고 `JudgementResult`만 사용한다.
-
-### 5.12 NoteScheduler
-
-책임:
-
-- 현재 곡 시각과 표시 시간을 기준으로 화면에 필요한 노트 범위 계산
-- 노트 View 생성과 반환 요청
-
-판정과 무관한 표시용 시스템이다.
-
-### 5.13 NotePresenter
-
-책임:
-
-- 노트 위치 갱신
-- Tap/Hold 모양 표시
-- 판정 완료 노트 숨김
-- Object Pool 반환
-
-노트 위치는 다음 개념으로 계산한다.
-
-```text
-remainingTime = noteTargetTime - visualSongTime
-position = ScrollFunction(remainingTime, noteSpeed)
-```
-
-### 5.14 ResultBuilder
-
-책임:
-
-- 세션 종료 시 결과 스냅샷 생성
-- Result Scene에 전달 가능한 불변 데이터 생성
-
-## 6. Prefab 구성
-
-권장 초기 Prefab:
-
-```text
-Prefabs/
-├─ Gameplay/
-│  ├─ LaneField.prefab
-│  ├─ Lane.prefab
-│  ├─ JudgementLine.prefab
-│  ├─ TapNote.prefab
-│  ├─ HoldNote.prefab
-│  ├─ JudgementEffect.prefab
-│  └─ LaneInputEffect.prefab
-└─ UI/
-   ├─ GameplayHud.prefab
-   ├─ PausePanel.prefab
-   ├─ ResultPanel.prefab
-   └─ DebugPanel.prefab
-```
-
-Prefab 규칙:
-
-- Tap/Hold Prefab에는 판정 로직을 두지 않는다.
-- Prefab은 View와 애니메이션 책임만 가진다.
-- 필수 참조는 Inspector 직렬화 또는 초기화 메서드로 명시한다.
-- 런타임 중 `Resources.FindObjectsOfTypeAll` 같은 전역 탐색을 사용하지 않는다.
-- 노트 Prefab은 Object Pool을 통해 재사용한다.
-
-## 7. Gameplay Scene 계층 예시
-
-```text
-GameplayScene
-├─ GameplayCompositionRoot
-├─ Systems
-│  ├─ GameFlowController
-│  ├─ AudioPlaybackService
-│  ├─ InputRouter
-│  └─ GameplayRunner
-├─ Fields
-│  ├─ LaneField
-│  ├─ GameplayHudField
-│  ├─ PauseField
-│  └─ DebugField
-├─ Camera
-└─ EventSystem
-```
-
-`GameplayCompositionRoot`는 시스템을 생성하고 연결한 뒤 Session을 시작한다.
-
-## 8. 한 프레임 처리 순서
-
-`GameplayRunner`가 명시적으로 다음 순서를 유지한다.
-
-```text
-1. InputRouter가 수집한 이벤트 큐 전달
-2. 이벤트를 DSP 시간축으로 변환
-3. JudgementSystem 입력 판정
-4. JudgementSystem 자동 Miss / Hold 갱신
-5. ScoreSystem 결과 반영
-6. NoteScheduler 가시 범위 계산
-7. NotePresenter와 HUD 갱신
-8. 종료 조건 확인
-```
-
-Unity Script Execution Order에만 의존하지 않고 가능한 한 한 Runner 안에서 순서를 보이게 만든다.
-
-## 9. 데이터 소유권
-
-| 데이터 | 소유자 | 읽는 대상 |
-|---|---|---|
-| 사용자 키 설정 | SettingsService | InputRouter, 설정 UI |
-| User Input Offset | SettingsService | RhythmClock/Judgement 구성 |
-| Chart DTO | ChartLoader | ChartValidator |
-| RuntimeChart | GameplaySession | JudgementSystem, NoteScheduler |
-| 입력 큐 | GameplaySession | JudgementSystem |
-| 노트 판정 상태 | JudgementSystem 또는 Session | Presenter, ResultBuilder |
-| 점수 상태 | ScoreSystem | HUD, ResultBuilder |
-| 현재 곡 시각 | RhythmClock | Judgement, Presenter, Flow |
-
-한 데이터의 쓰기 책임자는 하나만 둔다.
-
-## 10. 폴더 구조 초안
-
-```text
-Assets/
-├─ ReMind/
-│  ├─ Runtime/
-│  │  ├─ Audio/
-│  │  ├─ Chart/
-│  │  ├─ Gameplay/
-│  │  │  ├─ Flow/
-│  │  │  ├─ Input/
-│  │  │  ├─ Judgement/
-│  │  │  ├─ Score/
-│  │  │  └─ Presentation/
-│  │  ├─ Settings/
-│  │  └─ Shared/
-│  ├─ Tests/
-│  │  ├─ EditMode/
-│  │  └─ PlayMode/
-│  ├─ Prefabs/
-│  ├─ Scenes/
-│  └─ Data/
-└─ StreamingAssets/
-   └─ Charts/
-```
-
-실제 채보 배포 방식이 Addressables로 결정되면 `StreamingAssets` 사용 여부를 다시 정한다.
-
-## 11. 테스트 경계
-
-### EditMode 테스트
-
-- 판정 경계값
-- 입력과 노트 매칭
-- 동시 입력
-- Hold 상태 전환
-- Chart Validation
-- Score 계산
-- Pause 시간 보정 계산
-
-### PlayMode 테스트
-
-- `PlayScheduled` 시작
-- Scene 조립
-- Input System 연동
-- Prefab Pool
-- 포커스 이탈
-- 재시작
-- Gameplay에서 Result 이동
-
-## 12. 금지할 구조
-
-- 노트 Prefab 각자가 입력을 확인하는 구조
-- 노트 Prefab 각자가 판정을 계산하는 구조
-- AudioSource의 현재 재생 위치만으로 모든 시간을 계산하는 구조
-- `Update()`마다 전체 노트 목록을 처음부터 검색하는 구조
-- UI가 직접 점수나 콤보를 변경하는 구조
-- 포커스 이벤트가 여러 시스템을 각각 직접 초기화하는 구조
-- Scene 전환 후 이전 GameplaySession이 남는 구조
-
-## 13. 미정 사항
-
-- DI Container 사용 여부
-- Addressables 도입 시점
-- Scene 수를 데모에서 축소할지 여부
-- Field의 최종 명명 규칙
-- RuntimeChart 공유 패키지 구성
-- 에디터 저장소와 Schema 코드를 어떤 방식으로 공유할지
-- 렌더링 방식이 uGUI, UI Toolkit, Sprite 기반 중 무엇인지
+`PreparedGameplayChart`는 Snapshot, PreparedEffectPlan, 검증된 ID와 타이밍 metadata를
+가진다. Game은 `.rd`/ChartHolder를 읽지 않는다. 준비 실패와 live 세션 게시 경계를
+구분하고 구성요소가 준비·활성화되지 않으면 재생을 시작하지 않는다.
+
+`ChartLoader`·`ChartLoadService`·`NoteData`는 구형 경로에 남아 있다.
+실제 Game 판정은 Snapshot을 직접 소비한다. 구형 파일끼리의 참조와 씬·프리팹의
+직렬화 사용을 조사하기 전에는 “파일이 존재한다” 또는 “Game이 안 쓴다”만으로 삭제하지 않는다.
+
+## 3. 씬과 수명
+
+| 씬/화면 | 구성과 소유권 |
+| --- | --- |
+| Bootstrap | `AppRoot` 초기화, `BootstrapLoadingController` 표시 완료 후 새 입력 대기 |
+| Home | 주 메뉴, `SettingsOverlay.prefab` 모달과 선택 복원 |
+| MusicSelect | 카탈로그·곡/난이도 선택·미리듣기·즐겨찾기 |
+| Game | 채보 준비·오디오·입력·판정·점수/체력·표시·Pause/Result 전환 |
+| Result | 1회 전달된 `GameResultSnapshot`과 카탈로그·로컬 진행 표시 |
+| ChartMaker | 독립 제작 제품의 편집/Preview 씬 |
+| 테스트 DemoPlay | `Assets/Tests/Fixtures/Scenes/DemoPlay.unity`의 회귀 하네스 |
+
+`AppRoot`와 자식 전환 표시기는 DontDestroyOnLoad 수명을 가진다. 곡 선택,
+설정/기록 저장소, 결과 전달은 루트가 소유하고 Game 씬의 판정·Effect·음원 세션은
+씬 종료 때 정리한다. Result는 `TryTakeResult`로 결과를 한 번 소비한다.
+
+일반 씬 이동은 `SceneTransitionController`의 투명 Intro/Loop/Outro와 어두운 덮개를,
+MusicSelect→Game은 추가 흰 결정 연출을 사용한다. 설정 모달은 씬 이동이 아니다.
+전환 편집은 [CrystalTransition.md](CrystalTransition.md)에 설명한다.
+
+## 4. 실제 플레이 구성요소
+
+| 구성요소 | 책임 |
+| --- | --- |
+| `GameManager` | GamePlay/GameRule 참조와 시작·정지 요청 연결 |
+| `GamePlay` + `DspSongClock` | AudioClip 예약 재생, DSP 기반 곡 시간, Pause/Resume/Restart |
+| `RhythmInputRouter` | 10레인 Input System press/release와 이벤트 시각 수집 |
+| `NoteJudgementSystem` | 입력 큐·Effect·자동 판정의 시간 순서, Game 규칙 adapter, 판정 이벤트/등록 View 연결 |
+| `PlayableJudgementSession` | Unity 비의존 단일 노트·Long 구간 상태와 결과 발생 |
+| `GameRule` / `DefaultGameRule` | 판정 창·modifier, 점수·체력·콤보·클리어/실패 규칙 |
+| `GameplaySessionState` | 한 플레이의 집계 상태와 Effect용 상태 제공 |
+| `GameplayChartEffectController` | 준비된 Effect 계획과 Game capability의 세션 연결·정리 |
+| `DemoPlayController` | 현행 Game에서도 쓰는 노트/카메라 표시 및 개발 하네스 기능 |
+| `GameFlowController` | 로딩·선택·플레이·Pause·오류 화면, 결과 확정·씬 이동 |
+| `ResultScenePresenter` / `ResultMenuActions` | 결과 표시와 재시도·곡 선택 요청 |
+
+`Gameplay/Demo` 폴더에는 현행 제품 코드가 있다. 이름만으로 폴더 전체를 레거시로
+분류하지 않는다. 현재 `GameManager`의 Singleton 참조와 일부 fallback 탐색,
+판정 adapter의 View 등록은 남아 있는 결합이다. 공용 판정 코어는 Unity View를 모른다.
+
+## 5. 입력·Effect·판정 순서
+
+`NoteJudgementSystem.LateUpdate`가 현재 chart time까지 다음 이벤트를 병합한다.
+같은 시각에는 Effect order, 입력 sequence, 자동 판정/Miss 순서다. 활성 Effect와
+곡 기믹은 프레임 시각으로 한 번 갱신하고 프레임 완료 경계에서 전환 요청을 처리한다.
+서로 다른 시각의 이벤트는 시간순이며 미래 규칙을 과거 입력에 소급하지 않는다.
+
+`GamePlay`의 입력 시간 변환과 사용자 보정 부호, 구간별 판정 창은
+[RhythmSystem.md](RhythmSystem.md)에 둔다. UI/Presenter에서 재계산하지 않는다.
+노트마다 판정용 Update를 두지 않으며 성능은 실제 밀집 채보에서 별도로 계측한다.
+
+## 6. 데이터 소유권
+
+| 데이터 | 쓰기 책임 |
+| --- | --- |
+| 곡·난이도 콘텐츠 metadata | `data.json` 및 제작 파이프라인 |
+| 노트·타이밍·Effect 제작 데이터 | ChartMaker `.rd`와 편집 상태 |
+| Snapshot / Effect 계획 | 공용 컴파일·준비 경계 |
+| 입력 큐 | Game의 `NoteJudgementSystem` |
+| 노트/구간 판정 상태 | `PlayableJudgementSession` |
+| 점수·콤보·체력 | `GameplaySessionState`가 GameRule 결과를 반영 |
+| 판정 통계·최대 콤보와 결과 확정 | `GameFlowController` → `GameResultSnapshot` |
+| 영구 진행·즐겨찾기 | `AppRoot`가 소유한 `LocalPlayerDataStore` |
+| 사용자 음량·판정 보정·키 | `AppRoot`가 소유한 `LocalGameSettingsStore` |
+| 씬 전환 상태 / 표시 | `SceneTransitionController` / `CrystalTransitionPlayer` |
+
+Resume은 세션을 유지하고 Restart는 성공한 시작 경계에서 판정·Effect·집계를
+초기화/교체한다. 이전 generation의 callback/cleanup이 새 세션을 변경하지 않아야 한다.
+준비 실패, 취소, 비활성화, 예외의 정리도 검증 대상이다.
+
+## 7. 표시와 UI
+
+Game 메뉴는 uGUI, ChartMaker 편집 메뉴/팝업은 UI Toolkit을 사용한다.
+`MenuNavigationController`는 Scope/Node와 모달 Push/Pop으로 선택 범위를 관리하고
+이동·Submit은 Input System UI 모듈/Selectable에 맡긴다.
+
+노트의 chart time·floor position·카메라 수학은 Shared 계산을 소비하며,
+lane X·prefab·Transform·Animator와 표시 효과는 각 제품이 연결한다.
+`LaneHitEffectPlayer`는 공용 표시만 맡고 Game 판정 이벤트 연결은
+`GameplayChartSessionController`가 담당한다.
+
+초기 문서의 LaneField·GameplayRunner·ScoreSystem·ResultBuilder 등의 명칭은
+설계 예시였다. 현재 구현에 같은 이름의 새 시스템을 추가해야 한다는 요구가 아니다.
+노트 View 전체의 풀링·가시 범위 최적화가 완료됐다고 가정하지 않는다.
+
+## 8. 검사와 후속 작업
+
+- Core/EditMode: 컴파일·시간/스크롤·판정·Effect 경계.
+- EffectIntegration와 `REmindBaselineChecks`: 실제 파일 왕복, Preview/Game 대조,
+  준비 실패와 씬 구성. DemoPlay 검사는 테스트 fixture를 사용한다.
+- Gameplay/EditMode: 진행과 설정 저장·검증·복구/이행.
+- `PlayableGameSmokeRunner`: Bootstrap·설정·두 곡·결과·재시도 자동 흐름.
+- `RuntimeProductBuilds`: Play/Chart 프로필과 상대 제품 assembly 제외 경계.
+- 수동/하드웨어: 화면·실제 입력·청음·포커스 정책·성능·배포 환경.
+
+검사 코드가 존재하는 것과 최신 원본에서 통과한 것은 다르다.
+실행 결과는 [TASKS.md](TASKS.md), 작업 배분·완료 기준은 [ROADMAP.md](ROADMAP.md)를 따른다.

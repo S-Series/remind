@@ -1,8 +1,25 @@
 # Milestones
 
-> 문서 상태: Draft 0.1  
-> 최종 갱신: 2026-07-21  
-> 목적: 기능 목록이 아니라 구현 순서와 각 단계의 완료 조건을 고정한다.
+> 문서 상태: 보관 — 2026-07-21 초기 데모 계획
+> 현행 문서 연결 검토: 2026-09-29
+
+현재 작업 순서와 완료 기준은 [ROADMAP.md](ROADMAP.md)의 A~F,
+실행 상태는 [TASKS.md](TASKS.md)를 따른다. 아래 M0~M11 체크박스는 당시 계획을
+보존한 것으로 현재 미완료 목록이나 새 작업 지시가 아니다.
+
+옛 `25/50/90/120ms`, Bad 등급, 정수 timeMs, Hold 90ms,
+양수 사용자 보정의 부호, 자동 포커스 Pause와 재개 카운트다운은 현행 계약으로
+사용하지 않는다. [RhythmSystem.md](RhythmSystem.md),
+[ChartFormat.md](ChartFormat.md), [GameplayStructure.md](GameplayStructure.md)를 따른다.
+
+| 당시 단계 | 현행 대응 |
+| --- | --- |
+| M0~M3 기반·시간·입력·로드 | Shared Core, GamePlay/DspSongClock, 입력 라우터, Runtime Package |
+| M4~M6 판정 | 공용 PlayableJudgementSession과 GameRule, Long/Scratch 구간 |
+| M7~M10 표시·결과·흐름·설정 | Game/Result, Settings 모달, 로컬 기록; 수동 검수·미구현 정책은 TASKS |
+| M11 데모 | 최종 목표는 Game과 독립 ChartMaker 두 제품; 출시 범위는 PRODUCT/ROADMAP |
+
+## 보관된 초기 계획
 
 ## 운영 규칙
 
@@ -405,7 +422,7 @@ Chart, User Input, Visual Offset을 독립적으로 설정하고 검증한다.
 - 게임패드 또는 특수 컨트롤러
 - 에디터와 공유하는 Schema 패키지
 
-## 현재 우선순위
+## 당시 우선순위 (2026-07-21)
 
 ```text
 M0 문서/기반

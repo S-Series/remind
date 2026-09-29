@@ -159,8 +159,7 @@ namespace REmind.Gameplay.Chart
                 // a clip whose audio data has entered a failed state.
                 if (!gameManager.SetAudioSource(
                         bundledSong,
-                        bundledSongVolume * (AppRoot.Current
-                            ? AppRoot.Current.Settings.MusicVolume : 1f)))
+                        bundledSongVolume))
                 {
                     return Fail(
                         $"Could not prepare the AudioClip for '{bundledExpectedMusicId}'.");
@@ -168,8 +167,7 @@ namespace REmind.Gameplay.Chart
             }
             else if (selectedSong &&
                      !gameManager.SetAudioSource(selectedSong,
-                         selectedVolume * (AppRoot.Current
-                             ? AppRoot.Current.Settings.MusicVolume : 1f)))
+                         selectedVolume))
                 return Fail("Could not prepare the selected AudioClip for '" +
                     expectedMusicId + "'.");
 

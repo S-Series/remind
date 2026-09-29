@@ -1094,7 +1094,7 @@ RectTransform:
   m_GameObject: {fileID: 9000000005}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: -1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 9000000004}
@@ -1117,14 +1117,14 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.UI.Image
   m_Material: {fileID: 0}
-  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_Color: {r: 0.26415092, g: 0.26415092, b: 0.26415092, a: 1}
   m_RaycastTarget: 0
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_Sprite: {fileID: 21300000, guid: d3ed96a5af61833418e1bcaa024a189a, type: 3}
+  m_Sprite: {fileID: 21300000, guid: f1a0271884c62e146a84237f0e3d06c7, type: 3}
   m_Type: 0
   m_PreserveAspect: 0
   m_FillCenter: 1
@@ -7188,6 +7188,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2e3835398a6747228a58b9dd8656d248, type: 3}
   m_Name: 
   m_EditorClassIdentifier: REmind.Gameplay::REmind.Gameplay.Demo.HomeMenuActions
+  navigation: {fileID: 1420131757}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

@@ -74,7 +74,29 @@ namespace REmind.Gameplay.Effects
                 return false;
             }
 
-            audioSource.PlayOneShot(clip);
+            LocalGameSettingsStore settings = AppRoot.Current
+                ? AppRoot.Current.Settings : null;
+            if (settings != null &&
+                settings.HitSound == LocalGameSettingsStore.HitSoundStyle.None)
+                return false;
+            float styleVolume = 1f;
+            audioSource.pitch = 1f;
+            if (settings != null)
+            {
+                audioSource.spatialBlend = settings.SpatialAudio ? 0.35f : 0f;
+                switch (settings.HitSound)
+                {
+                    case LocalGameSettingsStore.HitSoundStyle.Soft:
+                        styleVolume = 0.65f;
+                        audioSource.pitch = 0.9f;
+                        break;
+                    case LocalGameSettingsStore.HitSoundStyle.Sharp:
+                        audioSource.pitch = 1.12f;
+                        break;
+                }
+            }
+            audioSource.PlayOneShot(clip,
+                styleVolume * (settings != null ? settings.SfxVolume : 1f));
             return true;
         }
 

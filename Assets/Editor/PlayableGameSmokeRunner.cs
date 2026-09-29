@@ -14,6 +14,7 @@ using UnityEngine.EventSystems;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 using REmind.Gameplay;
+using REmind.Common.UI;
 using TMPro;
 
 /// <summary>Batch PlayMode smoke for Music Select through actual gameplay.</summary>
@@ -29,16 +30,19 @@ public static class PlayableGameSmokeRunner
         { "Story", "Character", "ReMind", "Option", "Music" };
     private static readonly bool[] checkedPauseResume = new bool[SongIds.Length];
     private static int frames;
+    private static int bootstrapReadyFrames;
+    private static bool bootstrapContinueRequested;
     private static double smokeStartedAt;
     private static int songIndex;
     private static bool checkedScene;
     private static bool openedMusicSelect;
     private static bool openedSettingsMenu;
     private static bool checkingSettingsMenu;
+    private static bool checkedSettingsSceneChange;
     private static bool checkingTemporaryScreen;
     private static int temporaryScreenIndex;
     private static bool startedSelection;
-    private static Sprite transitionFirstFrame;
+    private static float transitionFirstElapsed;
     private static float transitionStartedAt;
     private static bool transitionAdvanced;
     private static bool assignedTestData;
@@ -60,6 +64,8 @@ public static class PlayableGameSmokeRunner
     public static void Run()
     {
         frames = 0;
+        bootstrapReadyFrames = 0;
+        bootstrapContinueRequested = false;
         smokeStartedAt = EditorApplication.timeSinceStartup;
         songIndex = 0;
         Array.Clear(checkedPauseResume, 0, checkedPauseResume.Length);
@@ -67,10 +73,11 @@ public static class PlayableGameSmokeRunner
         openedMusicSelect = false;
         openedSettingsMenu = false;
         checkingSettingsMenu = false;
+        checkedSettingsSceneChange = false;
         checkingTemporaryScreen = false;
         temporaryScreenIndex = 0;
         startedSelection = false;
-        transitionFirstFrame = null;
+        transitionFirstElapsed = 0f;
         transitionStartedAt = 0f;
         transitionAdvanced = false;
         assignedTestData = false;
@@ -100,9 +107,46 @@ public static class PlayableGameSmokeRunner
         try
         {
             frames++;
-            if (EditorApplication.timeSinceStartup - smokeStartedAt > 120d)
+            if (EditorApplication.timeSinceStartup - smokeStartedAt > 240d)
                 throw new TimeoutException(
-                    "Full play flow was not ready after 120 seconds.");
+                    "Full play flow was not ready after 240 seconds.");
+            if (SceneManager.GetActiveScene().name == "Bootstrap")
+            {
+                BootstrapLoadingController bootstrap = UnityEngine.Object
+                    .FindFirstObjectByType<BootstrapLoadingController>();
+                if (!bootstrap)
+                    throw new InvalidOperationException(
+                        "Bootstrap loading controller is missing.");
+                if (AppRoot.Current && AppRoot.Current.IsTransitioning)
+                {
+                    if (bootstrapContinueRequested) return;
+                    throw new InvalidOperationException(
+                        "Bootstrap advanced without interaction.");
+                }
+                if (!bootstrap.IsReadyForInteraction) return;
+                if (++bootstrapReadyFrames < 3) return;
+                if (!bootstrap.TryContinue())
+                    throw new InvalidOperationException(
+                        "Bootstrap did not accept interaction after loading.");
+                bootstrapContinueRequested = true;
+                return;
+            }
+            if (AppRoot.Current && AppRoot.Current.IsTransitioning)
+            {
+                if (startedSelection && !transitionAdvanced &&
+                    SceneManager.GetActiveScene().name == "MusicSelect" &&
+                    Time.unscaledTime - transitionStartedAt > 0.5f)
+                {
+                    SceneTransitionController current = AppRoot.Current
+                        .GetComponentInChildren<SceneTransitionController>(true);
+                    if (!current || current.TransitionElapsed <=
+                        transitionFirstElapsed + 0.25f)
+                        throw new InvalidOperationException(
+                            "Crystal overlay did not advance before the scene load.");
+                    transitionAdvanced = true;
+                }
+                return;
+            }
             if (checkingTemporaryScreen)
             {
                 if (SceneManager.GetActiveScene().name !=
@@ -256,43 +300,92 @@ public static class PlayableGameSmokeRunner
             }
             if (checkingSettingsMenu)
             {
-                if (SceneManager.GetActiveScene().name != "Settings") return;
+                if (SceneManager.GetActiveScene().name != "Home")
+                    throw new InvalidOperationException(
+                        "Settings overlay replaced the Home scene.");
                 SettingsMenuController menu = UnityEngine.Object
                     .FindFirstObjectByType<SettingsMenuController>();
-                if (!menu || typeof(SettingsMenuController).GetField("settings",
+                if (!menu || !menu.IsOverlayOpen ||
+                    typeof(SettingsMenuController).GetField("settings",
                         BindingFlags.Instance | BindingFlags.NonPublic)
                     .GetValue(menu) == null) return;
-                menu.transform.Find("VolumeMinus").GetComponent<Button>()
-                    .onClick.Invoke();
+                if (menu.transform.parent != AppRoot.Current.transform ||
+                    !AppRoot.Current.GetComponent<CanvasScaler>() ||
+                    !AppRoot.Current.GetComponent<GraphicRaycaster>())
+                    throw new InvalidOperationException(
+                        "Settings overlay is not hosted by the persistent AppRoot Canvas.");
+                MenuNavigationController modalNavigation = UnityEngine.Object
+                    .FindFirstObjectByType<MenuNavigationController>();
+                NavigationScope modalScope = menu.GetComponent<NavigationScope>();
+                if (!modalNavigation || !modalScope ||
+                    modalNavigation.ActiveScope != modalScope)
+                    throw new InvalidOperationException(
+                        "Settings did not own the Home modal navigation scope.");
+                FindSlider(menu, "VolumeSlider0").value = 0.8f;
+                if (Math.Abs(AppRoot.Current.Settings.MasterVolume - 0.8f) >
+                    0.001f || Math.Abs(AudioListener.volume - 0.8f) > 0.001f)
+                    throw new InvalidOperationException(
+                        "Master volume did not apply to the audio listener.");
+                menu.SetBgmVolume(0.55f);
                 if (Math.Abs(AppRoot.Current.Settings.MusicVolume - 0.55f) >
                     0.001f)
                     throw new InvalidOperationException(
-                        "Settings volume button did not change local preferences.");
-                menu.transform.Find("VolumePlus").GetComponent<Button>()
-                    .onClick.Invoke();
-                menu.transform.Find("TimingPlus").GetComponent<Button>()
-                    .onClick.Invoke();
+                        "BGM volume did not change local preferences.");
+                menu.SetBgmVolume(0.6f);
+                menu.SetSfxVolume(0.7f);
+                menu.SetVoiceVolume(0.75f);
+                FindButton(menu, "HitStyle2").onClick.Invoke();
+                FindToggle(menu, "SpatialAudio").isOn = true;
+                FindToggle(menu, "OtherToggle0").isOn = true;
+                if (Math.Abs(AppRoot.Current.Settings.SfxVolume - 0.7f) >
+                    0.001f ||
+                    Math.Abs(AppRoot.Current.Settings.VoiceVolume - 0.75f) >
+                    0.001f || AppRoot.Current.Settings.HitSound !=
+                    LocalGameSettingsStore.HitSoundStyle.Sharp ||
+                    !AppRoot.Current.Settings.SpatialAudio ||
+                    !AppRoot.Current.Settings.MuteWhenUnfocused)
+                    throw new InvalidOperationException(
+                        "Audio overlay controls did not save their values.");
+                menu.SelectCategory(3);
+                FindButton(menu, "TimingPlus").onClick.Invoke();
                 if (AppRoot.Current.Settings.JudgementOffsetMs != -20d)
                     throw new InvalidOperationException(
                         "Settings timing button did not change local preferences.");
-                menu.transform.Find("TimingMinus").GetComponent<Button>()
-                    .onClick.Invoke();
-                menu.transform.Find("Lane1").GetComponent<Button>()
-                    .onClick.Invoke();
+                FindButton(menu, "TimingMinus").onClick.Invoke();
+                menu.SelectCategory(5);
+                FindButton(menu, "Lane1").onClick.Invoke();
                 menu.ReturnHome();
-                if (SceneManager.GetActiveScene().name != "Settings")
+                if (!menu.IsOverlayOpen ||
+                    SceneManager.GetActiveScene().name != "Home")
                     throw new InvalidOperationException(
-                        "Cancelling a key change left Settings unexpectedly.");
-                menu.transform.Find("ResetKeys").GetComponent<Button>()
-                    .onClick.Invoke();
+                        "Cancelling a key change closed the overlay.");
+                FindButton(menu, "ResetKeys").onClick.Invoke();
                 if (AppRoot.Current.Settings.GetLaneBinding(0) !=
                     "<Keyboard>/z")
                     throw new InvalidOperationException(
                         "Reset Keys did not restore the default binding.");
                 AppRoot.Current.SetLaneBinding(0, "<Keyboard>/a");
-                menu.transform.Find("Back").GetComponent<Button>()
-                    .onClick.Invoke();
+                FindButton(menu, "Close").onClick.Invoke();
+                if (menu.IsOverlayOpen ||
+                    SceneManager.GetActiveScene().name != "Home" ||
+                    modalNavigation.ActiveScope == modalScope)
+                    throw new InvalidOperationException(
+                        "Settings overlay did not restore Home.");
+                HomeMenuActions homeActions = UnityEngine.Object
+                    .FindFirstObjectByType<HomeMenuActions>();
+                homeActions.OpenSettings();
+                if (!menu.IsOverlayOpen) throw new InvalidOperationException(
+                    "Settings overlay could not reopen.");
+                modalScope.InvokeCancel();
+                if (menu.IsOverlayOpen) throw new InvalidOperationException(
+                    "Settings overlay Cancel did not restore Home.");
+                homeActions.OpenSettings();
+                if (!menu.IsOverlayOpen ||
+                    !AppRoot.NavigateToScene("MusicSelect"))
+                    throw new InvalidOperationException(
+                        "Settings overlay could not start a scene change.");
                 checkingSettingsMenu = false;
+                openedMusicSelect = true;
                 return;
             }
             if (!openedMusicSelect &&
@@ -342,7 +435,7 @@ public static class PlayableGameSmokeRunner
                         case "Character": home.OpenCharacter(); break;
                         case "ReMind": home.OpenReMind(); break;
                         case "Option": home.OpenOption(); break;
-                        default: SceneManager.LoadScene("Music"); break;
+                        default: AppRoot.NavigateToScene("Music"); break;
                     }
                     return;
                 }
@@ -350,16 +443,33 @@ public static class PlayableGameSmokeRunner
                 {
                     openedSettingsMenu = true;
                     checkingSettingsMenu = true;
-                    SceneManager.LoadScene("Settings");
+                    HomeMenuActions home = UnityEngine.Object
+                        .FindFirstObjectByType<HomeMenuActions>();
+                    if (!home) throw new InvalidOperationException(
+                        "Home actions are missing for Settings overlay.");
+                    home.OpenSettings();
                     return;
                 }
                 openedMusicSelect = true;
-                SceneManager.LoadScene("MusicSelect");
+                AppRoot.NavigateToScene("MusicSelect");
                 return;
             }
             if (openedMusicSelect && !startedSelection &&
                 SceneManager.GetActiveScene().name == "MusicSelect")
             {
+                if (!checkedSettingsSceneChange)
+                {
+                    SettingsMenuController persistent = AppRoot.Current
+                        .GetComponentInChildren<SettingsMenuController>(true);
+                    NavigationScope scope = persistent
+                        ? persistent.GetComponent<NavigationScope>() : null;
+                    if (!persistent || persistent.IsOverlayOpen ||
+                        persistent.gameObject.activeSelf || !scope ||
+                        scope.Controller)
+                        throw new InvalidOperationException(
+                            "Settings overlay kept scene-owned navigation after Home unloaded.");
+                    checkedSettingsSceneChange = true;
+                }
                 MusicSelectController selection = UnityEngine.Object
                     .FindFirstObjectByType<MusicSelectController>();
                 if (!selection) return;
@@ -397,7 +507,6 @@ public static class PlayableGameSmokeRunner
                     .GetComponentInChildren<SceneTransitionController>(true);
                 if (!AppRoot.Current.IsTransitioning ||
                     !transition || !transition.OverlayVisible ||
-                    !transition.CurrentFrame ||
                     SceneManager.GetActiveScene().name != "MusicSelect")
                     throw new InvalidOperationException(
                         "Music Select did not start the persistent visual transition.");
@@ -406,22 +515,11 @@ public static class PlayableGameSmokeRunner
                     SceneManager.GetActiveScene().name != "MusicSelect")
                     throw new InvalidOperationException(
                         "A second Play action interrupted the transition.");
-                transitionFirstFrame = transition.CurrentFrame;
+                transitionFirstElapsed = transition.TransitionElapsed;
                 transitionStartedAt = Time.unscaledTime;
                 transitionAdvanced = false;
                 startedSelection = true;
                 return;
-            }
-            if (startedSelection && !transitionAdvanced &&
-                SceneManager.GetActiveScene().name == "MusicSelect" &&
-                Time.unscaledTime - transitionStartedAt > 0.5f)
-            {
-                SceneTransitionController transition = AppRoot.Current
-                    .GetComponentInChildren<SceneTransitionController>(true);
-                if (!transition || transition.CurrentFrame == transitionFirstFrame)
-                    throw new InvalidOperationException(
-                        "Music Selected animation did not advance its displayed frame.");
-                transitionAdvanced = true;
             }
             if (!startedSelection ||
                 SceneManager.GetActiveScene().name != "Game") return;
@@ -569,6 +667,27 @@ public static class PlayableGameSmokeRunner
             Debug.LogException(exception);
             Complete(1);
         }
+    }
+
+    private static Button FindButton(Component root, string name)
+    {
+        foreach (Button button in root.GetComponentsInChildren<Button>(true))
+            if (button.name == name) return button;
+        throw new InvalidOperationException("Settings button is missing: " + name);
+    }
+
+    private static Slider FindSlider(Component root, string name)
+    {
+        foreach (Slider slider in root.GetComponentsInChildren<Slider>(true))
+            if (slider.name == name) return slider;
+        throw new InvalidOperationException("Settings slider is missing: " + name);
+    }
+
+    private static Toggle FindToggle(Component root, string name)
+    {
+        foreach (Toggle toggle in root.GetComponentsInChildren<Toggle>(true))
+            if (toggle.name == name) return toggle;
+        throw new InvalidOperationException("Settings toggle is missing: " + name);
     }
 
     private static void Complete(int code)
