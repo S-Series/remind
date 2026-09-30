@@ -5,7 +5,7 @@
 
 ## 직접 수정하는 가장 쉬운 방법
 
-1. `ReMind_CrystalTransition.prefab`을 더블클릭해 연다.
+1. `CrystalTransition.prefab`을 더블클릭해 연다.
 2. 루트 Inspector의 **Show assembled pose for editing (frame 39)**를 눌러 조립된 별을 표시한다.
 3. 원하는 레이어 아래 `Artwork`를 선택하고 Inspector에서 위치·크기·회전·색상·이미지를 수정한다.
 4. 전체 길이와 별 크기, 궤도/입자 불투명도는 루트 `CrystalTransitionPlayer`에서 조정한다.
@@ -22,13 +22,13 @@ Animation 창에서 맞춰야 한다.
 - `Play`, `Pause`, `Restart`, `Loop`, 시간 슬라이더를 사용한다.
 - 별도 preview scene에서 실제 URP로 렌더하며, 열려 있는 Test 씬의 수정사항을 건드리지 않는다.
 - Prefab/Clip을 수정하고 저장했다면 **Reload**로 다시 불러온다.
-- `Assets/Scenes/ReMind_CrystalPreview.unity`를 열고 Unity Play를 눌러도 1회 재생된다.
+- `Assets/Scenes/prev/CrystalPreview.unity`를 열고 Unity Play를 눌러도 1회 재생된다.
   완료 후 흰 화면을 유지한다. 루트 Inspector의 Play / Restart로 다시 재생한다.
 - 오디오 장치와 무관하며 `Time.timeScale = 0`에서도 동작한다.
 
 ## 편집 구조
 
-프리팹: `Assets/Prefabs/Transitions/ReMind_CrystalTransition.prefab`
+프리팹: `Assets/Prefabs/Transitions/CrystalTransition.prefab`
 
 | 계층 | 수정할 내용 |
 |---|---|

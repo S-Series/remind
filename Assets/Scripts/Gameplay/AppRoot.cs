@@ -1,5 +1,6 @@
 using System;
 using REmind.Common.UI;
+using REmind.Gameplay.Characters;
 using REmind.Gameplay.Demo;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -27,6 +28,9 @@ namespace REmind.Gameplay
 
         private SongSelection selection;
         private bool hasSelection;
+        private CharacterAbilityDefinition selectedAbility;
+        private GameRuleConfig selectedGaugeRule;
+        private GameAttemptStartSnapshot activeAttempt;
         private GameResultSnapshot pendingResult;
         private LocalPlayerDataStore playerData;
         private LocalGameSettingsStore settings;
@@ -35,6 +39,7 @@ namespace REmind.Gameplay
         private bool voicePlaybackActive;
         [SerializeField] private SceneTransitionController sceneTransition;
         [SerializeField] private SettingsMenuController settingsOverlay;
+        [SerializeField] private CharacterOverlayController characterOverlay;
         [SerializeField] private bool autoEnterHomeOnStart = true;
         private bool duplicate;
 
@@ -64,6 +69,15 @@ namespace REmind.Gameplay
             if (settingsOverlay.IsOverlayOpen) return true;
             settingsOverlay.OpenOverlay(navigation);
             return settingsOverlay.IsOverlayOpen;
+        }
+
+        public bool TryOpenCharacter(MenuNavigationController navigation)
+        {
+            if (duplicate || IsTransitioning || !characterOverlay || !navigation)
+                return false;
+            if (characterOverlay.IsOverlayOpen) return true;
+            characterOverlay.OpenOverlay(navigation);
+            return characterOverlay.IsOverlayOpen;
         }
 
         /// <summary>Called when Bootstrap has finished presenting its logo and loading its startup data.</summary>
@@ -130,25 +144,72 @@ namespace REmind.Gameplay
 
         public void SelectSong(string musicId, string difficultyId)
         {
+            SelectSong(musicId, difficultyId, null, null);
+        }
+
+        /// <summary>
+        /// Explicit play conditions for the next start. The rule asset is only
+        /// input; the Game scene freezes it before the attempt begins.
+        /// </summary>
+        public void SelectSong(string musicId, string difficultyId,
+            CharacterAbilityDefinition ability, GameRuleConfig selectedRule)
+        {
             if (string.IsNullOrWhiteSpace(musicId))
                 throw new ArgumentException("A selected song needs a music ID.", nameof(musicId));
             if (string.IsNullOrWhiteSpace(difficultyId))
                 throw new ArgumentException("A selected song needs a difficulty ID.", nameof(difficultyId));
+            if (ability != null && !selectedRule)
+                throw new ArgumentException(
+                    "A selected character needs a complete gauge rule.",
+                    nameof(selectedRule));
 
             selection = new SongSelection(musicId, difficultyId);
             hasSelection = true;
+            selectedAbility = ability;
+            selectedGaugeRule = selectedRule;
             pendingResult = null;
             LastResultIsNewRecord = false;
             LastResultWasFirstClear = false;
         }
 
+        public bool TryGetSelectedPlayConditions(
+            out CharacterAbilityDefinition ability,
+            out GameRuleConfig selectedRule)
+        {
+            ability = selectedAbility;
+            selectedRule = selectedGaugeRule;
+            return hasSelection;
+        }
+
+        public void ActivateAttempt(GameAttemptStartSnapshot start)
+        {
+            activeAttempt = start ?? throw new ArgumentNullException(nameof(start));
+        }
+
+        public void EndAttempt(Guid attemptId)
+        {
+            if (activeAttempt != null && activeAttempt.AttemptId == attemptId)
+                activeAttempt = null;
+        }
+
         public void PublishResult(GameResultSnapshot result)
         {
             if (result == null) throw new ArgumentNullException(nameof(result));
-            if (!hasSelection ||
-                !string.Equals(selection.MusicId, result.MusicId, StringComparison.Ordinal) ||
-                !string.Equals(selection.DifficultyId, result.DifficultyId, StringComparison.Ordinal))
+            bool matchesAttempt = activeAttempt != null &&
+                ReferenceEquals(activeAttempt, result.AttemptStart) &&
+                string.Equals(activeAttempt.MusicId, result.MusicId,
+                    StringComparison.Ordinal) &&
+                string.Equals(activeAttempt.DifficultyId, result.DifficultyId,
+                    StringComparison.Ordinal);
+            bool matchesLegacySelection = activeAttempt == null &&
+                result.AttemptStart == null && hasSelection &&
+                string.Equals(selection.MusicId, result.MusicId,
+                    StringComparison.Ordinal) &&
+                string.Equals(selection.DifficultyId, result.DifficultyId,
+                    StringComparison.Ordinal);
+            if (!matchesAttempt && !matchesLegacySelection)
                 throw new InvalidOperationException("Result IDs do not match the selected song.");
+            activeAttempt = null;
             pendingResult = result;
             if (result.IsAutoPlay)
             {

@@ -12,7 +12,11 @@ namespace REmind.Gameplay.Demo
 
         public void OpenMusic() => AppRoot.NavigateToScene("MusicSelect");
 
-        public void OpenCharacter() => AppRoot.NavigateToScene("Character");
+        public void OpenCharacter()
+        {
+            if (!AppRoot.Current || !AppRoot.Current.TryOpenCharacter(navigation))
+                Debug.LogError("Home Character overlay is unavailable.", this);
+        }
 
         public void OpenReMind() => AppRoot.NavigateToScene("ReMind");
 

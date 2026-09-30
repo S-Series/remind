@@ -41,6 +41,10 @@ Effect vertical slice는 ChartMaker Preview와 기존 `DemoPlay`에서 같은 �
 저장한다. 첫 클리어 기억 조각 보상도 기록에서 계산한다. 정식 콘텐츠와 최종 UI
 시각 검수는 후속 작업이다.
 
+`Assets/Scenes/prev/DemoPlay.unity`는 이동 전 씬을 보관한 복사본이다. 현재 회귀
+검사와 `GameplayStage6SceneSetup`은 Tests 아래 fixture만 연다. 두 씬은 줄바꿈을
+제외한 YAML 내용이 같지만 GUID가 다르므로, `prev` 씬을 테스트 대상으로 혼용하지 않는다.
+
 ## 3. Legacy Gameplay
 
 DemoPlay 및 기존 Gameplay의 일부는 레거시 또는 과도기 코드다.
@@ -134,6 +138,9 @@ ChartDocument → ChartCompiler → Snapshot → Preview
   파일 내부 형식은 버전 2이며 기존 버전 1의 음량·보정·키 설정을 보존해 읽는다.
   설정 UI는 `AppRoot`의 영속 Canvas 아래 `SettingsOverlay.prefab` 모달로
   이동했다. Home은 AppRoot를 통해 열고 씬 이동 시 모달 탐색 참조를 정리한다.
+  Character도 같은 영속 Canvas 아래 `CharacterOverlay.prefab`으로 배치했다.
+  Home은 오버레이를 열고 BEGIN/닫기에서 Home으로 돌아온다. 현 단계의 캐릭터
+  카드·프로필·스탯·스킬은 화면 시안이며 플레이 조건에 적용되지 않는다.
   마스터 볼륨은 AudioListener, BGM은 곡/미리듣기, SFX와 히트 사운드 스타일은
   판정 효과음에 반영한다. 출력 장치는 OS 기본 장치를 사용한다. 음성 소스는 아직
   없어 Voice 볼륨과 음성 중 BGM 감소는 저장되며 음성 재생을 연결할 때 적용한다.
@@ -165,6 +172,15 @@ ChartDocument → ChartCompiler → Snapshot → Preview
 2. **카메라 표시 차이**
    Effect offset/easing은 공용이지만 Camera Note의 기준 X, lane/prefab과 실제 Transform
    구성은 `Game.unity`에서 정적 연결까지만 검증했다. 실제 화면·입력 수동 대조가 남았다.
+3. **연속 도전과 선택형 제약**
+   `SampleMusicGimmick`의 성공 횟수는 명령으로 증가하는 개발 예제이며 실제 노트
+   판정이나 해금에 연결되지 않는다. 공용 transition mailbox와
+   `GameplayChartEffectController.TransitionRequested`는 있지만 현재 Game의
+   `CanTransitionTo` 설정과 이벤트 구독자가 없어 제품 플레이에서 요청이 승인되지
+   않는다. `GameFlowController`의 결과와 `LocalPlayerDataStore`의 기록은 한 곡
+   기준이며 도전 전체 결과·제약 조합·히든곡 해금을 저장하지 않는다. `GameRule`의
+   수정자는 등록 순서대로 적용되어 제약 합성 순서도 아직 계약이 없다. 목표 경계와
+   미결정 정책은 [ARCHITECTURE.md](ARCHITECTURE.md)의 연속 도전·제약 절을 따른다.
 
 ## 6. Current Classification
 

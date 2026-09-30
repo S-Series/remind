@@ -14,7 +14,7 @@ namespace REmind.EditorTools
         public const string Folder = "Assets/Art/Transitions/CrystalCompass";
         public const string PrefabPath = "Assets/Prefabs/Transitions/CrystalTransition.prefab";
         public const string ClipPath = "Assets/Art/Animations/ReMind_CrystalTransition.anim";
-        public const string ScenePath = "Assets/Scenes/prev/ReMind_CrystalPreview.unity";
+        public const string ScenePath = "Assets/Scenes/prev/CrystalPreview.unity";
         public const string MaterialPath = "Assets/Art/Shaders/RadialHalo.mat";
         private const string Sources = "Assets/Art/TransitionFX/GuidedWarp60/Sprites/";
         private static readonly Color Ice = new Color(0.66f, 0.72f, 1f, 1f);

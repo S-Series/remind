@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 
 [CreateAssetMenu(fileName = "GameRuleConfig", menuName = "REmind/Gameplay/Game Rule Config")]
@@ -41,6 +42,37 @@ public sealed class GameRuleConfig : ScriptableObject
     public bool FailImmediately => failImmediately;
     public bool ContinueAfterFail => continueAfterFail;
     public LongNoteJudgeMode LongNoteJudgeMode => longNoteJudgeMode;
+
+    /// <summary>Reject malformed authored data before it becomes a live session rule.</summary>
+    public void ValidateForSession()
+    {
+        if (!Enum.IsDefined(typeof(HealthGaugeType), gaugeType) ||
+            !Enum.IsDefined(typeof(LongNoteJudgeMode), longNoteJudgeMode) ||
+            maxHealth < 0 || initialHealth < 0 ||
+            initialHealth > maxHealth || clearHealth < 0 ||
+            clearHealth > maxHealth || maxScore < 0 ||
+            healthDelta == null || scoreWeight == null ||
+            rankThresholds == null || comboBehavior == null ||
+            baseJudgeWindows.PerfectWindowMs < 0 ||
+            baseJudgeWindows.GreatWindowMs <
+                baseJudgeWindows.PerfectWindowMs ||
+            baseJudgeWindows.GoodWindowMs <
+                baseJudgeWindows.GreatWindowMs ||
+            baseJudgeWindows.MissWindowMs <
+                baseJudgeWindows.GoodWindowMs)
+            throw new InvalidOperationException(
+                "GameRuleConfig has invalid session values.");
+
+        for (int grade = (int)JudgeResult.Perfect;
+             grade <= (int)JudgeResult.Miss; grade++)
+        {
+            double weight = scoreWeight.GetValue((JudgeResult)grade);
+            if (double.IsNaN(weight) || double.IsInfinity(weight) ||
+                weight < 0d)
+                throw new InvalidOperationException(
+                    "GameRuleConfig has an invalid score weight.");
+        }
+    }
 
     private void OnValidate()
     {

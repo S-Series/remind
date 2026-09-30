@@ -7,8 +7,12 @@ public abstract class GameRule : MonoBehaviour
     [SerializeField] private GameRuleConfig config;
 
     private readonly List<IRuleModifier> modifiers = new List<IRuleModifier>();
+    private GameRuleConfig sessionConfig;
+    private SessionConfigChange pendingConfigChange;
 
-    public GameRuleConfig Config => config;
+    public GameRuleConfig Config => sessionConfig ? sessionConfig : config;
+    public GameRuleConfig DefaultConfig => config;
+    public bool HasSessionConfig => sessionConfig;
     public IReadOnlyList<IRuleModifier> Modifiers => modifiers;
 
     public JudgeWindows BaseJudgeWindows => RequiredConfig.BaseJudgeWindows;
@@ -25,12 +29,13 @@ public abstract class GameRule : MonoBehaviour
     {
         get
         {
-            if (config == null)
+            GameRuleConfig activeConfig = Config;
+            if (activeConfig == null)
             {
                 throw new InvalidOperationException($"GameRuleConfig is not assigned to {name}.");
             }
 
-            return config;
+            return activeConfig;
         }
     }
 
@@ -41,6 +46,114 @@ public abstract class GameRule : MonoBehaviour
             Debug.LogError("GameRuleConfig is not assigned.", this);
             enabled = false;
         }
+    }
+
+    private void OnDestroy()
+    {
+        ClearSessionConfig();
+    }
+
+    /// <summary>
+    /// Prepare a private copy without changing the active rule. Commit it at the
+    /// playback commit boundary, then Complete only after playback has started.
+    /// Rollback restores the prior session rule if any later start step fails.
+    /// </summary>
+    public SessionConfigChange BeginSessionConfigChange(
+        GameRuleConfig selectedConfig)
+    {
+        if (pendingConfigChange != null)
+            throw new InvalidOperationException(
+                "A session rule change is already pending.");
+        if (!selectedConfig)
+            throw new ArgumentNullException(nameof(selectedConfig));
+        selectedConfig.ValidateForSession();
+
+        GameRuleConfig replacement = Instantiate(selectedConfig);
+        try
+        {
+            replacement.hideFlags = HideFlags.HideAndDontSave;
+            replacement.ValidateForSession();
+        }
+        catch
+        {
+            DestroySessionCopy(replacement);
+            throw;
+        }
+
+        pendingConfigChange = new SessionConfigChange(this, replacement);
+        return pendingConfigChange;
+    }
+
+    public void ClearSessionConfig()
+    {
+        pendingConfigChange?.Rollback();
+        GameRuleConfig previous = sessionConfig;
+        sessionConfig = null;
+        DestroySessionCopy(previous);
+    }
+
+    private static void DestroySessionCopy(GameRuleConfig copy)
+    {
+        if (!copy) return;
+        if (Application.isPlaying) Destroy(copy);
+        else DestroyImmediate(copy);
+    }
+
+    public sealed class SessionConfigChange : IDisposable
+    {
+        private GameRule owner;
+        private GameRuleConfig replacement;
+        private GameRuleConfig previous;
+        private bool committed;
+        private bool finished;
+
+        internal SessionConfigChange(GameRule owner,
+            GameRuleConfig replacement)
+        {
+            this.owner = owner;
+            this.replacement = replacement;
+        }
+
+        public void Commit()
+        {
+            if (finished || committed || owner.pendingConfigChange != this)
+                throw new InvalidOperationException(
+                    "This session rule change cannot be committed.");
+            previous = owner.sessionConfig;
+            owner.sessionConfig = replacement;
+            committed = true;
+        }
+
+        public void Complete()
+        {
+            if (finished || !committed || owner.pendingConfigChange != this)
+                throw new InvalidOperationException(
+                    "Only a committed session rule change can complete.");
+            owner.pendingConfigChange = null;
+            GameRuleConfig oldCopy = previous;
+            previous = null;
+            replacement = null; // The active rule now owns this copy.
+            finished = true;
+            owner = null;
+            DestroySessionCopy(oldCopy);
+        }
+
+        public void Rollback()
+        {
+            if (finished) return;
+            if (owner.pendingConfigChange == this)
+                owner.pendingConfigChange = null;
+            if (committed)
+                owner.sessionConfig = previous;
+            GameRuleConfig abandonedCopy = replacement;
+            replacement = null;
+            previous = null;
+            finished = true;
+            owner = null;
+            DestroySessionCopy(abandonedCopy);
+        }
+
+        public void Dispose() => Rollback();
     }
 
     public void RegisterModifier(IRuleModifier modifier)

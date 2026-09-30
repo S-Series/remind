@@ -58,8 +58,9 @@ Game은 검증된 실행 패키지를 읽으며 ChartMaker 저장 모델을 직�
 
 - 핵심 채보 파이프라인, Game 플레이 흐름, 결과·로컬 기록, 설정과 독립 빌드 경계가 있다.
 - 현재 두 곡 `i`·`designant`와 각 `hard` 채보는 테스트 콘텐츠다.
-- Story·Character·ReMind·Option·Music 일부 화면은 임시 메뉴다. 버튼 연결은 해당
-  제품 기능 전체의 구현 완료를 뜻하지 않는다.
+- Story·ReMind·Option·Music 일부 화면은 임시 메뉴다. Character는 Home 위의
+  오버레이로 배치됐지만 프로필·카드·스탯은 화면 시안이며 플레이 능력 선택에
+  연결되지 않았다. 버튼 연결은 해당 제품 기능 전체의 구현 완료를 뜻하지 않는다.
 - ChartMaker 자동 Preview는 공용 Snapshot을 소비한다. 실제 입력을 받는 제작용
   Test Play의 범위와 GameRule 공유는 별도로 확정한다.
 - Early/Late 정보는 판정 이벤트에 있다. 전용 분포 그래프·고스팅 검사·Visual Offset

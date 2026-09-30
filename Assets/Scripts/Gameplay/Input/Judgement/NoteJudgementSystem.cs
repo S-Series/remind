@@ -39,6 +39,8 @@ namespace REmind.Gameplay.Input.Judgement
             { get; set; }
         public bool IsInitialized => session != null;
         public bool IsAutoPlayEnabled { get; private set; }
+        /// <summary>Sticky for the current attempt; only a fresh start clears it.</summary>
+        public bool UsedAutoPlayInCurrentAttempt { get; private set; }
         public int PendingNoteCount => session?.PendingNoteCount ?? 0;
         public double ChartOffsetMs => chartOffsetMs;
         public double UserOffsetMs => userOffsetMs;
@@ -183,6 +185,8 @@ namespace REmind.Gameplay.Input.Judgement
                     }
                     timelineTimeMs = Math.Max(timelineTimeMs, autoTime);
                     judgementTimeMs = autoTime;
+                    if (IsAutoPlayEnabled)
+                        UsedAutoPlayInCurrentAttempt = true;
                     session.ProcessAutomatic(autoTime, IsAutoPlayEnabled);
                     lastAutomaticTimeMs = autoTime;
                 }
@@ -235,6 +239,11 @@ namespace REmind.Gameplay.Input.Judgement
         public void SetAutoPlayEnabled(bool value)
         {
             IsAutoPlayEnabled = value;
+            if (value && gameManager &&
+                (gameManager.PlaybackState == PlaybackState.Playing ||
+                 gameManager.PlaybackState == PlaybackState.Paused ||
+                 gameManager.PlaybackState == PlaybackState.Finished))
+                UsedAutoPlayInCurrentAttempt = true;
         }
 
         public bool RegisterNoteView(string noteId, GameObject noteView)
@@ -276,6 +285,7 @@ namespace REmind.Gameplay.Input.Judgement
             judgementTimeMs = 0d;
             LastTimelineError = null;
             DiscardedLateInputCount = 0;
+            UsedAutoPlayInCurrentAttempt = false;
             chart = null;
             session = null;
             chartOffsetMs = 0d;
@@ -296,6 +306,8 @@ namespace REmind.Gameplay.Input.Judgement
 
         private void HandlePlaybackStarted(double songTimeMs)
         {
+            if (gameManager.GamePlay.StartReason != PlaybackStartReason.Resume)
+                UsedAutoPlayInCurrentAttempt = IsAutoPlayEnabled;
             if (gameManager.GamePlay.StartReason == PlaybackStartReason.Resume &&
                 session != null && inputRouter != null)
                 session.BreakReleasedHolds(inputRouter.IsLanePressed);

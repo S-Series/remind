@@ -1,5 +1,7 @@
+using System;
 using REmind.Common.UI;
 using REmind.Gameplay.Chart;
+using REmind.Gameplay.Characters;
 using REmind.Gameplay.Input.Judgement;
 using TMPro;
 using UnityEngine;
@@ -40,6 +42,7 @@ namespace REmind.Gameplay.Demo
         [SerializeField] private TMP_Text resultTitle;
         [SerializeField] private TMP_Text resultDetail;
         [SerializeField] private TMP_Text errorDetail;
+        [SerializeField] private TMP_Text startNotice;
 
         private Screen screen = Screen.Loading;
         private bool autoPlay;
@@ -50,6 +53,20 @@ namespace REmind.Gameplay.Demo
         private int maxCombo;
         private int lastPauseTransitionFrame = -1;
         private bool resultDispatched;
+        private string startError;
+        private float startNoticeUntil;
+        private GameAttemptStartSnapshot activeAttempt;
+        private GameAttemptStartSnapshot preparedAttempt;
+        private CharacterAbilityDefinition activeAbilitySource;
+        private GameRuleConfig activeRuleSource;
+        private CharacterAbilityDefinition preparedAbilitySource;
+        private GameRuleConfig preparedRuleSource;
+        private string preparedMusicId;
+        private string preparedDifficultyId;
+        private GameRule.SessionConfigChange pendingRuleChange;
+
+        public GameAttemptStartSnapshot CurrentAttempt => activeAttempt;
+        public string LastStartError => startError;
 
         private void Awake()
         {
@@ -64,18 +81,53 @@ namespace REmind.Gameplay.Demo
         {
             if (judgementSystem) judgementSystem.NoteJudged += OnNoteJudged;
             if (sessionState) sessionState.StateChanged += OnSessionStateChanged;
+            if (gameManager && gameManager.GamePlay)
+            {
+                gameManager.GamePlay.PlaybackStarting += HandlePlaybackStarting;
+                gameManager.GamePlay.PlaybackCommitting += HandlePlaybackCommitting;
+                gameManager.GamePlay.PlaybackStarted += HandlePlaybackStarted;
+                gameManager.GamePlay.PlaybackStartAborted += HandlePlaybackStartAborted;
+            }
         }
 
         private void OnDisable()
         {
             if (judgementSystem) judgementSystem.NoteJudged -= OnNoteJudged;
             if (sessionState) sessionState.StateChanged -= OnSessionStateChanged;
+            if (gameManager && gameManager.GamePlay)
+            {
+                gameManager.GamePlay.PlaybackStarting -= HandlePlaybackStarting;
+                gameManager.GamePlay.PlaybackCommitting -= HandlePlaybackCommitting;
+                gameManager.GamePlay.PlaybackStarted -= HandlePlaybackStarted;
+                gameManager.GamePlay.PlaybackStartAborted -= HandlePlaybackStartAborted;
+            }
+            pendingRuleChange?.Rollback();
+            pendingRuleChange = null;
+            gameManager?.StopGame();
+            judgementSystem?.ResetJudgements(false);
+            if (gameManager && gameManager.GameRule)
+                gameManager.GameRule.ClearSessionConfig();
+            if (activeAttempt != null && AppRoot.Current)
+                AppRoot.Current.EndAttempt(activeAttempt.AttemptId);
+            activeAttempt = null;
+            activeAbilitySource = null;
+            activeRuleSource = null;
+            ClearPreparedStart();
+            resultDispatched = true;
+            ResetCounts();
+            startError = null;
+            ClearStartNotice();
+            screen = Screen.Loading;
         }
 
         private void Start() => Show(Screen.Loading);
 
         private void Update()
         {
+            if (startNotice && startNotice.gameObject.activeSelf &&
+                Time.unscaledTime >= startNoticeUntil)
+                startNotice.gameObject.SetActive(false);
+
             if (screen == Screen.Loading)
             {
                 if (notePresenter && notePresenter.IsReady &&
@@ -127,13 +179,11 @@ namespace REmind.Gameplay.Demo
 
         public void StartSong()
         {
-            autoPlay = false;
             BeginSong(false);
         }
 
         public void StartAutoSong()
         {
-            autoPlay = true;
             BeginSong(true);
         }
 
@@ -155,6 +205,8 @@ namespace REmind.Gameplay.Demo
                 gameManager && gameManager.ResumeGame())
             {
                 lastPauseTransitionFrame = Time.frameCount;
+                ClearStartNotice();
+                startError = null;
                 Show(Screen.Playing);
             }
         }
@@ -162,15 +214,13 @@ namespace REmind.Gameplay.Demo
         public void Restart()
         {
             if (!gameManager) return;
-            resultDispatched = false;
-            ResetCounts();
             notePresenter?.SetAutoPlayEnabled(autoPlay);
-            Show(gameManager.RestartGame() ? Screen.Playing : Screen.Error);
+            PresentStartOutcome(gameManager.RestartGame());
         }
 
         public void ReturnToSelect()
         {
-            gameManager?.StopGame();
+            StopAttempt();
             if (AppRoot.Current && AppRoot.Current.TryGetSelectedSong(out _))
             {
                 AppRoot.NavigateToScene("MusicSelect");
@@ -183,22 +233,58 @@ namespace REmind.Gameplay.Demo
 
         public void ReturnToMusic()
         {
-            gameManager?.StopGame();
+            StopAttempt();
             AppRoot.NavigateToScene("MusicSelect");
         }
 
         private void BeginSong(bool enableAutoPlay)
         {
-            if (!notePresenter || !notePresenter.IsReady || !gameManager) return;
-            resultDispatched = false;
-            ResetCounts();
+            if (!notePresenter || !notePresenter.IsReady || !gameManager ||
+                gameManager.PlaybackState == PlaybackState.Playing ||
+                gameManager.PlaybackState == PlaybackState.Paused) return;
+            autoPlay = enableAutoPlay;
             notePresenter.SetAutoPlayEnabled(enableAutoPlay);
-            Show(gameManager.StartGame() ? Screen.Playing : Screen.Error);
+            PresentStartOutcome(gameManager.StartGame());
+        }
+
+        private void PresentStartOutcome(bool started)
+        {
+            if (started)
+            {
+                ClearStartNotice();
+                Show(Screen.Playing);
+                return;
+            }
+
+            Debug.LogWarning("Gameplay start was rejected: " +
+                (string.IsNullOrEmpty(startError) ? "Unknown reason." : startError),
+                this);
+
+            if (gameManager.PlaybackState == PlaybackState.Playing ||
+                gameManager.PlaybackState == PlaybackState.Paused)
+            {
+                Show(gameManager.PlaybackState == PlaybackState.Playing
+                    ? Screen.Playing : Screen.Paused);
+                if (startNotice)
+                {
+                    startNotice.text = string.IsNullOrEmpty(startError)
+                        ? "다시 시작할 수 없습니다."
+                        : startError;
+                    startNoticeUntil = Time.unscaledTime + 4f;
+                    startNotice.gameObject.SetActive(true);
+                }
+                return;
+            }
+
+            ClearStartNotice();
+            Show(Screen.Error);
         }
 
         private void Show(Screen next)
         {
             screen = next;
+            if (next != Screen.Playing && next != Screen.Paused)
+                ClearStartNotice();
             navigation?.Clear();
             SetVisible(loadingPanel, next == Screen.Loading);
             SetVisible(selectionPanel, next == Screen.Select);
@@ -229,7 +315,9 @@ namespace REmind.Gameplay.Demo
             else if (next == Screen.Error)
             {
                 if (errorDetail)
-                    errorDetail.text = notePresenter &&
+                    errorDetail.text = !string.IsNullOrEmpty(startError)
+                        ? startError
+                        : notePresenter &&
                         !string.IsNullOrEmpty(notePresenter.LastError)
                             ? notePresenter.LastError
                             : chartSession && !string.IsNullOrEmpty(chartSession.LastError)
@@ -275,25 +363,193 @@ namespace REmind.Gameplay.Demo
         {
             if (resultDispatched) return;
             resultDispatched = true;
-            if (AppRoot.Current &&
-                AppRoot.Current.TryGetSelectedSong(out AppRoot.SongSelection selection) &&
+            if (AppRoot.Current && activeAttempt != null &&
                 chartSession && chartSession.CurrentChart != null &&
-                sessionState && gameManager && gameManager.GameRule != null &&
-                selection.MusicId == chartSession.CurrentChart.Metadata.MusicId &&
-                selection.DifficultyId == chartSession.CurrentChart.Metadata.DifficultyId)
+                sessionState && judgementSystem && gameManager &&
+                gameManager.GameRule != null &&
+                activeAttempt.MusicId == chartSession.CurrentChart.Metadata.MusicId &&
+                activeAttempt.DifficultyId == chartSession.CurrentChart.Metadata.DifficultyId)
             {
                 var result = new GameResultSnapshot(
-                    selection.MusicId, selection.DifficultyId,
+                    activeAttempt.MusicId, activeAttempt.DifficultyId,
                     sessionState.CurrentScore, gameManager.GameRule.MaxScore,
                     gameManager.GameRule.GetRank(sessionState.CurrentScore),
                     perfect, great, good, miss, maxCombo,
                     sessionState.TotalNoteCount, sessionState.IsCleared,
-                    sessionState.IsFailed, autoPlay);
+                    sessionState.IsFailed,
+                    activeAttempt.IsAutoPlay ||
+                        judgementSystem.UsedAutoPlayInCurrentAttempt,
+                    activeAttempt);
                 AppRoot.Current.PublishResult(result);
                 AppRoot.NavigateToScene("Result");
                 return;
             }
             Show(Screen.Result);
+        }
+
+        private bool HandlePlaybackStarting(double songTimeMs)
+        {
+            if (gameManager.GamePlay.StartReason == PlaybackStartReason.Resume)
+                return true;
+
+            startError = null;
+            preparedAttempt = null;
+            if (!chartSession || chartSession.CurrentChart == null ||
+                !gameManager || !gameManager.GameRule ||
+                pendingRuleChange != null)
+                return RejectStart("게임을 시작할 준비가 되지 않았습니다. 곡 선택으로 돌아가 다시 시도해주세요.");
+
+            string musicId = chartSession.CurrentChart.Metadata.MusicId;
+            string difficultyId = chartSession.CurrentChart.Metadata.DifficultyId;
+            CharacterAbilityDefinition ability = null;
+            GameRuleConfig selectedRule = null;
+            AppRoot.SongSelection selection = default;
+            bool hasSelection = AppRoot.Current &&
+                AppRoot.Current.TryGetSelectedSong(out selection);
+            bool selectionMatchesChart = hasSelection &&
+                string.Equals(selection.MusicId, musicId, StringComparison.Ordinal) &&
+                string.Equals(selection.DifficultyId, difficultyId, StringComparison.Ordinal);
+            if (selectionMatchesChart)
+                AppRoot.Current.TryGetSelectedPlayConditions(
+                    out ability, out selectedRule);
+            else if (gameManager.GamePlay.StartReason == PlaybackStartReason.Restart &&
+                     activeAttempt != null &&
+                     string.Equals(activeAttempt.MusicId, musicId,
+                         StringComparison.Ordinal) &&
+                     string.Equals(activeAttempt.DifficultyId, difficultyId,
+                         StringComparison.Ordinal))
+            {
+                // A pending selection for another song cannot change the chart
+                // that Restart is actually going to replay.
+                ability = activeAbilitySource;
+                selectedRule = activeRuleSource;
+            }
+            else if (hasSelection)
+                return RejectStart(
+                    "선택한 곡이 준비된 곡과 다릅니다. 곡 선택으로 돌아가 다시 시도해주세요.");
+
+            try
+            {
+                GameRule rule = gameManager.GameRule;
+                if (ability != null && !selectedRule)
+                    return RejectStart(
+                        "선택한 캐릭터의 게이지 규칙이 없습니다. 곡 선택으로 돌아가 다시 시도해주세요.");
+                GameRuleConfig source = selectedRule
+                    ? selectedRule : rule.DefaultConfig;
+                if (!source)
+                    return RejectStart("게이지 규칙이 없습니다. 곡 선택으로 돌아가 다시 시도해주세요.");
+                source.ValidateForSession();
+                ability?.FreezeForStart(source);
+
+                pendingRuleChange = rule.BeginSessionConfigChange(source);
+
+                preparedAbilitySource = ability;
+                preparedRuleSource = selectedRule;
+                preparedMusicId = musicId;
+                preparedDifficultyId = difficultyId;
+                return true;
+            }
+            catch (Exception exception)
+            {
+                pendingRuleChange?.Rollback();
+                pendingRuleChange = null;
+                Debug.LogError("Game start validation failed: " + exception,
+                    this);
+                return RejectStart("선택한 캐릭터와 게이지 규칙을 확인할 수 없습니다. 곡 선택으로 돌아가 다시 시도해주세요.");
+            }
+        }
+
+        private bool HandlePlaybackCommitting(double songTimeMs)
+        {
+            if (gameManager.GamePlay.StartReason == PlaybackStartReason.Resume)
+                return true;
+            if (string.IsNullOrEmpty(preparedMusicId) ||
+                string.IsNullOrEmpty(preparedDifficultyId))
+                return RejectStart("게임을 시작할 준비가 되지 않았습니다. 곡 선택으로 돌아가 다시 시도해주세요.");
+
+            try
+            {
+                pendingRuleChange?.Commit();
+                GameRuleConfig committed = gameManager.GameRule.Config;
+                CharacterGaugeRuleSnapshot gauge =
+                    CharacterGaugeRuleSnapshot.Capture(committed);
+                CharacterAbilityStartSnapshot character =
+                    preparedAbilitySource?.FreezeForStart(committed);
+                preparedAttempt = new GameAttemptStartSnapshot(
+                    Guid.NewGuid(), preparedMusicId, preparedDifficultyId,
+                    autoPlay, gauge, character);
+                return true;
+            }
+            catch (Exception exception)
+            {
+                pendingRuleChange?.Rollback();
+                pendingRuleChange = null;
+                preparedAttempt = null;
+                Debug.LogError("Game start commit failed: " + exception,
+                    this);
+                return RejectStart("게임 시작 중 문제가 발생했습니다. 곡 선택으로 돌아가 다시 시도해주세요.");
+            }
+        }
+
+        private void HandlePlaybackStarted(double songTimeMs)
+        {
+            if (gameManager.GamePlay.StartReason == PlaybackStartReason.Resume)
+                return;
+
+            pendingRuleChange?.Complete();
+            pendingRuleChange = null;
+            activeAttempt = preparedAttempt;
+            activeAbilitySource = preparedAbilitySource;
+            activeRuleSource = preparedRuleSource;
+            ClearPreparedStart();
+            if (AppRoot.Current) AppRoot.Current.ActivateAttempt(activeAttempt);
+            resultDispatched = false;
+            ResetCounts();
+            startError = null;
+            ClearStartNotice();
+        }
+
+        private void HandlePlaybackStartAborted(double songTimeMs)
+        {
+            pendingRuleChange?.Rollback();
+            pendingRuleChange = null;
+            ClearPreparedStart();
+        }
+
+        private void ClearPreparedStart()
+        {
+            preparedAttempt = null;
+            preparedAbilitySource = null;
+            preparedRuleSource = null;
+            preparedMusicId = null;
+            preparedDifficultyId = null;
+        }
+
+        private bool RejectStart(string error)
+        {
+            startError = string.IsNullOrWhiteSpace(error)
+                ? "Could not prepare the gameplay start."
+                : error;
+            return false;
+        }
+
+        private void ClearStartNotice()
+        {
+            if (startNotice) startNotice.gameObject.SetActive(false);
+        }
+
+        private void StopAttempt()
+        {
+            gameManager?.StopGame();
+            if (activeAttempt != null && AppRoot.Current)
+                AppRoot.Current.EndAttempt(activeAttempt.AttemptId);
+            activeAttempt = null;
+            activeAbilitySource = null;
+            activeRuleSource = null;
+            resultDispatched = true;
+            ClearStartNotice();
+            if (gameManager && gameManager.GameRule)
+                gameManager.GameRule.ClearSessionConfig();
         }
 
         private void ResetCounts()

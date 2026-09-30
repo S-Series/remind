@@ -35,7 +35,7 @@ public sealed class GamePlay : MonoBehaviour
     public event Action<double> PlaybackStartAborted;
 
     public PlaybackState State { get; private set; } = PlaybackState.Empty;
-    public AudioClip CurrentSong => audioSource != null ? audioSource.clip : null;
+    public AudioClip CurrentSong => audioSource ? audioSource.clip : null;
     public bool IsPlaying => State == PlaybackState.Playing;
     public bool IsStartInProgress => startInProgress;
     public PlaybackStartReason StartReason { get; private set; } =
@@ -133,10 +133,14 @@ public sealed class GamePlay : MonoBehaviour
 
     private void Update()
     {
-        if (audioSource)
-            audioSource.volume = baseSongVolume *
-                (REmind.Gameplay.AppRoot.Current
-                    ? REmind.Gameplay.AppRoot.Current.MusicGain : 1f);
+        if (!audioSource)
+        {
+            if (State != PlaybackState.Empty) Stop();
+            return;
+        }
+        audioSource.volume = baseSongVolume *
+            (REmind.Gameplay.AppRoot.Current
+                ? REmind.Gameplay.AppRoot.Current.MusicGain : 1f);
         if (State != PlaybackState.Playing || SongTimeMs < SongDurationMs)
         {
             return;
@@ -222,6 +226,12 @@ public sealed class GamePlay : MonoBehaviour
             return false;
         }
 
+        if (!audioSource)
+        {
+            Stop();
+            return false;
+        }
+
         heldSongTimeMs = Clamp(SongTimeMs, 0d, SongDurationMs);
         audioSource.Stop();
         SetState(PlaybackState.Paused);
@@ -274,15 +284,17 @@ public sealed class GamePlay : MonoBehaviour
     {
         if (startInProgress)
             startCancellationRequested = true;
-        audioSource.Stop();
-        if (CurrentSong != null)
+        AudioSource currentSource = audioSource;
+        AudioClip song = currentSource ? currentSource.clip : null;
+        if (currentSource)
         {
-            audioSource.timeSamples = 0;
+            currentSource.Stop();
+            if (song) currentSource.timeSamples = 0;
         }
 
         heldSongTimeMs = 0d;
         scheduledSongTimeMs = 0d;
-        SetState(CurrentSong == null ? PlaybackState.Empty : PlaybackState.Ready);
+        SetState(song ? PlaybackState.Ready : PlaybackState.Empty);
     }
 
     private bool ScheduleFrom(double songTimeMs, PlaybackStartReason reason)

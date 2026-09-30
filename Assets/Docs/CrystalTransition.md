@@ -11,7 +11,7 @@ uGUI 이미지, 앞뒤 궤도 mesh, 부드러운 halo shader와 Animation Clip�
 
 - 미리보기: **REmind → Crystal Transition → Preview**
 - 편집: 프리팹의 Inspector / Unity Animation 창
-- 씬: `Assets/Scenes/prev/ReMind_CrystalPreview.unity`
+- 씬: `Assets/Scenes/prev/CrystalPreview.unity`
 - 애니메이션: `Assets/Art/Animations/ReMind_CrystalTransition.anim`
 - 애니메이션은 고정 속성을 프리팹에 두고 불필요한 중간 키를 줄인 상태다.
 - 텍스처: `Assets/Art/Transitions/CrystalCompass/Textures`

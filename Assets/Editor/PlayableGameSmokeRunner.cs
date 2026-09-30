@@ -7,6 +7,7 @@ using REmind.Gameplay.Chart;
 using REmind.Gameplay.Demo;
 using REmind.Gameplay.Input.Judgement;
 using REmind.Gameplay.Input.Routing;
+using REmind.Gameplay.Characters;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -24,6 +25,10 @@ public static class PlayableGameSmokeRunner
     private const string ActiveKey = "REmind.GamePlaySmoke.Active";
     private const string DataPathKey = "REmind.GamePlaySmoke.DataPath";
     private const string SettingsPathKey = "REmind.GamePlaySmoke.SettingsPath";
+    private const string HardKey = "REmind.GamePlaySmoke.WithHard";
+    private const string HardRulePath =
+        "Assets/Settings/Gameplay/Rules/DevelopmentHardGameRuleConfig.asset";
+    private enum HardPhase { None, Select, Start, Resume, Retry, Result }
     private static readonly string[] SongIds = { "designant", "i" };
     private static readonly string[] SongTitles = { "Designant", "I" };
     private static readonly string[] TemporaryScreens =
@@ -53,7 +58,23 @@ public static class PlayableGameSmokeRunner
     private static bool waitingForPauseResume;
     private static int pauseOpenedFrame;
     private static bool checkingFailedResult;
+    private static bool checkedNormalIsolation;
     private static double expectedScore;
+    private static HardPhase hardPhase;
+    private static GameRuleConfig hardRuleSource;
+    private static CharacterAbilityDefinition hardAbility;
+    private static GameAttemptStartSnapshot hardFirstAttempt;
+    private static GameAttemptStartSnapshot hardRetryAttempt;
+    private static GameResultSnapshot hardResult;
+    private static int hardPauseFrame;
+    private static GameRuleConfig hardLiveConfig;
+    private static int hardObservedMisses;
+    private static string hardJudgementError;
+    private static GamePlay hardCapturePlayback;
+    private static GameAttemptStartSnapshot hardAttemptAtStart;
+    private static double hardHealthAtStart;
+    private static int hardStartCaptureCount;
+    private static double hardHealthBeforePause;
 
     static PlayableGameSmokeRunner()
     {
@@ -63,6 +84,7 @@ public static class PlayableGameSmokeRunner
 
     public static void Run()
     {
+        SessionState.SetBool(HardKey, false);
         frames = 0;
         bootstrapReadyFrames = 0;
         bootstrapContinueRequested = false;
@@ -88,7 +110,23 @@ public static class PlayableGameSmokeRunner
         waitingForPauseResume = false;
         pauseOpenedFrame = -1;
         checkingFailedResult = false;
+        checkedNormalIsolation = false;
         expectedScore = 0d;
+        hardPhase = HardPhase.None;
+        hardRuleSource = null;
+        hardAbility = null;
+        hardFirstAttempt = null;
+        hardRetryAttempt = null;
+        hardResult = null;
+        hardPauseFrame = -1;
+        hardLiveConfig = null;
+        hardObservedMisses = 0;
+        hardJudgementError = null;
+        hardCapturePlayback = null;
+        hardAttemptAtStart = null;
+        hardHealthAtStart = double.NaN;
+        hardStartCaptureCount = 0;
+        hardHealthBeforePause = double.NaN;
         SessionState.SetString(DataPathKey, Path.Combine(Path.GetTempPath(),
             "remind-flow-smoke-" + Guid.NewGuid().ToString("N") + ".json"));
         SessionState.SetString(SettingsPathKey, Path.Combine(Path.GetTempPath(),
@@ -99,6 +137,13 @@ public static class PlayableGameSmokeRunner
         EditorApplication.update += Tick;
         Debug.Log("GAME_PLAYMODE_SMOKE_STARTED");
         EditorApplication.isPlaying = true;
+    }
+
+    /// <summary>Runs the existing two-song flow, then a selected Hard attempt.</summary>
+    public static void RunWithHard()
+    {
+        Run();
+        SessionState.SetBool(HardKey, true);
     }
 
     private static void Tick()
@@ -165,6 +210,11 @@ public static class PlayableGameSmokeRunner
                 checkingTemporaryScreen = false;
                 return;
             }
+            if (hardPhase != HardPhase.None)
+            {
+                TickHard();
+                return;
+            }
             if (returningToSelect)
             {
                 if (SceneManager.GetActiveScene().name != "MusicSelect") return;
@@ -174,26 +224,27 @@ public static class PlayableGameSmokeRunner
                     returned.DifficultyId != "hard")
                     throw new InvalidOperationException(
                         "Gameplay did not preserve the selected song on return.");
-                if (!AppRoot.Current.TryGetBestRecord(SongIds[songIndex], "hard",
-                        out double bestScore, out _) ||
-                    Math.Abs(bestScore - expectedScore) > 0.001d)
-                    throw new InvalidOperationException(
-                        "Result score was not recorded in local player data.");
                 LocalPlayerDataStore reloaded = LocalPlayerDataStore.Load(
                     SessionState.GetString(DataPathKey, string.Empty));
-                if (!reloaded.TryGetBestRecord(SongIds[songIndex], "hard",
-                        out double savedScore, out _) ||
-                    Math.Abs(savedScore - expectedScore) > 0.001d ||
+                bool hasBest = AppRoot.Current.TryGetBestRecord(
+                    SongIds[songIndex], "hard", out double bestScore, out _);
+                bool hasSavedBest = reloaded.TryGetBestRecord(
+                    SongIds[songIndex], "hard", out double savedScore, out _);
+                if (hasBest != (songIndex == 0) ||
+                    hasSavedBest != (songIndex == 0) ||
+                    songIndex == 0 && (bestScore != 0d || savedScore != 0d) ||
                     AppRoot.Current.TryTakeResult(out _))
                     throw new InvalidOperationException(
-                        "Returned Music Select retained a result or lost its saved record.");
-                if (!reloaded.TryGetProgress(SongIds[songIndex], "hard",
-                        out ChartProgressSnapshot progress) ||
-                    progress.PlayCount != (songIndex == 0 ? 2 : 1) ||
-                    !progress.Cleared || progress.MaxCombo <= 0 ||
-                    reloaded.MemoryFragmentCount != songIndex + 1)
+                        "Auto-used play entered records or lost the prior failed record.");
+                bool hasProgress = reloaded.TryGetProgress(
+                    SongIds[songIndex], "hard",
+                    out ChartProgressSnapshot progress);
+                if (hasProgress != (songIndex == 0) ||
+                    songIndex == 0 && (progress.PlayCount != 1 ||
+                        progress.Cleared || progress.MaxCombo != 0) ||
+                    reloaded.MemoryFragmentCount != 0)
                     throw new InvalidOperationException(
-                        "Local progression did not survive Result and scene return.");
+                        "Auto-used play changed saved progression.");
                 if (songIndex == 0 &&
                     (!AppRoot.Current.IsFavorite(SongIds[0]) ||
                      !reloaded.IsFavorite(SongIds[0])))
@@ -214,6 +265,13 @@ public static class PlayableGameSmokeRunner
                     checkingResult = false;
                     returningToSelect = false;
                     expectedScore = 0d;
+                    return;
+                }
+                if (SessionState.GetBool(HardKey, false))
+                {
+                    returningToSelect = false;
+                    startedSelection = false;
+                    hardPhase = HardPhase.Select;
                     return;
                 }
                 Debug.Log("GAME_PLAYMODE_SMOKE_PASSED");
@@ -281,19 +339,20 @@ public static class PlayableGameSmokeRunner
                 GameObject rewardPanel = (GameObject)typeof(ResultScenePresenter)
                     .GetField("rewardSection", BindingFlags.Instance |
                         BindingFlags.NonPublic).GetValue(result);
-                TMP_Text rewardLabel = (TMP_Text)typeof(ResultScenePresenter)
-                    .GetField("rewardLabel", BindingFlags.Instance |
+                TMP_Text rankCaption = (TMP_Text)typeof(ResultScenePresenter)
+                    .GetField("rankCaption", BindingFlags.Instance |
                         BindingFlags.NonPublic).GetValue(result);
-                if (!AppRoot.Current.LastResultWasFirstClear ||
-                    !progressPanel || !progressPanel.activeSelf ||
-                    !progressText || !progressText.text.Contains("누적 " +
-                        (songIndex == 0 ? 2 : 1) + "회") ||
-                    !rewardPanel || !rewardPanel.activeSelf ||
-                    !rewardLabel || !rewardLabel.text.Contains(
-                        "보유 " + (songIndex + 1)) ||
-                    AppRoot.Current.MemoryFragmentCount != songIndex + 1)
+                if (!rankCaption || rankCaption.text != "AUTO PLAY" ||
+                    AppRoot.Current.LastResultWasFirstClear ||
+                    AppRoot.Current.LastResultIsNewRecord ||
+                    !progressPanel ||
+                    progressPanel.activeSelf != (songIndex == 0) ||
+                    songIndex == 0 && (!progressText ||
+                        !progressText.text.Contains("누적 1회")) ||
+                    rewardPanel && rewardPanel.activeSelf ||
+                    AppRoot.Current.MemoryFragmentCount != 0)
                     throw new InvalidOperationException(
-                        "Result did not show first-clear reward and saved progress.");
+                        "Auto-used Result changed records, progress, or reward.");
                 actions.MusicSelect();
                 returningToSelect = true;
                 return;
@@ -600,6 +659,40 @@ public static class PlayableGameSmokeRunner
                     "Playback ends before the final chart note.");
             GameFlowController flow = UnityEngine.Object
                 .FindFirstObjectByType<GameFlowController>();
+            if (!checkedNormalIsolation)
+            {
+                GameRule rule = manager.GameRule;
+                GameRuleConfig originalDefault = rule.DefaultConfig;
+                GameRuleConfig active = rule.Config;
+                if (!rule.HasSessionConfig || !originalDefault ||
+                    ReferenceEquals(originalDefault, active))
+                    throw new InvalidOperationException(
+                        "Normal play did not freeze its default rule at start.");
+                GameRuleConfig editedSource = UnityEngine.Object.Instantiate(
+                    originalDefault);
+                editedSource.hideFlags = HideFlags.HideAndDontSave;
+                double currentHealth = state.CurrentHealth;
+                FieldInfo defaultField = typeof(GameRule).GetField("config",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                try
+                {
+                    defaultField.SetValue(rule, editedSource);
+                    typeof(GameRuleConfig).GetField("initialHealth",
+                        BindingFlags.Instance | BindingFlags.NonPublic)
+                        .SetValue(editedSource, 1);
+                    if (!ReferenceEquals(rule.Config, active) ||
+                        rule.BaseInitialHealth != active.InitialHealth ||
+                        state.CurrentHealth != currentHealth)
+                        throw new InvalidOperationException(
+                            "An edited Normal source changed the live attempt.");
+                }
+                finally
+                {
+                    defaultField.SetValue(rule, originalDefault);
+                    UnityEngine.Object.Destroy(editedSource);
+                }
+                checkedNormalIsolation = true;
+            }
             if (waitingForPauseResume)
             {
                 if (Time.frameCount == pauseOpenedFrame) return;
@@ -607,6 +700,9 @@ public static class PlayableGameSmokeRunner
                 if (manager.PlaybackState != PlaybackState.Playing)
                     throw new InvalidOperationException(
                         "The pause menu did not resume on the next frame.");
+                if (!judgement.UsedAutoPlayInCurrentAttempt)
+                    throw new InvalidOperationException(
+                        "Resume cleared the current attempt's Auto Play history.");
                 flow.Pause();
                 if (manager.PlaybackState != PlaybackState.Playing)
                     throw new InvalidOperationException(
@@ -631,6 +727,11 @@ public static class PlayableGameSmokeRunner
             if (!waitingForPauseResume && manager.PlaybackState ==
                 PlaybackState.Playing && !checkedPauseResume[songIndex])
             {
+                judgement.SetAutoPlayEnabled(true);
+                judgement.SetAutoPlayEnabled(false);
+                if (!judgement.UsedAutoPlayInCurrentAttempt)
+                    throw new InvalidOperationException(
+                        "Turning Auto Play off erased its use in this attempt.");
                 flow.Pause();
                 flow.Resume();
                 if (manager.PlaybackState != PlaybackState.Paused)
@@ -645,8 +746,15 @@ public static class PlayableGameSmokeRunner
                 !manager.ResumeGame() || !manager.RestartGame())
                 throw new InvalidOperationException(
                     "Play/Pause/Resume/Restart transition failed.");
+            if (judgement.UsedAutoPlayInCurrentAttempt)
+                throw new InvalidOperationException(
+                    "A successful Restart inherited Auto Play usage.");
             judgement.SetAutoPlayEnabled(true);
             judgement.ProcessFrame(manager.GamePlay.SongDurationMs + 1000d);
+            judgement.SetAutoPlayEnabled(false);
+            if (!judgement.UsedAutoPlayInCurrentAttempt)
+                throw new InvalidOperationException(
+                    "Auto Play usage was lost after toggling it off.");
             if (judgement.LastTimelineError != null ||
                 judgement.PendingNoteCount != 0)
                 throw new InvalidOperationException(
@@ -661,12 +769,436 @@ public static class PlayableGameSmokeRunner
             typeof(GameFlowController).GetMethod("FinishSong",
                 BindingFlags.Instance | BindingFlags.NonPublic)
                 .Invoke(flow, null);
+            GameResultSnapshot autoResult = (GameResultSnapshot)typeof(AppRoot)
+                .GetField("pendingResult", BindingFlags.Instance |
+                    BindingFlags.NonPublic).GetValue(AppRoot.Current);
+            if (autoResult == null || !autoResult.IsAutoPlay ||
+                autoResult.AttemptStart == null ||
+                autoResult.AttemptStart.IsAutoPlay)
+                throw new InvalidOperationException(
+                    "An attempt that used Auto Play was published as manual.");
         }
         catch (Exception exception)
         {
             Debug.LogException(exception);
             Complete(1);
         }
+    }
+
+    private static void CaptureHardSceneLoad(Scene scene, LoadSceneMode mode)
+    {
+        if (hardPhase != HardPhase.Start || scene.name != "Game") return;
+        SceneManager.sceneLoaded -= CaptureHardSceneLoad;
+        GameManager manager = UnityEngine.Object
+            .FindFirstObjectByType<GameManager>();
+        if (!manager || !manager.GamePlay) return;
+        hardCapturePlayback = manager.GamePlay;
+        hardCapturePlayback.PlaybackStarted += CaptureHardPlaybackStart;
+    }
+
+    private static void CaptureHardPlaybackStart(double songTimeMs)
+    {
+        if (hardPhase != HardPhase.Start ||
+            !hardCapturePlayback ||
+            hardCapturePlayback.StartReason != PlaybackStartReason.Play)
+            return;
+        hardStartCaptureCount++;
+        GameplaySessionState state = UnityEngine.Object
+            .FindFirstObjectByType<GameplaySessionState>();
+        GameFlowController flow = UnityEngine.Object
+            .FindFirstObjectByType<GameFlowController>();
+        hardHealthAtStart = state ? state.CurrentHealth : double.NaN;
+        hardAttemptAtStart = flow ? flow.CurrentAttempt : null;
+        hardCapturePlayback.PlaybackStarted -= CaptureHardPlaybackStart;
+        hardCapturePlayback = null;
+    }
+
+    private static void TickHard()
+    {
+        if (hardPhase == HardPhase.Select)
+        {
+            if (SceneManager.GetActiveScene().name != "MusicSelect") return;
+            GameRuleConfig asset = AssetDatabase.LoadAssetAtPath<GameRuleConfig>(
+                HardRulePath);
+            if (!asset) throw new InvalidOperationException(
+                "The development Hard gauge asset is missing.");
+            hardRuleSource = UnityEngine.Object.Instantiate(asset);
+            hardRuleSource.hideFlags = HideFlags.HideAndDontSave;
+            hardAbility = ExampleCharacterAbility.CreateHardWorldReward();
+            bool rejectedIncompleteSelection = false;
+            try { AppRoot.Current.SelectSong("i", "hard", hardAbility, null); }
+            catch (ArgumentException) { rejectedIncompleteSelection = true; }
+            if (!rejectedIncompleteSelection ||
+                !AppRoot.Current.TryGetSelectedSong(out AppRoot.SongSelection old) ||
+                old.MusicId != "i" || old.DifficultyId != "hard")
+                throw new InvalidOperationException(
+                    "An incomplete character selection changed the pending song.");
+            AppRoot.Current.SelectSong("i", "hard", hardAbility,
+                hardRuleSource);
+            SceneManager.sceneLoaded += CaptureHardSceneLoad;
+            if (!AppRoot.Current.TryStartSelectedGame())
+                throw new InvalidOperationException(
+                    "The selected Hard song did not start its Game transition.");
+            hardPhase = HardPhase.Start;
+            return;
+        }
+
+        if (hardPhase == HardPhase.Result)
+        {
+            if (SceneManager.GetActiveScene().name != "Result") return;
+            ResultScenePresenter presenter = UnityEngine.Object
+                .FindFirstObjectByType<ResultScenePresenter>();
+            if (!presenter) return;
+            TMP_Text caption = (TMP_Text)typeof(ResultScenePresenter)
+                .GetField("rankCaption", BindingFlags.Instance |
+                    BindingFlags.NonPublic).GetValue(presenter);
+            if (!caption || string.IsNullOrEmpty(caption.text)) return;
+            if (caption.text != "FAILED" || hardResult == null ||
+                !hardResult.IsFailed ||
+                !ReferenceEquals(hardResult.AttemptStart, hardRetryAttempt) ||
+                hardResult.AttemptStart.GaugeRule.InitialHealth != 80 ||
+                hardResult.AttemptStart.GaugeRule.MissHealthDelta != -20 ||
+                hardResult.AttemptStart.CharacterAbility?.CharacterId !=
+                    hardAbility.CharacterId || hardLiveConfig ||
+                AppRoot.Current.TryTakeResult(out _))
+                throw new InvalidOperationException(
+                    "The Hard result lost its attempt values after Game teardown.");
+            Debug.Log("GAME_HARD_PLAYMODE_SMOKE_PASSED");
+            Complete(0);
+            return;
+        }
+
+        if (SceneManager.GetActiveScene().name != "Game") return;
+        DemoPlayController play = UnityEngine.Object
+            .FindFirstObjectByType<DemoPlayController>();
+        GameFlowController flow = UnityEngine.Object
+            .FindFirstObjectByType<GameFlowController>();
+        GameManager manager = UnityEngine.Object
+            .FindFirstObjectByType<GameManager>();
+        GameplaySessionState state = UnityEngine.Object
+            .FindFirstObjectByType<GameplaySessionState>();
+        GameplayChartSessionController charts = UnityEngine.Object
+            .FindFirstObjectByType<GameplayChartSessionController>();
+        NoteJudgementSystem judgement = UnityEngine.Object
+            .FindFirstObjectByType<NoteJudgementSystem>();
+        if (!play || !play.IsReady || !flow || !manager || !state ||
+            !charts || !charts.IsPrepared || !judgement ||
+            manager.PlaybackState != PlaybackState.Playing &&
+            hardPhase != HardPhase.Resume) return;
+        if (charts.CurrentChart.Metadata.MusicId != "i" ||
+            charts.CurrentChart.Metadata.DifficultyId != "hard")
+            throw new InvalidOperationException(
+                "The Hard attempt did not load the selected chart.");
+
+        if (hardPhase == HardPhase.Start)
+        {
+            hardFirstAttempt = flow.CurrentAttempt;
+            hardLiveConfig = manager.GameRule.Config;
+            if (hardStartCaptureCount != 1 ||
+                !ReferenceEquals(hardAttemptAtStart, hardFirstAttempt) ||
+                hardHealthAtStart != 100d ||
+                hardFirstAttempt == null || hardFirstAttempt.AttemptId ==
+                    Guid.Empty || hardFirstAttempt.MusicId != "i" ||
+                hardFirstAttempt.DifficultyId != "hard" ||
+                hardFirstAttempt.IsAutoPlay ||
+                hardFirstAttempt.CharacterAbility?.CharacterId !=
+                    hardAbility.CharacterId ||
+                hardFirstAttempt.CharacterAbility.Stats.WorldProgressBonusPercent
+                    != 20 ||
+                hardFirstAttempt.CharacterAbility.Stats.RewardBonusPercent != 50 ||
+                hardFirstAttempt.GaugeRule.GaugeType != HealthGaugeType.Hard ||
+                hardFirstAttempt.GaugeRule.MaxHealth != 100 ||
+                hardFirstAttempt.GaugeRule.InitialHealth != 100 ||
+                hardFirstAttempt.GaugeRule.ClearHealth != 1 ||
+                hardFirstAttempt.GaugeRule.PerfectHealthDelta != 1 ||
+                hardFirstAttempt.GaugeRule.GreatHealthDelta != 1 ||
+                hardFirstAttempt.GaugeRule.GoodHealthDelta != -5 ||
+                hardFirstAttempt.GaugeRule.MissHealthDelta != -20 ||
+                !hardFirstAttempt.GaugeRule.FailImmediately ||
+                hardFirstAttempt.GaugeRule.ContinueAfterFail ||
+                ReferenceEquals(hardLiveConfig, hardRuleSource) ||
+                !manager.GameRule.HasSessionConfig)
+                throw new InvalidOperationException(
+                    "The Hard play did not freeze and activate its complete gauge. " +
+                    "Attempt=" + (hardFirstAttempt == null ? "null" :
+                        hardFirstAttempt.MusicId + "/" +
+                        hardFirstAttempt.DifficultyId + ", auto=" +
+                        hardFirstAttempt.IsAutoPlay + ", ability=" +
+                        hardFirstAttempt.CharacterAbility?.CharacterId +
+                        ", stats=" +
+                        hardFirstAttempt.CharacterAbility?.Stats
+                            .WorldProgressBonusPercent + "/" +
+                        hardFirstAttempt.CharacterAbility?.Stats
+                            .RewardBonusPercent +
+                        ", gauge=" + hardFirstAttempt.GaugeRule.GaugeType +
+                        ", max=" + hardFirstAttempt.GaugeRule.MaxHealth +
+                        ", initial=" +
+                        hardFirstAttempt.GaugeRule.InitialHealth +
+                        ", clear=" + hardFirstAttempt.GaugeRule.ClearHealth +
+                        ", deltas=" +
+                        hardFirstAttempt.GaugeRule.PerfectHealthDelta + "/" +
+                        hardFirstAttempt.GaugeRule.GreatHealthDelta + "/" +
+                        hardFirstAttempt.GaugeRule.GoodHealthDelta + "/" +
+                        hardFirstAttempt.GaugeRule.MissHealthDelta +
+                        ", immediate=" +
+                        hardFirstAttempt.GaugeRule.FailImmediately +
+                        ", continue=" +
+                        hardFirstAttempt.GaugeRule.ContinueAfterFail) +
+                    ", captured initial health=" + hardHealthAtStart +
+                    ", capture count=" + hardStartCaptureCount +
+                    ", live health=" + state.CurrentHealth +
+                    ", session copy=" + manager.GameRule.HasSessionConfig +
+                    ", same source=" +
+                    ReferenceEquals(hardLiveConfig, hardRuleSource));
+
+            // Both pending selection and its mutable source may change while
+            // the current attempt keeps the values captured at start.
+            typeof(GameRuleConfig).GetField("initialHealth",
+                BindingFlags.Instance | BindingFlags.NonPublic)
+                .SetValue(hardRuleSource, 80);
+            hardHealthBeforePause = state.CurrentHealth;
+            AppRoot.Current.SelectSong("designant", "hard", hardAbility,
+                hardRuleSource);
+            if (!ReferenceEquals(flow.CurrentAttempt, hardFirstAttempt) ||
+                !ReferenceEquals(manager.GameRule.Config, hardLiveConfig) ||
+                manager.GameRule.BaseInitialHealth != 100 ||
+                hardFirstAttempt.GaugeRule.InitialHealth != 100 ||
+                state.CurrentHealth != hardHealthBeforePause)
+                throw new InvalidOperationException(
+                    "A pending selection or source edit changed the live Hard attempt.");
+            AppRoot.Current.SelectSong("i", "hard", hardAbility,
+                hardRuleSource);
+            flow.Pause();
+            if (manager.PlaybackState != PlaybackState.Paused)
+                throw new InvalidOperationException("Hard play did not pause.");
+            hardPauseFrame = Time.frameCount;
+            hardPhase = HardPhase.Resume;
+            return;
+        }
+
+        if (hardPhase == HardPhase.Resume)
+        {
+            if (Time.frameCount == hardPauseFrame) return;
+            if (!ReferenceEquals(flow.CurrentAttempt, hardFirstAttempt) ||
+                state.CurrentHealth != hardHealthBeforePause)
+                throw new InvalidOperationException(
+                    "Pause changed the Hard attempt or health.");
+            flow.Resume();
+            if (manager.PlaybackState != PlaybackState.Playing ||
+                !ReferenceEquals(flow.CurrentAttempt, hardFirstAttempt) ||
+                state.CurrentHealth != hardHealthBeforePause)
+                throw new InvalidOperationException(
+                    "Resume created a new Hard attempt or reset its health.");
+            hardPhase = HardPhase.Retry;
+            return;
+        }
+
+        if (hardPhase == HardPhase.Retry)
+        {
+            typeof(GameRuleConfig).GetField("initialHealth",
+                BindingFlags.Instance | BindingFlags.NonPublic)
+                .SetValue(hardRuleSource, 101);
+            ExpectInvalidHardRuleStart(flow.Restart);
+            if (!ReferenceEquals(flow.CurrentAttempt, hardFirstAttempt) ||
+                !ReferenceEquals(manager.GameRule.Config, hardLiveConfig) ||
+                manager.GameRule.GaugeType != HealthGaugeType.Hard ||
+                manager.GameRule.BaseInitialHealth != 100 ||
+                state.CurrentHealth != hardHealthBeforePause ||
+                manager.PlaybackState != PlaybackState.Playing)
+                throw new InvalidOperationException(
+                    "A rejected Retry replaced the active Hard attempt or rule.");
+            AssertHardContinuesPlaying(flow);
+
+            typeof(GameRuleConfig).GetField("initialHealth",
+                BindingFlags.Instance | BindingFlags.NonPublic)
+                .SetValue(hardRuleSource, 80);
+            flow.Restart();
+            hardRetryAttempt = flow.CurrentAttempt;
+            hardLiveConfig = manager.GameRule.Config;
+            if (manager.PlaybackState != PlaybackState.Playing ||
+                hardRetryAttempt == null ||
+                hardRetryAttempt.AttemptId == hardFirstAttempt.AttemptId ||
+                hardRetryAttempt.GaugeRule.InitialHealth != 80 ||
+                hardRetryAttempt.GaugeRule.GaugeType != HealthGaugeType.Hard ||
+                state.CurrentHealth != 80d ||
+                state.JudgedNoteCount != 0 || state.CurrentScore != 0d)
+                throw new InvalidOperationException(
+                    "A successful Retry did not create a fresh Hard attempt.");
+
+            // Disabling the scene owner ends this session. Its old snapshot
+            // must not be accepted later as a newly completed result.
+            GameAttemptStartSnapshot endedAttempt = hardRetryAttempt;
+            flow.enabled = false;
+            if (flow.CurrentAttempt != null ||
+                manager.PlaybackState != PlaybackState.Ready ||
+                manager.GameRule.HasSessionConfig)
+                throw new InvalidOperationException(
+                    "Disabling GameFlow retained a live attempt or gauge.");
+            bool rejectedStaleResult = false;
+            try
+            {
+                AppRoot.Current.PublishResult(new GameResultSnapshot(
+                    "i", "hard", 0d, 1000000, RankGrade.D,
+                    0, 0, 0, 1, 0, state.TotalNoteCount,
+                    false, true, attemptStart: endedAttempt));
+            }
+            catch (InvalidOperationException) { rejectedStaleResult = true; }
+            if (!rejectedStaleResult)
+                throw new InvalidOperationException(
+                    "A completed result from an ended attempt was accepted.");
+            flow.enabled = true;
+            AppRoot.Current.SelectSong("designant", "hard", hardAbility,
+                hardRuleSource);
+            flow.StartSong();
+            if (flow.CurrentAttempt != null ||
+                manager.PlaybackState != PlaybackState.Ready)
+                throw new InvalidOperationException(
+                    "A mismatched song start created an attempt.");
+            AssertHardStartError(flow);
+            AppRoot.Current.SelectSong("i", "hard", hardAbility,
+                hardRuleSource);
+            typeof(GameRuleConfig).GetField("initialHealth",
+                BindingFlags.Instance | BindingFlags.NonPublic)
+                .SetValue(hardRuleSource, 101);
+            ExpectInvalidHardRuleStart(flow.StartSong);
+            if (flow.CurrentAttempt != null ||
+                manager.PlaybackState != PlaybackState.Ready)
+                throw new InvalidOperationException(
+                    "An invalid fresh start created a Hard attempt.");
+            AssertHardStartError(flow);
+            typeof(GameRuleConfig).GetField("initialHealth",
+                BindingFlags.Instance | BindingFlags.NonPublic)
+                .SetValue(hardRuleSource, 80);
+            flow.StartSong();
+            hardRetryAttempt = flow.CurrentAttempt;
+            hardLiveConfig = manager.GameRule.Config;
+            if (manager.PlaybackState != PlaybackState.Playing ||
+                hardRetryAttempt == null ||
+                hardRetryAttempt.AttemptId == endedAttempt.AttemptId ||
+                hardRetryAttempt.GaugeRule.InitialHealth != 80 ||
+                state.CurrentHealth != 80d)
+                throw new InvalidOperationException(
+                    "Reenabled GameFlow reused an ended attempt.");
+            GameAttemptStartSnapshot forgedStart = new GameAttemptStartSnapshot(
+                hardRetryAttempt.AttemptId, "i", "hard", false,
+                hardRetryAttempt.GaugeRule,
+                hardRetryAttempt.CharacterAbility);
+            bool rejectedForgedResult = false;
+            try
+            {
+                AppRoot.Current.PublishResult(new GameResultSnapshot(
+                    "i", "hard", 0d, 1000000, RankGrade.D,
+                    0, 0, 0, 1, 0, state.TotalNoteCount,
+                    false, true, attemptStart: forgedStart));
+            }
+            catch (InvalidOperationException) { rejectedForgedResult = true; }
+            if (!rejectedForgedResult)
+                throw new InvalidOperationException(
+                    "A different snapshot with the active attempt ID was accepted.");
+            hardObservedMisses = 0;
+            hardJudgementError = null;
+            judgement.NoteJudged += OnHardJudged;
+            try
+            {
+                judgement.ProcessFrame(manager.GamePlay.SongDurationMs + 1000d);
+            }
+            finally { judgement.NoteJudged -= OnHardJudged; }
+            if (hardJudgementError != null || hardObservedMisses < 4 ||
+                state.CurrentHealth != 0d || !state.IsFailed ||
+                manager.PlaybackState != PlaybackState.Ready)
+                throw new InvalidOperationException(
+                    "Hard Miss deltas or immediate failure differed: " +
+                    hardJudgementError);
+            typeof(GameFlowController).GetMethod("FinishSong",
+                BindingFlags.Instance | BindingFlags.NonPublic)
+                .Invoke(flow, null);
+            hardResult = (GameResultSnapshot)typeof(AppRoot).GetField(
+                "pendingResult", BindingFlags.Instance | BindingFlags.NonPublic)
+                .GetValue(AppRoot.Current);
+            if (hardResult == null ||
+                !ReferenceEquals(hardResult.AttemptStart, hardRetryAttempt))
+                throw new InvalidOperationException(
+                    "Hard failure did not publish its captured attempt.");
+            hardPhase = HardPhase.Result;
+        }
+    }
+
+    private static void ExpectInvalidHardRuleStart(Action start)
+    {
+        int expectedValidationLogs = 0;
+        string unexpectedLog = null;
+        Application.LogCallback capture = (condition, _, type) =>
+        {
+            if (type != LogType.Error && type != LogType.Exception) return;
+            if (type == LogType.Error && condition.StartsWith(
+                    "Game start validation failed:",
+                    StringComparison.Ordinal) && condition.Contains(
+                    "GameRuleConfig has invalid session values."))
+                expectedValidationLogs++;
+            else unexpectedLog = condition;
+        };
+        Application.logMessageReceived += capture;
+        try { start(); }
+        finally { Application.logMessageReceived -= capture; }
+        if (expectedValidationLogs != 1 || unexpectedLog != null)
+            throw new InvalidOperationException(
+                "The rejected Hard start logged an unexpected error: " +
+                unexpectedLog);
+    }
+
+    private static void AssertHardStartError(GameFlowController flow)
+    {
+        GameObject panel = (GameObject)typeof(GameFlowController).GetField(
+            "errorPanel", BindingFlags.Instance | BindingFlags.NonPublic)
+            .GetValue(flow);
+        TMP_Text detail = (TMP_Text)typeof(GameFlowController).GetField(
+            "errorDetail", BindingFlags.Instance | BindingFlags.NonPublic)
+            .GetValue(flow);
+        if (!panel || !panel.activeInHierarchy || !detail ||
+            string.IsNullOrWhiteSpace(detail.text) ||
+            panel.GetComponentsInChildren<Button>(true).Length == 0)
+            throw new InvalidOperationException(
+                "A rejected Hard start has no visible error or return action.");
+    }
+
+    private static void AssertHardContinuesPlaying(GameFlowController flow)
+    {
+        GameObject playCanvas = GameObject.Find("Play Canvas");
+        GameObject score = GameObject.Find("Score");
+        GameObject error = (GameObject)typeof(GameFlowController).GetField(
+            "errorPanel", BindingFlags.Instance | BindingFlags.NonPublic)
+            .GetValue(flow);
+        TMP_Text notice = (TMP_Text)typeof(GameFlowController).GetField(
+            "startNotice", BindingFlags.Instance | BindingFlags.NonPublic)
+            .GetValue(flow);
+        if (!playCanvas || !playCanvas.activeInHierarchy || !score ||
+            !score.activeInHierarchy || error && error.activeInHierarchy ||
+            string.IsNullOrWhiteSpace(flow.LastStartError) || !notice ||
+            !notice.gameObject.activeInHierarchy ||
+            notice.text != flow.LastStartError)
+            throw new InvalidOperationException(
+                "A rejected Retry hid playback or its start notice. " +
+                "playCanvas=" + (playCanvas ? playCanvas.activeInHierarchy :
+                    false) + ", score=" + (score ? score.activeInHierarchy :
+                    false) +
+                ", error=" + (error ? error.activeInHierarchy : false) +
+                ", lastError='" + flow.LastStartError +
+                "', notice=" + (notice ? notice.gameObject.activeInHierarchy :
+                    false) + ", noticeText='" + (notice ? notice.text :
+                    "missing") + "'.");
+    }
+
+    private static void OnHardJudged(NoteJudgementEvent judged)
+    {
+        if (judged.Result != JudgeResult.Miss) return;
+        hardObservedMisses++;
+        GameplaySessionState state = UnityEngine.Object
+            .FindFirstObjectByType<GameplaySessionState>();
+        double expected = Math.Max(0d, 80d - 20d * hardObservedMisses);
+        if (!state || state.CurrentHealth != expected)
+            hardJudgementError = "Miss " + hardObservedMisses +
+                " left Health " + (state ? state.CurrentHealth : -1d) +
+                ", expected " + expected;
     }
 
     private static Button FindButton(Component root, string name)
@@ -693,7 +1225,19 @@ public static class PlayableGameSmokeRunner
     private static void Complete(int code)
     {
         EditorApplication.update -= Tick;
+        SceneManager.sceneLoaded -= CaptureHardSceneLoad;
+        if (hardCapturePlayback)
+            hardCapturePlayback.PlaybackStarted -= CaptureHardPlaybackStart;
+        hardCapturePlayback = null;
         SessionState.SetBool(ActiveKey, false);
+        SessionState.SetBool(HardKey, false);
+        if (hardRuleSource)
+        {
+            if (EditorApplication.isPlaying)
+                UnityEngine.Object.Destroy(hardRuleSource);
+            else UnityEngine.Object.DestroyImmediate(hardRuleSource);
+            hardRuleSource = null;
+        }
         string path = SessionState.GetString(DataPathKey, string.Empty);
         string settingsPath = SessionState.GetString(SettingsPathKey,
             string.Empty);
