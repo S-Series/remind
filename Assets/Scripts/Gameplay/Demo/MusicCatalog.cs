@@ -9,11 +9,15 @@ namespace REmind.Gameplay.Demo
     {
         [SerializeField] private string difficultyId;
         [SerializeField] private int level;
+        [SerializeField] private string author;
+        [SerializeField] private string extraName;
         [SerializeField] private Sprite jacket;
         [SerializeField] private TextAsset runtimePackage;
 
         public string DifficultyId => difficultyId;
         public int Level => level;
+        public string Author => author;
+        public string DisplayName => difficultyId == "extra" ? extraName : difficultyId?.ToUpperInvariant();
         public Sprite Jacket => jacket;
         public TextAsset RuntimePackage => runtimePackage;
     }
@@ -79,6 +83,17 @@ namespace REmind.Gameplay.Demo
                         StringComparison.Ordinal))
                     return song;
             return null;
+        }
+    }
+
+    // Five fixed difficulty slots; availability is determined by the catalog.
+    internal static class MusicDifficultySlots
+    {
+        public const int Count = 5;
+
+        public static string GetId(IReadOnlyList<MusicDifficultyEntry> difficulties, int index)
+        {
+            return REmind.Charting.SongChartFiles.GetDifficultyId(index);
         }
     }
 }

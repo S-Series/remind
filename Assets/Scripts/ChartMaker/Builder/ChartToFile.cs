@@ -129,9 +129,19 @@ public sealed class ChartToFile : MonoBehaviour
                     normalizationPlan.AffectedPositions)
                 : default;
         if (!chartCore) throw new InvalidOperationException("ChartCore is required for saving.");
+        bool isSongChart = SongContentFileStore.FindDataPath(fullPath) != null;
+        string difficultyId = REmind.Charting.SongChartFiles.GetDifficultyIdFromFileName(
+            Path.GetFileName(fullPath));
+        if (!isSongChart && difficultyId == null)
+            difficultyId = Path.GetFileNameWithoutExtension(fullPath);
+        if (difficultyId == null)
+            throw new FormatException("Song charts must use Easy.rd, Normal.rd, Hard.rd, Chaos.rd or Extra.rd.");
+        ChartEffectFileStore.ValidateFileId(difficultyId, "chart filename");
         var metadata = new ChartEffectDocumentState.Metadata(
-            ChartEffectDocumentState.MusicId, ChartEffectDocumentState.DifficultyId,
-            ChartEffectDocumentState.GimmickId, Guid.NewGuid().ToString("N"));
+            ChartEffectDocumentState.MusicId, difficultyId,
+            ChartEffectDocumentState.GimmickId, Guid.NewGuid().ToString("N"),
+            ChartEffectDocumentState.Level, ChartEffectDocumentState.Author,
+            difficultyId == "extra" ? ChartEffectDocumentState.ExtraName : string.Empty);
         string chartText = ChartFileCodec.Serialize(ChartManager.ChartHolders,
             chartCore.Bpm, chartCore.StartCorrectionMs, metadata, jacketFile);
         SongContentFileStore.ValidateChart(fullPath, ChartFileCodec.Parse(chartText));
@@ -171,7 +181,8 @@ public sealed class ChartToFile : MonoBehaviour
                 nameof(filePath));
 
         // Build and validate the complete package before touching the output.
-        string package = ChartMakerRuntimePackageExporter.Export(BuildText());
+        string package = ChartMakerRuntimePackageExporter.Export(
+            BuildText(), null, ChartEffectDocumentState.DifficultyId);
         string directory = Path.GetDirectoryName(fullPath);
         if (!string.IsNullOrEmpty(directory))
             Directory.CreateDirectory(directory);

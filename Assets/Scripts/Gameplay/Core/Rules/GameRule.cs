@@ -240,6 +240,9 @@ public abstract class GameRule : MonoBehaviour
 
     public int GetHealthDelta(JudgeResult result, RuleContext context)
     {
+        if (RequiredConfig.SpecialHardGauge != null)
+            throw new InvalidOperationException(
+                "Special Hard health needs the judgement count and current health.");
         int delta = CalculateBaseHealthDelta(result, context);
 
         for (int i = 0; i < modifiers.Count; i++)
@@ -254,6 +257,35 @@ public abstract class GameRule : MonoBehaviour
     {
         long changedHealth = (long)currentHealth + GetHealthDelta(result, context);
         return ClampHealth(changedHealth, GetMaxHealth(context));
+    }
+
+    public double ApplyHealthDelta(double currentHealth, JudgeResult result,
+        RuleContext context, int judgementCount)
+    {
+        SpecialHardGaugeSettings special = RequiredConfig.SpecialHardGauge;
+        if (special == null)
+            return Math.Max(0d, Math.Min(currentHealth +
+                GetHealthDelta(result, context), GetMaxHealth(context)));
+
+        double delta = special.GetDelta(result,
+            currentHealth, GetMaxHealth(context), judgementCount);
+        for (int i = 0; i < modifiers.Count; i++)
+        {
+            if (modifiers[i] is IPreciseHealthDeltaModifier precise)
+            {
+                delta = precise.ModifyHealthDelta(delta, result, context);
+            }
+            else
+            {
+                // Preserve the fractional part for older integer modifiers.
+                int rounded = (int)Math.Round(delta,
+                    MidpointRounding.AwayFromZero);
+                delta += modifiers[i].ModifyHealthDelta(rounded, result,
+                    context) - rounded;
+            }
+        }
+        double changedHealth = currentHealth + delta;
+        return Math.Max(0d, Math.Min(changedHealth, GetMaxHealth(context)));
     }
 
     public double GetScoreWeight(JudgeResult result, RuleContext context)

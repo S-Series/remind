@@ -8,9 +8,10 @@ using REmind.Charting;
 using REmind.Data;
 using UnityEngine;
 
-public static class ChartFileCodec
+public static partial class ChartFileCodec
 {
     public const int CurrentFormatVersion = 1;
+    public const int CenterFormatVersion = 2;
     private const int PreviousEffectJsonFormatVersion = 8;
     private const int CompactJsonFormatVersion = 7;
     internal const int LegacyPositionUnitsPerMeasure = 1600;
@@ -49,10 +50,14 @@ public static class ChartFileCodec
             baseBpm,
             musicStartCorrectionMs);
         ChartFile normalized = ParseLegacyText(validatedText);
+        CopyCenterData(holders, normalized.chartDatas);
         ChartEffectDocumentState.Metadata metadata = effectMetadata ??
             new ChartEffectDocumentState.Metadata("untitled", "default", "", "");
         normalized.MusicId = metadata.MusicId;
         normalized.DifficultyId = metadata.DifficultyId;
+        normalized.Level = metadata.Level;
+        normalized.Author = metadata.Author;
+        normalized.ExtraName = metadata.ExtraName;
         if (!string.IsNullOrEmpty(jacketFile))
             SongContentCodec.ValidateFileName(jacketFile, "jacketFile");
         normalized.JacketFile = jacketFile;
@@ -170,6 +175,20 @@ public static class ChartFileCodec
     public static ChartFile Parse(string text)
     {
         return ParseJson(text);
+    }
+
+    /// <summary>Bind a path-derived difficulty to a parsed chart.</summary>
+    public static ChartFile Parse(string text, string difficultyId)
+    {
+        ChartFile chart = ParseJson(text);
+        if (!string.IsNullOrWhiteSpace(difficultyId))
+        {
+            if (!string.IsNullOrWhiteSpace(chart.DifficultyId) &&
+                !string.Equals(chart.DifficultyId, difficultyId, StringComparison.Ordinal))
+                throw new FormatException("Chart difficultyId does not match its filename.");
+            chart.DifficultyId = difficultyId;
+        }
+        return chart;
     }
 
     /// <summary>기존 Native 텍스트 전체를 검증해 현재 채보 데이터로 변환합니다.</summary>
@@ -439,9 +458,11 @@ public static class ChartFileCodec
         JsonCurrentChartDocument document = new JsonCurrentChartDocument
         {
             format = JsonFormatName,
-            formatVersion = CurrentFormatVersion,
+            formatVersion = HasCenterNotes(holders) ? CenterFormatVersion : CurrentFormatVersion,
             musicId = chartFile.MusicId,
-            difficultyId = chartFile.DifficultyId,
+            level = chartFile.Level,
+            author = chartFile.Author,
+            extraName = chartFile.ExtraName,
             jacketFile = chartFile.JacketFile,
             gimmickId = chartFile.GimmickId,
             baseBpm = chartFile.BaseBpm,
@@ -451,6 +472,8 @@ public static class ChartFileCodec
             eventDictionary = BuildEffectDefinitions(holders)
         };
         XElement root = ChartEffectJsonCodec.ReadObject(JsonUtility.ToJson(document));
+        if (document.formatVersion == CenterFormatVersion)
+            root.Add(WriteCenterNotes(holders));
         XElement entries = ChartEffectJsonCodec.Member(root, "eventDictionary");
         ChartEffectJsonCodec.RequireType(entries, "array");
         Dictionary<string, ChartHolder> effects = new Dictionary<string, ChartHolder>(StringComparer.Ordinal);
@@ -504,7 +527,8 @@ public static class ChartFileCodec
                 $"Chart JSON requires format '{JsonFormatName}'.");
         }
 
-        if (header.formatVersion == CurrentFormatVersion ||
+        if (header.formatVersion == CenterFormatVersion ||
+            header.formatVersion == CurrentFormatVersion ||
             header.formatVersion == PreviousEffectJsonFormatVersion ||
             header.formatVersion == CompactJsonFormatVersion)
         {
@@ -651,7 +675,8 @@ public static class ChartFileCodec
                 document.format,
                 JsonFormatName,
                 StringComparison.Ordinal) ||
-            (document.formatVersion != CurrentFormatVersion &&
+            (document.formatVersion != CenterFormatVersion &&
+             document.formatVersion != CurrentFormatVersion &&
              document.formatVersion != PreviousEffectJsonFormatVersion &&
              document.formatVersion != CompactJsonFormatVersion))
         {
@@ -664,7 +689,8 @@ public static class ChartFileCodec
         ValidateFinite(
             document.musicStartCorrectionMs,
             nameof(document.musicStartCorrectionMs));
-        bool inline = document.formatVersion == CurrentFormatVersion;
+        bool inline = document.formatVersion == CurrentFormatVersion ||
+            document.formatVersion == CenterFormatVersion;
         if (inline && (document.notes == null || document.eventDictionary == null))
             throw new FormatException("Chart version 1 requires both notes and eventDictionary.");
         string[] eventRows = inline ? document.notes : document.events ?? Array.Empty<string>();
@@ -703,16 +729,21 @@ public static class ChartFileCodec
         }
 
         ChartFile parsed = ParseLegacyText(nativeText.ToString());
+        if (document.formatVersion == CenterFormatVersion)
+            parsed.chartDatas = ReadCenterNotes(text, parsed.chartDatas);
         parsed.FormatVersion = document.formatVersion;
         parsed.MusicId = document.musicId;
         parsed.DifficultyId = document.difficultyId;
+        parsed.Level = document.level;
+        parsed.Author = document.author;
+        parsed.ExtraName = document.extraName;
         if (!string.IsNullOrEmpty(document.jacketFile))
             SongContentCodec.ValidateFileName(document.jacketFile, "jacketFile");
         parsed.JacketFile = document.jacketFile;
         parsed.GimmickId = document.gimmickId;
         parsed.EffectRevision = document.revision;
         parsed.HasEffectParameterFile = !inline && document.hasEffectParameters;
-        if (document.formatVersion == CurrentFormatVersion ||
+        if (inline ||
             document.formatVersion == PreviousEffectJsonFormatVersion)
             ApplyEffectDefinitions(parsed.chartDatas,
                 inline ? document.eventDictionary : document.effectDefinitions,
@@ -729,9 +760,12 @@ public static class ChartFileCodec
         string text, JsonEffectDefinition[] definitions)
     {
         XElement root = ChartEffectJsonCodec.ReadObject(text);
-        ChartEffectJsonCodec.Only(root, "format", "formatVersion", "musicId",
-            "difficultyId", "jacketFile", "gimmickId", "baseBpm",
-            "musicStartCorrectionMs", "revision", "notes", "eventDictionary");
+        List<string> allowed = new List<string> { "format", "formatVersion", "musicId",
+            "difficultyId", "level", "author", "extraName", "jacketFile", "gimmickId", "baseBpm",
+            "musicStartCorrectionMs", "revision", "notes", "eventDictionary" };
+        if (ChartEffectJsonCodec.Member(root, "formatVersion").Value == "2")
+            allowed.Add("centerNotes");
+        ChartEffectJsonCodec.Only(root, allowed.ToArray());
         XElement entries = ChartEffectJsonCodec.Member(root, "eventDictionary");
         ChartEffectJsonCodec.RequireType(entries, "array");
         XElement[] items = new List<XElement>(entries.Elements()).ToArray();
@@ -2324,7 +2358,9 @@ public static class ChartFileCodec
         public string format;
         public int formatVersion;
         public string musicId;
-        public string difficultyId;
+        public int level;
+        public string author;
+        public string extraName;
         public string jacketFile;
         public string gimmickId;
         public double baseBpm;
@@ -2345,6 +2381,9 @@ public static class ChartFileCodec
         public string[] notes;
         public string musicId;
         public string difficultyId;
+        public int level;
+        public string author;
+        public string extraName;
         public string jacketFile;
         public string gimmickId;
         public string revision;

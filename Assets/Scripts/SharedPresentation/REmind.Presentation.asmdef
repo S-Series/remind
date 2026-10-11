@@ -1,7 +1,7 @@
 {
   "name": "REmind.Presentation",
   "rootNamespace": "REmind.Presentation",
-  "references": [],
+  "references": ["REmind.ChartCore"],
   "includePlatforms": [],
   "excludePlatforms": [],
   "allowUnsafeCode": false,

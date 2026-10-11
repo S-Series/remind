@@ -102,7 +102,8 @@ namespace REmind.Gameplay.Effects
 
         private void HandleNoteJudged(NoteJudgementEvent judgementEvent)
         {
-            if (judgementEvent.Result == JudgeResult.Perfect)
+            if (judgementEvent.Result == JudgeResult.PerfectPlus ||
+                judgementEvent.Result == JudgeResult.Perfect)
             {
                 Play();
             }

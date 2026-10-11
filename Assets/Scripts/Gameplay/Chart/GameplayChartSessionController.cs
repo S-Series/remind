@@ -92,9 +92,16 @@ namespace REmind.Gameplay.Chart
             {
                 return Fail("Selected song data is invalid: " + exception.Message);
             }
-            if (!string.Equals(song.MusicId, musicId, StringComparison.Ordinal) ||
-                song.FindChart(difficultyId) == null)
+            if (!string.Equals(song.MusicId, musicId, StringComparison.Ordinal))
                 return Fail("Selected song IDs do not match its catalog entry.");
+
+            SongAccessPolicy access = AppRoot.Current
+                ? AppRoot.Current.GetSongAccess(song, difficultyId)
+                : new SongAccessPolicy(song, false, false);
+            if (!access.CanPlay)
+                return Fail(access.NeedsOwnership
+                    ? "이 곡의 이용 권한이 필요합니다."
+                    : "아직 해금되지 않은 난이도입니다.");
 
             return TryPrepareInternal(difficulty.RuntimePackage.text,
                 validateBundledSong: false, expectedMusicId: musicId,
@@ -183,9 +190,7 @@ namespace REmind.Gameplay.Chart
             }
 
             if (!sessionState.TryConfigureChart(
-                    prepared.Snapshot.Notes.Count +
-                        prepared.Snapshot.JudgementSegments.Count -
-                        CountLongNotes(prepared.Snapshot),
+                    prepared.Snapshot.JudgementUnitCount,
                     out string stateError))
             {
                 return FailInvalidating(stateError);
@@ -276,14 +281,6 @@ namespace REmind.Gameplay.Chart
         {
             if (!judgementEvent.IsAutomaticMiss && laneHitEffectPlayer)
                 laneHitEffectPlayer.Play(judgementEvent.Lane);
-        }
-
-        private static int CountLongNotes(PlayableChartSnapshot snapshot)
-        {
-            int count = 0;
-            foreach (PlayableNoteSnapshot note in snapshot.Notes)
-                if (note.Points.Count > 1) count++;
-            return count;
         }
 
         private void UnbindHitEffect()

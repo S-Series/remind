@@ -18,7 +18,7 @@ public static class PlayableGameSceneBuilder
     {
         const string scenePath = "Assets/Scenes/Game.unity";
         var chart = AssetDatabase.LoadAssetAtPath<TextAsset>(
-            "Assets/Data/Music/i/rmp/hard.rmp.json");
+            "Assets/Data/Music/i/rmp/Hard.rmp.json");
         if (!chart) throw new InvalidOperationException(
             "Export the playable sample package first.");
         var songAsset = AssetDatabase.LoadAssetAtPath<TextAsset>(
@@ -26,8 +26,6 @@ public static class PlayableGameSceneBuilder
         if (!songAsset) throw new InvalidOperationException(
             "I song data.json is missing.");
         SongContent song = SongContentCodec.Parse(songAsset.text);
-        if (song.FindChart("hard") == null)
-            throw new InvalidOperationException("I song hard chart is not listed.");
 
         // Rebind the authored Game scene. Recreating it from DemoPlay would
         // discard the menu objects and Inspector connections in its hierarchy.

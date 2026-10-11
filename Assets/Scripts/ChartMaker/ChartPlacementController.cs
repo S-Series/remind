@@ -5,7 +5,7 @@ using UnityEngine;
 using UnityEngine.Serialization;
 
 [DisallowMultipleComponent]
-public sealed class ChartPlacementController : MonoBehaviour
+public sealed partial class ChartPlacementController : MonoBehaviour
 {
     private const float PreviewMinX = -15f;
     private const float PreviewMaxX = 15f;
@@ -52,6 +52,7 @@ public sealed class ChartPlacementController : MonoBehaviour
     private static void ResetStaticSettings()
     {
         UseYClamp = true;
+        SnapKnobX = true;
         YGuideCount = 4;
         XClampValues.Clear();
         XClampValues.Add(NoteType.Unknown, SingleClampValues);
@@ -159,6 +160,7 @@ public sealed class ChartPlacementController : MonoBehaviour
 
     private void OnEnable()
     {
+        ChartManager.ChartChanged += HandleCenterChartChanged;
         SetInputRouterSubscription(true);
         SetActionSubscriptions(true);
         GuideGenerate.ReferenceYChanged += HandleScrollReferenceYChanged;
@@ -168,6 +170,8 @@ public sealed class ChartPlacementController : MonoBehaviour
 
     private void OnDisable()
     {
+        ChartManager.ChartChanged -= HandleCenterChartChanged;
+        ClearKnobPaths();
         CancelNoteDrag();
         SetInputRouterSubscription(false);
         SetActionSubscriptions(false);
@@ -242,6 +246,7 @@ public sealed class ChartPlacementController : MonoBehaviour
             previewNote.SetActive(
                 isPreviewing && isHovering && !isDraggingNote);
         }
+        RefreshKnobPlacementPreview();
     }
 
     private void HandlePointerEntered(ChartAction _)
@@ -353,7 +358,11 @@ public sealed class ChartPlacementController : MonoBehaviour
         dragSourceAbsolutePosition = sourceHolder.AbsoluteChartPosition;
         GameObject[] linkedNoteObjects;
 
-        if (draggedNoteType == NoteType.Speed)
+        if (draggedNoteType.IsCenter())
+        {
+            linkedNoteObjects = sourceHolder.GetCenterObjects(draggedNoteType);
+        }
+        else if (draggedNoteType == NoteType.Speed)
         {
             sourceHolder.TryGetSpeedNote(out linkedNoteObjects);
         }
@@ -433,6 +442,7 @@ public sealed class ChartPlacementController : MonoBehaviour
     {
         RefreshPreviewPosition();
         ApplyEditingVisualDisplayScale(scale);
+        RefreshKnobPaths();
     }
 
     private void HandleToolSelected(ChartToolType toolType)
@@ -513,6 +523,7 @@ public sealed class ChartPlacementController : MonoBehaviour
             previewNote.transform.localPosition =
                 GetCurrentPreviewPosition();
         }
+        RefreshKnobPlacementPreview();
     }
 
     private void SetActionSubscriptions(bool subscribe)
@@ -614,11 +625,23 @@ public sealed class ChartPlacementController : MonoBehaviour
             noteObject.transform.SetParent(targetParent, false);
             noteObject.transform.localPosition = dragTargetPosition;
         }
+        if (draggedNoteType == NoteType.Knob) RefreshKnobPaths();
     }
 
     /// <summary>드래그 결과를 두 ChartHolder 사이의 단일 편집 작업으로 확정합니다.</summary>
     private void CommitNoteDrag()
     {
+        if (draggedNoteType.IsCenter())
+        {
+            if (!CanEditChart || !ChartManager.TryGetNoteData(dragAnchor,
+                    out ChartHolder holder, out _, out _, out _, out _) ||
+                !TryEditCenterNote(dragAnchor,
+                    ChartHolder.WorldYToAbsolutePosition(dragTargetPosition.y),
+                    holder.knobPointKind, dragTargetPosition.x / PreviewMaxX, out _))
+                RestoreDragTransforms();
+            FinishNoteDrag();
+            return;
+        }
         if (!CanEditChart)
         {
             RestoreDragTransforms();
@@ -708,6 +731,7 @@ public sealed class ChartPlacementController : MonoBehaviour
 
     private void FinishNoteDrag()
     {
+        bool wasKnobDrag = draggedNoteType == NoteType.Knob;
         isDraggingNote = false;
         dragAnchor = null;
         draggedNoteType = NoteType.Unknown;
@@ -718,6 +742,7 @@ public sealed class ChartPlacementController : MonoBehaviour
         dragObjects = null;
         dragOriginalParents = null;
         dragOriginalPositions = null;
+        if (wasKnobDrag) RefreshKnobPaths();
         RefreshPreviewVisibility();
     }
 
@@ -737,6 +762,11 @@ public sealed class ChartPlacementController : MonoBehaviour
             out NoteHandleType handleType);
         ChartHolder holder = ChartManager.GetOrCreateHolder(notePosition.y);
         notePosition.y = holder.WorldY;
+        if (currentNoteType.IsCenter())
+        {
+            PlaceCenterNote(holder, notePosition);
+            return;
+        }
         bool closesOpenLongTap =
             currentNoteType == NoteType.Tap &&
             ChartManager.HasOpenLongTap(
@@ -1858,6 +1888,7 @@ public sealed class ChartPlacementController : MonoBehaviour
         {
             ChartHolder holder = holders[holderIndex];
             holder.EnsureStorage();
+            RebuildCenterViews(holder);
 
             for (int noteIndex = 0;
                  noteIndex < ChartHolder.TotalLineCount;
@@ -2057,6 +2088,7 @@ public sealed class ChartPlacementController : MonoBehaviour
 
         ChartManager.RefreshLongNoteLengths(-1);
         ChartManager.RefreshLongNoteLengths(-2);
+        RefreshKnobPaths();
         ChartManager.NotifyChartChanged();
     }
 
@@ -2066,6 +2098,7 @@ public sealed class ChartPlacementController : MonoBehaviour
         NoteHandleType handleType,
         NoteType noteType)
     {
+        if (noteType.IsCenter()) return CreateCenterObjects(prefab, notePosition, noteType);
         if (noteType.IsChartEvent())
         {
             GameObject specialPrefab =
@@ -2165,6 +2198,9 @@ public sealed class ChartPlacementController : MonoBehaviour
             ApplyEditingVisualDisplayScale(holder.effectNoteObjects, scale);
             ApplyEditingVisualDisplayScale(holder.cameraNoteObjects, scale);
             ApplyEditingVisualDisplayScale(holder.markerNoteObjects, scale);
+            ApplyEditingVisualDisplayScale(holder.centerTapObjects, scale);
+            ApplyEditingVisualDisplayScale(holder.knobPointObjects, scale);
+            ApplyEditingVisualDisplayScale(holder.secondKnobPoint?.knobPointObjects, scale);
         }
     }
 
@@ -2492,6 +2528,12 @@ public sealed class ChartPlacementController : MonoBehaviour
 
         switch (toolType)
         {
+            case ChartToolType.CenterTap:
+                SetCurrentNoteType(NoteType.CenterTap);
+                break;
+            case ChartToolType.Knob:
+                SelectKnobPath();
+                break;
             case ChartToolType.SingleTap:
                 SetPreviewing(true);
                 SetPreviewPrefab(
@@ -2580,6 +2622,12 @@ public sealed class ChartPlacementController : MonoBehaviour
 
     private void ClearPreview()
     {
+        if (knobPlacementPreview)
+        {
+            knobPlacementPreview.gameObject.SetActive(false);
+            Destroy(knobPlacementPreview.gameObject);
+            knobPlacementPreview = null;
+        }
         if (previewNote)
         {
             Destroy(previewNote);
@@ -2594,6 +2642,8 @@ public sealed class ChartPlacementController : MonoBehaviour
     {
         return noteType switch
         {
+            NoteType.CenterTap => ChartToolType.CenterTap,
+            NoteType.Knob => ChartToolType.Knob,
             NoteType.Tap => ChartToolType.SingleTap,
             NoteType.LongTap => ChartToolType.LongTap,
             NoteType.Scratch => ChartToolType.SingleScratch,
@@ -2605,7 +2655,7 @@ public sealed class ChartPlacementController : MonoBehaviour
 
     private static bool IsPlacementImplemented(NoteType noteType)
     {
-        return noteType == NoteType.Tap ||
+        return noteType.IsCenter() || noteType == NoteType.Tap ||
             noteType == NoteType.LongTap ||
             noteType.IsScratch() ||
             noteType == NoteType.Air ||
@@ -2693,9 +2743,14 @@ public sealed class ChartPlacementController : MonoBehaviour
             NormalizedMinX,
             NormalizedMaxX,
             normalizedPosition.x);
-        float clampedNormalizedX = ClampX(
+        if (noteType.IsCenter()) positionCorrection = null;
+        float clampedNormalizedX = noteType == NoteType.Knob
+            ? Mathf.Clamp(normalizedX, -1f, 1f)
+            : noteType == NoteType.CenterTap ? 0f : ClampX(
             normalizedX,
             GetXClampValues(noteType));
+        if (noteType == NoteType.Knob && SnapKnobX)
+            clampedNormalizedX = Mathf.Round(clampedNormalizedX * 10f) / 10f;
         float x = Mathf.Lerp(
             PreviewMinX,
             PreviewMaxX,
@@ -2771,6 +2826,7 @@ public sealed class ChartPlacementController : MonoBehaviour
         out int line,
         out NoteHandleType handleType)
     {
+        if (noteType.IsCenter()) positionCorrection = null;
         Vector3 previewPosition = NormalizedToPreviewPosition(
             normalizedPosition,
             noteType,
@@ -2786,6 +2842,7 @@ public sealed class ChartPlacementController : MonoBehaviour
         int mainLine = GetLine(notePosition.x);
         handleType = GetHandleType(positionCorrection, mainLine);
         line = GetStorageLine(noteType, mainLine, handleType);
+        if (noteType.IsCenter()) { line = 0; handleType = NoteHandleType.Unknown; }
     }
 
     private static float ClampChartYToGuide(float chartY)
@@ -2849,6 +2906,8 @@ public sealed class ChartPlacementController : MonoBehaviour
     {
         return noteType switch
         {
+            NoteType.CenterTap => centerTapNotePrefab,
+            NoteType.Knob => knobNotePrefab,
             NoteType.Tap => tapNotePrefab,
             NoteType.LongTap => longTapNotePrefab,
             NoteType.Scratch => scratchNotePrefab,
@@ -2868,6 +2927,8 @@ public sealed class ChartPlacementController : MonoBehaviour
     {
         return noteType switch
         {
+            NoteType.CenterTap => chartPreviewCenterTapNotePrefab,
+            NoteType.Knob => chartPreviewKnobNotePrefab,
             NoteType.Tap => chartPreviewTapNotePrefab,
             NoteType.LongTap => chartPreviewLongTapNotePrefab,
             NoteType.Scratch => chartPreviewScratchNotePrefab,

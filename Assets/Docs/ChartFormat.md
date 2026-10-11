@@ -1,8 +1,8 @@
 # Chart Format
 
-> 현행 계약 검토: 2026-09-29
-> 제작 원본: `REmindChart` JSON `formatVersion: 1` (`.rd`).
-> Game 전달 파일: Runtime Package `Version: 1` (`.rmp.json`).
+> 현행 계약 검토: 2026-10-08. 시작 전 Step을 포함한 구현·고정 검증본 검사/빌드를 완료했다. 사용자 후속 씬 편집과 수동 검수는 별도다.
+> 제작 원본: `REmindChart` JSON `formatVersion: 1`, 중앙 노트 포함 시 `2` (`.rd`).
+> Game 전달 파일: Runtime Package `Version: 1`, 중앙 노트 포함 시 `2` (`.rmp.json`).
 
 현행 형식은 18~20절에 모았다. 기존 문서의 절 번호를 유지하며, 1~17절의 초기
 설계 초안은 문서 끝의 부록으로 이동했다. 부록의 JSON은 현행 파일 예제로 사용하지 않는다.
@@ -22,7 +22,8 @@ ChartMaker의 기본 저장 형식은 UTF-8 JSON이며 전용 확장자는 `.rd`
   "format": "REmindChart",
   "formatVersion": 1,
   "musicId": "demo_song",
-  "difficultyId": "normal",
+  "level": 11,
+  "author": "Unknown",
   "gimmickId": "",
   "baseBpm": 120.0,
   "musicStartCorrectionMs": 0.0,
@@ -55,7 +56,9 @@ ChartMaker의 기본 저장 형식은 UTF-8 JSON이며 전용 확장자는 `.rd`
 | 필드 | 현재 의미 |
 | --- | --- |
 | `format`, `formatVersion` | `REmindChart`, 정수 `1` |
-| `musicId`, `difficultyId` | 소속 곡과 난이도 ID |
+| `musicId` | 소속 곡 ID. 난이도 ID는 `.rd` 파일명에서 결정 |
+| `level`, `author` | 채보별 숫자 레벨과 제작자. 테스트 채보의 `level: 0`은 미정 표시 |
+| `extraName` | `Extra.rd`에서만 쓰는 필수 표시명. 기록 ID는 항상 `extra` |
 | `jacketFile` | 선택적 난이도 재킷 파일명. 경로 규칙은 [MusicContent.md](MusicContent.md) |
 | `gimmickId` | 곡별 C# MusicGimmick 등록 ID, 없으면 빈 문자열 |
 | `baseBpm` | 0보다 큰 유한한 시작 BPM |
@@ -63,6 +66,9 @@ ChartMaker의 기본 저장 형식은 UTF-8 JSON이며 전용 확장자는 `.rd`
 | `revision` | 저장된 편집 문서 식별값 |
 | `notes` | 위치순 행 문자열 배열. 노트가 없어도 배열 자체는 필요 |
 | `eventDictionary` | Effect 정의와 파라미터 배열. Effect가 없으면 빈 배열 |
+
+새 `.rd`에는 `difficultyId`를 기록하지 않는다. 기존 파일의 `difficultyId`는
+이행을 위해 읽을 수 있지만, 곡 폴더에서는 파일명과 다른 값을 거부한다.
 
 곡 제목·아티스트·오디오 경로는 [MusicContent.md](MusicContent.md)의 `data.json`에서
 관리한다. 현재 `.rd`는 노트마다 정수 `timeMs`를 저장하지 않는다.
@@ -102,7 +108,7 @@ Long Scratch Start를 뜻한다.
 `eventDictionary`에 저장한다. 곡·난이도·타이밍 정보 뒤에 긴 `notes`와
 `eventDictionary` 배열을 둔다. `eventDictionary`는 현재 Effect 정의만 담는 배열이다.
 
-- `musicId`, `difficultyId`: 채보와 난이도의 저장 소유자.
+- `musicId`: 채보가 속한 곡의 ID. 난이도 ID는 파일명에서 결정한다.
 - `gimmickId`: `music.call`이 사용할 곡별 C# MusicGimmick 등록 ID. 없으면 빈 문자열이다.
 - `revision`: 저장된 편집 문서의 식별값이다.
 - `eventDictionary`: Effect가 `T`인 각 행과 정확히 하나씩 대응한다.
@@ -241,6 +247,110 @@ native v1, v2와 버전 헤더가 없는 파일은 기존 `1600 units/measure`�
 레거시 `TempChartData` JSON의 `NotePos`도 기존 1600 단위로 해석한다. 이 경로는
 불러오기 호환용이며 저장할 때는 현재 ChartMaker Editor JSON으로 변환한다.
 
+### 18.3 중앙 Tap / Knob 노드 버전 2
+
+기존 v1의 좌우 Scratch/Long Scratch, 레인 `0`~`9`, 기존 종류 값 `0`~`4`는 유지한다.
+`CenterTap`(종류 값 `5`)과 `Knob`(종류 값 `6`)만 중앙 레인 `10`을 사용한다.
+새 중앙 노트가 없는 채보는 계속 v1으로 저장한다. v2는 기존 `notes`의 9열과
+`eventDictionary`를 유지하고 최상위 `centerNotes` 배열을 추가한다.
+
+```json
+{
+  "formatVersion": 2,
+  "centerNotes": [
+    { "position": 0, "kind": "tap", "x": 0 },
+    { "position": 4800, "kind": "knobStart", "x": -0.5, "curve": "sin" },
+    { "position": 7200, "kind": "knobMiddle", "x": 0.5, "curve": "cos" },
+    { "position": 7200, "kind": "knobMiddle", "x": -0.5, "second": true, "curve": "linear" },
+    { "position": 9600, "kind": "knobMiddle", "x": 0.5, "curve": "linear" }
+  ]
+}
+```
+
+- `position`은 `measure * 4800 + position`의 절대 정수 위치이며 채보 범위 안이어야 한다.
+  Knob의 `x`는 유한한 `[-1, 1]` 값이다. Tap은 중앙 고정이며 `x`를 판정에 사용하지 않는다.
+- ChartMaker의 Knob 노드는 **Start / Middle** 두 종류다. 새 저장에는 `knobStart`,
+  `knobMiddle`만 기록하며 End는 기록하지 않는다. Start는 이전 노드와 연결하지 않는다.
+  Middle은 직전 노드와 연결하고, 해당 노드 이전에 Start가 없으면 선을 그리지 않는다.
+  연결되지 않은 Middle과 단독 Start도 저장하며, Preview에는 아이콘만 표시한다.
+- Start부터 이후 Middle까지 한 경로다. 다음 Start가 나오거나 노드 목록이 끝나면
+  마지막 Middle에서 경로가 끝난다. adapter가 실행용 Start/Mid/End를 만들며, 연결되지
+  않은 노드에는 Gameplay 판정 대상을 생성하지 않는다. UI가 종료 규칙을 다시 구현하지 않는다.
+- 노드의 `curve`는 **그 노드에서 다음 Middle로 나가는 구간**의 `linear`, `sin`, `cos`다.
+  생략하면 `linear`다. 목적지에 incoming 구간을 저장하는 이전 방식과 책임이 다르다.
+  Linear는 직선, Sin은 `sin(t * π/2)`, Cos는 `1 - cos(t * π/2)`의 ¼주기다.
+  `t`는 두 노드 사이의 작성 position 비율이다. Sin은 처음 빠르고 끝에서 완만하며,
+  Cos는 처음 완만하고 끝에서 빠르다. X 방향이 반대여도 같은 진행 비율을 사용한다.
+- 곡선은 공용 `KnobPathEvaluator`의 64개 고정 구간으로 선형 근사한다. 편집 Ribbon,
+  Game/Preview 표시와 판정은 같은 표본을 사용한다. BPM·Scroll 변경 위치도 표시 정점에
+  포함하며, 구간을 나눠도 원래 곡선의 진행 비율을 유지한다.
+- 같은 `position`에는 최대 2개를 둔다. 두 번째 항목은 `second: true`로 저장하며,
+  First와 다른 X를 가져야 한다. First → Second 순서가 같은 시각의 가로 이동 순서다.
+  이 구간은 노드의 곡선 종류와 무관하게 실행용 Step으로 처리하고 기존 ±80ms 방향 Down
+  판정을 사용한다. Second의 `curve`는 그 이후 구간에 적용된다. Second를 Start로 바꾸면
+  First와 연결하지 않고 새 경로를 시작한다. 중복 Tap, First 없는 Second, 같은 X의 두 지점,
+  세 번째 지점은 거부한다.
+- 이전 v2의 `knobMid` / `knobEnd`는 읽을 때 Middle로 변환한다. 기존 incoming
+  `interpolation: "step"`은 호환용으로 보존한다. 이전 노드의 곡선을 직접 변경하면 다음 Middle의
+  호환용 incoming Step을 해제한다. 같은 줄 Second Point의 Step은 유지한다. 새 편집의 곡선 종류에는 Step을 제공하지
+  않으며 같은 줄의 가로 이동은 Second Point로 작성한다. 공용 enum은
+  `Linear=0`, `Step=1`, `Sin=2`, `Cos=3`이며 Runtime Package의 incoming 구간 값으로 투영한다.
+  Step은 기존 v2 및 Second Point의 실행 의미로 유지한다.
+
+ChartMaker의 기존 Eraser 위치에 있는 **Knob** 버튼으로 배치를 시작한다.
+첫 Start를 배치하면 이후 배치 종류는 Middle로 전환된다. **Tab**은 Linear → Sin → Cos → Linear,
+**Shift+Tab**은 Start ↔ Middle로 전환한다. 선택한 Knob 아이콘이 있으면
+그 노드를 수정하고, 없으면 현재 Knob 배치 모드를 바꾼다. 텍스트 입력·팝업·Preview 재생
+중에는 기존 입력 차단을 따른다. End 배치와 `Finish Knob Path`는 제공하지 않는다.
+Edit 메뉴의 Start/Middle, Linear/Sin/Cos 선택과 중간 노드 삽입, X 스냅은 유지한다.
+배치 중 Middle은 이전 노드에서 마우스까지 앞 노드의 곡선으로 연결을 미리 표시한다.
+
+편집 노드는 `Assets/Prefabs/Notes/Preview/KnobPoint.prefab`의 작은 1:1 Sprite 아이콘이다.
+SpriteRenderer의 Sprite를 교체하며 현재 이미지는 임시 원형 표시다. 배치·선택·이동·삭제의
+단위는 이 아이콘이고 Knob 경로는 저장된 노드를 연결하는 표시다. 같은 줄에 추가하면
+Second Point가 되며, 이후 경로는 Second에서 이어진다. First를 삭제하면 남은 Second의
+Start/Middle 종류와 곡선은 유지한다. 아이콘 드래그 중에도 선을 갱신하며 저장 좌표는
+이동 확정 시에만 바꾸고 취소 시 복원한다. 시간 이동도 First → Second 순서를 유지한다.
+
+Game과 Maker에는 별도의 이동 커서나 방향 화살표가 없다. `knobPathMaterial`을 지정하면
+공용 RibbonMesh가 그 Material을 공유하며 텍스처·색상을 덮어쓰지 않는다. 미지정 시 임시
+흰색 경로를 표시하며 코드에서 Tint를 지정하지 않는다. 저장·출력·Preview 검사의 범위와
+수동 검수는 [TASKS.md](TASKS.md)에 둔다.
+
+Game 중앙 Tap은 논리 좌/우 Shift 입력을 받는다. Space Tap 설정이 ON이면 Space도
+추가로 받지만 노브 위치 조작은 계속 논리 좌/우 입력만 사용한다. Space Tap은 기본 OFF이며
+Home→Settings→Controls에서 변경하고 다음 플레이부터 적용한다.
+
+위치 추적 Knob의 확정 규칙은 다음과 같다. 기존 Tap의 네 등급 판정 창과 Long Scratch의
+End release 규칙은 변경하지 않는다.
+
+- 각 Knob 시작 시 플레이어 위치를 그 Start의 `x`로 지정한다. 단, 아래의 유효한 시작 전
+  Step 입력이 있으면 이미 이동한 위치를 유지하고 시작값으로 되돌리지 않는다. 이후 입력 또는
+  다음 Knob 시작이 없으면 마지막 위치를 유지한다. 시작 새 Down/종료의 정확한 Up은 요구하지 않는다.
+- 수동 이동은 논리 단위로 고정 `5 units/s`, 범위는 `[-2.5, 2.5]`다.
+  공간 판정과 사선 추적 보정 범위는 `±0.25`이며 유지 체크 간격은 `100ms`다.
+- 사선은 범위 안에서 올바른 방향 키를 유지하면 경로를 따라간다. 해제하면 위치를 유지하고,
+  양키를 함께 유지하면 수동 이동·사선 추적은 중립이다. 놓친 뒤 위치를 맞추면 복귀할 수 있다.
+- 목표 X가 일정한 세로 구간에서 정상 판정 중이면 어느 키를 눌러도 이탈하지 않는다.
+  무입력 위치 0과 목표 0이 일치하는 경우도 정상 판정이다.
+- 정상 시작·위치 추적·세로·사선 판정은 `Perfect+`, 실패는 `Miss`다.
+  이전 겹침/교대 `150ms`·짧은 해제 `50ms` 유예는 이 모델에 재사용하지 않는다.
+- Step 목적지 시각의 `±80ms` 안에서 올바른 방향의 새 Down을 받으면 즉시 목적지 X로
+  이동한다. 이 입력은 중앙 Tap보다 먼저 소비하며, 소비하지 않은 Shift Down은 Tap에 쓸 수 있다.
+  `±80ms`는 Knob 시작 전에도 양쪽 경계를 포함해 허용한다. 시작 100ms·Step 150ms의
+  Down 70ms는 70ms에 목적지로 이동하고 100ms에도 그 위치를 유지한다.
+- 조기 Step 입력은 직전 구간의 남은 판정만 `Perfect+`로 예약하고 각각의 원래 timestamp에
+  확정한다. 시작 전 입력이면 아직 확정하지 않은 해당 이전 구간의 Start/tick도 포함한다.
+  과거 Miss를 되돌리거나 다음 구간의 미래 판정을 일괄 보상하지 않는다.
+  늦은 입력은 해당 입력 시각 이후 정렬만 바꾸며, Step Down 자체로 점수를 즉시 추가하지 않는다.
+  예약은 해당 Knob의 직전 구간에만 적용된다. 시작 전 snap으로 진행 중인 다른 Knob에서
+  위치가 벗어나면 그 Knob은 Miss가 될 수 있으며 다른 Knob까지 성공으로 보정하지 않는다.
+
+`PlayableJudgementSession.PlayerKnobX`는 실제 플레이어 논리 위치다. `PlayerKnobNoteId`는
+유효한 시작 전 입력을 인정한 시점부터 해당 Knob을 가리키고 Reset 시 null로 돌아간다.
+Game adapter도 이 상태를 노출하지만 별도 cursor는 생성하지 않는다. 기존 cursor 연결
+검사는 이전 표시 구조의 기록이며, 화면·물리 입력·청음·최종 밸런스 검수는 별도다.
+
 ## 19. Effect 파라미터
 
 Effect의 조정값은 같은 `.rd`의 `eventDictionary[].parameters` 객체에 둔다.
@@ -257,10 +367,16 @@ Effect별 필드, 범위, ChartMaker 작업 순서, 실행·정리·Preview 제�
 `ChartMakerRuntimePackageExporter`가 편집 데이터에서 공용 `ChartDocument`를
 구성하고 `RuntimeChartPackageCodec.Export`로 컴파일·직렬화한다.
 
-현재 Package는 `Version: 1`을 사용한다. `.rd`의 `formatVersion: 1`과는 별개의
-계약이며 필드도 `MusicId`, `DifficultyId`, `ChartOffsetMs`, `Notes`, `Effects`,
+중앙 노트가 없는 Package는 `Version: 1`, CenterTap/Knob을 포함하면 `Version: 2`를
+사용한다. `.rd`의 `formatVersion`과는 별개의 계약이며 필드도
+`MusicId`, `DifficultyId`, `ChartOffsetMs`, `Notes`, `Effects`,
 `Parameters` 등 PascalCase다. 노트 위치·Timing·Line Speed·Camera·Scratch Tilt와
 Effect 정의/파라미터를 포함하며, Game 전용 UI나 사용자 진행 데이터를 포함하지 않는다.
+
+v2의 Knob 지점에는 `KnobX`, `KnobDirection`과 선택적 `KnobInterpolation`을 포함한다.
+`KnobInterpolation`은 목적지 incoming 구간의 정수 enum이며 생략하면 `Linear=0`이다.
+Import 후 공용 컴파일러가 경로를 다시 검증한다. v1 Package에는 중앙 레인/새 종류와 Knob 지점
+필드를 허용하지 않는다. 기존 v1 파일을 일괄 재작성하거나 좌우 채보를 중앙으로 바꾸지 않는다.
 
 Game의 `GameplayChartPreparation`은 Package를 Import할 때 공용 문서를 복원하고
 다시 컴파일한다. 이후 공용 Effect 파라미터와 실행 준비를 검증하여

@@ -88,7 +88,8 @@ public static class SettingsOverlayPrefabBuilder
             out TMP_Text[] hitLabels, out Toggle spatial,
             out Toggle mute, out Toggle reduce, out Toggle keep);
         BuildRhythm(pages[3], controller, nodes, out TMP_Text offsetValue);
-        BuildControls(pages[5], controller, nodes, out TMP_Text[] laneValues);
+        BuildControls(pages[5], controller, nodes, out TMP_Text[] laneValues,
+            out Toggle spaceTap);
         for (int i = 0; i < pages.Length; i++)
         {
             if (i == 2 || i == 3 || i == 5) continue;
@@ -144,6 +145,7 @@ public static class SettingsOverlayPrefabBuilder
         data.FindProperty("muteUnfocusedToggle").objectReferenceValue = mute;
         data.FindProperty("reduceBgmToggle").objectReferenceValue = reduce;
         data.FindProperty("keepBackgroundToggle").objectReferenceValue = keep;
+        data.FindProperty("spaceTapToggle").objectReferenceValue = spaceTap;
         SetArray(data, "audioValues", audioValues);
         SetArray(data, "hitStyleLabels", hitLabels);
         SetArray(data, "laneValues", laneValues);
@@ -151,6 +153,7 @@ public static class SettingsOverlayPrefabBuilder
             page => page.gameObject));
         SetArray(data, "categoryLabels", categoryLabels);
         data.ApplyModifiedPropertiesWithoutUndo();
+        OverlayPresentationPrefabBinder.Configure(root, panel, controller);
 
         root.SetActive(false);
         PrefabUtility.SaveAsPrefabAsset(root, PrefabPath);
@@ -336,7 +339,7 @@ public static class SettingsOverlayPrefabBuilder
 
     private static void BuildControls(RectTransform page,
         SettingsMenuController controller, List<NavigationNode> nodes,
-        out TMP_Text[] laneValues)
+        out TMP_Text[] laneValues, out Toggle spaceTap)
     {
         Label(page, "ControlsHeading", "Controls  ·  조작", 32,
             new Vector2(-15, 270), new Vector2(930, 52),
@@ -358,6 +361,15 @@ public static class SettingsOverlayPrefabBuilder
                     value.onClick, controller.BeginRebind, lane));
             laneValues[i] = button.GetComponentInChildren<TMP_Text>();
         }
+        Label(page, "SpaceTapLabel", "Space Tap  ·  중앙 노트 Space 입력", 20,
+            new Vector2(-70, -224), new Vector2(630, 35),
+            TextAlignmentOptions.Left);
+        spaceTap = ToggleAt(page, "SpaceTap", new Vector2(300, -224),
+            10, 2, nodes, controller.SetSpaceTapEnabled);
+        Label(page, "SpaceTapDescription",
+            "ON: Shift와 Space 모두 중앙 Tap 가능. 노브는 좌우 키 유지. 다음 플레이부터 적용.",
+            18, new Vector2(0, -278), new Vector2(930, 50),
+            TextAlignmentOptions.Center).color = Accent;
     }
 
     private static RectTransform Box(Transform parent, string name,

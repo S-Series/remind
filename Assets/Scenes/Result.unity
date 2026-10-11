@@ -131,7 +131,7 @@ GameObject:
   - component: {fileID: 3950990}
   - component: {fileID: 3950989}
   m_Layer: 5
-  m_Name: GREAT_Label
+  m_Name: PERFECT_Label
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -176,7 +176,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: GREAT
+  m_text: PERFECT
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 798c2f5704ab4c01a821b7819437389c, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 798c2f5704ab4c01a821b7819437389c, type: 2}
@@ -1041,7 +1041,7 @@ GameObject:
   - component: {fileID: 145367581}
   - component: {fileID: 145367580}
   m_Layer: 5
-  m_Name: GOOD_Count
+  m_Name: GREAT_Count
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -2790,7 +2790,7 @@ GameObject:
   - component: {fileID: 457784352}
   - component: {fileID: 457784351}
   m_Layer: 5
-  m_Name: PERFECT_Label
+  m_Name: PERFECT_PLUS_Label
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -2835,7 +2835,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: PERFECT
+  m_text: PERFECT+
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 798c2f5704ab4c01a821b7819437389c, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 798c2f5704ab4c01a821b7819437389c, type: 2}
@@ -2927,7 +2927,7 @@ GameObject:
   - component: {fileID: 468511634}
   - component: {fileID: 468511633}
   m_Layer: 5
-  m_Name: BAD_Percent
+  m_Name: MISS_Percent
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -3139,7 +3139,7 @@ GameObject:
   - component: {fileID: 486657072}
   - component: {fileID: 486657071}
   m_Layer: 5
-  m_Name: GREAT_Percent
+  m_Name: PERFECT_Percent
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -4206,7 +4206,7 @@ GameObject:
   - component: {fileID: 697708011}
   - component: {fileID: 697708010}
   m_Layer: 5
-  m_Name: PERFECT_Percent
+  m_Name: PERFECT_PLUS_Percent
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -4673,12 +4673,12 @@ GameObject:
   - component: {fileID: 823310580}
   - component: {fileID: 823310579}
   m_Layer: 5
-  m_Name: MISS_Label
+  m_Name: UNUSED_MISS_Label
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &823310578
 RectTransform:
   m_ObjectHideFlags: 0
@@ -5959,7 +5959,7 @@ GameObject:
   - component: {fileID: 988150870}
   - component: {fileID: 988150869}
   m_Layer: 5
-  m_Name: PERFECT_Count
+  m_Name: PERFECT_PLUS_Count
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -7359,12 +7359,12 @@ GameObject:
   - component: {fileID: 1294023605}
   - component: {fileID: 1294023604}
   m_Layer: 5
-  m_Name: MISS_Percent
+  m_Name: UNUSED_MISS_Percent
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &1294023603
 RectTransform:
   m_ObjectHideFlags: 0
@@ -8032,7 +8032,7 @@ GameObject:
   - component: {fileID: 1352130652}
   - component: {fileID: 1352130651}
   m_Layer: 5
-  m_Name: BAD_Label
+  m_Name: MISS_Label
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -8077,7 +8077,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: BAD
+  m_text: MISS
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 798c2f5704ab4c01a821b7819437389c, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 798c2f5704ab4c01a821b7819437389c, type: 2}
@@ -9256,7 +9256,7 @@ GameObject:
   - component: {fileID: 1499404875}
   - component: {fileID: 1499404874}
   m_Layer: 5
-  m_Name: GREAT_Count
+  m_Name: PERFECT_Count
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -9948,7 +9948,7 @@ GameObject:
   - component: {fileID: 1599389678}
   - component: {fileID: 1599389677}
   m_Layer: 5
-  m_Name: BAD_Count
+  m_Name: MISS_Count
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -11571,7 +11571,7 @@ GameObject:
   - component: {fileID: 1929084678}
   - component: {fileID: 1929084677}
   m_Layer: 5
-  m_Name: GOOD_Label
+  m_Name: GREAT_Label
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -11616,7 +11616,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: GOOD
+  m_text: GREAT
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 798c2f5704ab4c01a821b7819437389c, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 798c2f5704ab4c01a821b7819437389c, type: 2}
@@ -12057,7 +12057,7 @@ GameObject:
   - component: {fileID: 1952849805}
   - component: {fileID: 1952849804}
   m_Layer: 5
-  m_Name: GOOD_Percent
+  m_Name: GREAT_Percent
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -13641,12 +13641,12 @@ GameObject:
   - component: {fileID: 2140018755}
   - component: {fileID: 2140018754}
   m_Layer: 5
-  m_Name: MISS_Count
+  m_Name: UNUSED_MISS_Count
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &2140018753
 RectTransform:
   m_ObjectHideFlags: 0
@@ -13827,13 +13827,11 @@ MonoBehaviour:
   - {fileID: 1499404874}
   - {fileID: 145367580}
   - {fileID: 1599389677}
-  - {fileID: 2140018754}
   judgementPercents:
   - {fileID: 697708010}
   - {fileID: 486657071}
   - {fileID: 1952849804}
   - {fileID: 468511633}
-  - {fileID: 1294023604}
   comboValue: {fileID: 1352184340}
   accuracyValue: {fileID: 1947497034}
   accuracyFill: {fileID: 2041022795}

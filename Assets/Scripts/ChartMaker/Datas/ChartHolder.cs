@@ -4,7 +4,7 @@ using REmind.Charting;
 using REmind.Data;
 
 [Serializable]
-public class ChartHolder
+public partial class ChartHolder
 {
     public const int MainLineCount = 4;
     public const int ScratchLineCount = 2;
@@ -76,6 +76,8 @@ public class ChartHolder
         get
         {
             EnsureStorage();
+
+            if (hasCenterTap || hasKnobPoint) return true;
 
             for (int i = 0; i < noteTypes.Length; i++)
             {
@@ -584,6 +586,7 @@ public class ChartHolder
     /// </summary>
     public bool DeleteNote(GameObject noteObject)
     {
+        if (DeleteCenterNote(noteObject)) return true;
         if (!noteObject)
         {
             return false;
@@ -670,7 +673,8 @@ public class ChartHolder
         }
 
         EnsureStorage();
-        return FindNoteObject(speedNoteObjects, noteObject) ||
+        return FindCenterNote(noteObject) != NoteType.Unknown ||
+            FindNoteObject(speedNoteObjects, noteObject) ||
             FindNoteObject(effectNoteObjects, noteObject) ||
             FindNoteObject(markerNoteObjects, noteObject) ||
             FindNoteObject(cameraNoteObjects, noteObject) ||
@@ -688,6 +692,15 @@ public class ChartHolder
         out bool isPowered)
     {
         EnsureStorage();
+
+        noteType = FindCenterNote(noteObject);
+        if (noteType != NoteType.Unknown)
+        {
+            line = 0;
+            handleType = NoteHandleType.Unknown;
+            isPowered = false;
+            return true;
+        }
 
         if (FindNoteObject(speedNoteObjects, noteObject))
         {
@@ -938,6 +951,11 @@ public class ChartHolder
     public void DestroyAllNoteObjects()
     {
         EnsureStorage();
+        DestroyNoteObjects(centerTapObjects);
+        DestroyNoteObjects(knobPointObjects);
+        secondKnobPoint?.DestroyAllNoteObjects();
+        centerTapObjects = null;
+        knobPointObjects = null;
 
         for (int i = 0; i < tapNoteObjectGroups.Length; i++)
         {
@@ -1282,6 +1300,13 @@ public class ChartHolder
         EnsureStorage();
         ChartHolder clone = new ChartHolder(ChartNumber, ChartPos)
         {
+            hasCenterTap = hasCenterTap,
+            hasKnobPoint = hasKnobPoint,
+            secondKnobPoint = secondKnobPoint?.CloneData(),
+            knobPointKind = knobPointKind,
+            knobX = knobX,
+            knobInterpolation = knobInterpolation,
+            knobCurve = knobCurve,
             targetBpm = targetBpm,
             hasLineSpeedChange = hasLineSpeedChange,
             targetLineSpeed = targetLineSpeed,

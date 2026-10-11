@@ -4,7 +4,7 @@ using REmind.Charting;
 using REmind.Data;
 using UnityEngine;
 
-public static class ChartManager
+public static partial class ChartManager
 {
     private static readonly List<ChartHolder> ChartHolderList =
         new List<ChartHolder>();
@@ -197,7 +197,7 @@ public static class ChartManager
                 continue;
             }
 
-            holder = candidate;
+            holder = candidate.IsSecondKnobObject(noteObject) ? candidate.secondKnobPoint : candidate;
             return true;
         }
 

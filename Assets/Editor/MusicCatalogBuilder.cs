@@ -21,13 +21,15 @@ public static class MusicCatalogBuilder
             throw new DirectoryNotFoundException(musicDirectory);
 
         var songs = new List<(string id, TextAsset data, Sprite jacket, AudioClip audio,
-            IReadOnlyList<(string id, int level, Sprite jacket, TextAsset package)> difficulties)>();
+            IReadOnlyList<(string id, int level, string author, string extraName,
+                Sprite jacket, TextAsset package)> difficulties)>();
         var ids = new HashSet<string>(StringComparer.Ordinal);
         foreach (string folder in Directory.GetDirectories(musicDirectory))
         {
             string dataPath = Path.Combine(folder, "data.json");
             if (!File.Exists(dataPath)) continue;
             SongContent song = SongContentCodec.Parse(File.ReadAllText(dataPath));
+            if (string.Equals(song.MetadataStatus, "draft", StringComparison.Ordinal)) continue;
             if (!ids.Add(song.MusicId))
                 throw new FormatException("Duplicate musicId: " + song.MusicId);
 
@@ -45,17 +47,23 @@ public static class MusicCatalogBuilder
             if (!audioAsset)
                 throw new InvalidOperationException("Song audio is not imported as an AudioClip: " + audioPath);
 
-            var difficulties = new List<(string id, int level, Sprite jacket, TextAsset package)>();
-            foreach (SongChartEntry entry in song.Charts)
+            var difficulties = new List<(string id, int level, string author, string extraName,
+                Sprite jacket, TextAsset package)>();
+            foreach (string path in Directory.GetFiles(folder, "*.rd"))
+                if (SongChartFiles.GetDifficultyIdFromFileName(Path.GetFileName(path)) == null)
+                    throw new FormatException("Unsupported song chart filename: " + path);
+            for (int index = 0; index < SongChartFiles.Count; index++)
             {
-                string chartPath = SongContentCodec.ResolveReference(dataPath, entry.ChartFile);
-                if (!File.Exists(chartPath))
-                    throw new FileNotFoundException("Song chart is missing: " + entry.ChartFile);
+                string difficultyId = SongChartFiles.GetDifficultyId(index);
+                string chartPath = SongContentCodec.ResolveReference(dataPath,
+                    SongChartFiles.GetFileName(difficultyId));
+                if (!File.Exists(chartPath)) continue;
                 string chartText = File.ReadAllText(chartPath);
-                ChartFile chart = ChartFileCodec.Parse(chartText);
-                if (!string.Equals(chart.MusicId, song.MusicId, StringComparison.Ordinal) ||
-                    !string.Equals(chart.DifficultyId, entry.DifficultyId, StringComparison.Ordinal))
-                    throw new FormatException("Song chart identity does not match data.json: " + chartPath);
+                ChartFile chart = ChartFileCodec.Parse(chartText, difficultyId);
+                if (!string.Equals(chart.MusicId, song.MusicId, StringComparison.Ordinal))
+                    throw new FormatException("Song chart musicId does not match data.json: " + chartPath);
+                SongChartFiles.Validate(Path.GetFileName(chartPath),
+                    chart.Level, chart.Author, chart.ExtraName);
 
                 string chartJacketPath = SongContentCodec.ResolveReference(
                     dataPath, chart.EffectiveJacketFile);
@@ -75,7 +83,8 @@ public static class MusicCatalogBuilder
 
                 string packagePath = ChartMakerRuntimePackageExporter
                     .DefaultOutputPath(chartPath);
-                string packageText = ChartMakerRuntimePackageExporter.Export(chartText);
+                string packageText = ChartMakerRuntimePackageExporter.Export(
+                    chartText, null, difficultyId);
                 string packageFolder = ToAssetPath(projectRoot,
                     Path.GetDirectoryName(packagePath));
                 if (!AssetDatabase.IsValidFolder(packageFolder))
@@ -96,9 +105,11 @@ public static class MusicCatalogBuilder
                 if (!packageAsset)
                     throw new InvalidOperationException(
                         "Runtime package is not imported as a TextAsset: " + packagePath);
-                difficulties.Add((entry.DifficultyId, entry.Level, chartJacket,
+                difficulties.Add((difficultyId, chart.Level, chart.Author, chart.ExtraName, chartJacket,
                     packageAsset));
             }
+            if (difficulties.Count == 0)
+                throw new FormatException("Song has no fixed difficulty .rd files: " + dataPath);
             songs.Add((song.MusicId, dataAsset, jacketAsset, audioAsset, difficulties));
         }
         songs.Sort((a, b) => string.CompareOrdinal(a.id, b.id));
@@ -127,6 +138,8 @@ public static class MusicCatalogBuilder
                 SerializedProperty difficulty = difficulties.GetArrayElementAtIndex(chartIndex);
                 difficulty.FindPropertyRelative("difficultyId").stringValue = chart.id;
                 difficulty.FindPropertyRelative("level").intValue = chart.level;
+                difficulty.FindPropertyRelative("author").stringValue = chart.author;
+                difficulty.FindPropertyRelative("extraName").stringValue = chart.extraName ?? string.Empty;
                 difficulty.FindPropertyRelative("jacket").objectReferenceValue = chart.jacket;
                 difficulty.FindPropertyRelative("runtimePackage").objectReferenceValue = chart.package;
             }

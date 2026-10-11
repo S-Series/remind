@@ -2,7 +2,7 @@ using REmind.Data;
 
 public readonly struct RuleContext
 {
-    public int CurrentHealth { get; }
+    public double CurrentHealth { get; }
     public int CurrentCombo { get; }
     public NoteType NoteType { get; }
     public bool IsFever { get; }
@@ -12,7 +12,7 @@ public readonly struct RuleContext
     public double EvaluationTimeMs { get; }
 
     public RuleContext(
-        int currentHealth,
+        double currentHealth,
         int currentCombo,
         NoteType noteType,
         bool isFever,

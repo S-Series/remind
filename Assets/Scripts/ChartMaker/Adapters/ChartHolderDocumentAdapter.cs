@@ -8,7 +8,7 @@ using UnityEngine;
 /// 현재 ChartHolder 저장 구조를 Unity 비의존 ChartDocument로 투영합니다.
 /// 이 어댑터만 ChartHolder 배열과 표시 GameObject의 배치를 알고 있습니다.
 /// </summary>
-public static class ChartHolderDocumentAdapter
+public static partial class ChartHolderDocumentAdapter
 {
     public static ChartHolderDocumentBuildResult Build(
         IReadOnlyList<ChartHolder> holders,
@@ -81,6 +81,7 @@ public static class ChartHolderDocumentAdapter
 
         AddUnclosedIssues(pendingMain, "Main Long Note", issues);
         AddUnclosedIssues(pendingScratch, "Long Scratch", issues);
+        AddCenterNotes(holders, document, viewBindings, issues);
 
         return new ChartHolderDocumentBuildResult(
             document,

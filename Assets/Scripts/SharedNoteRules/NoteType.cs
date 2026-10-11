@@ -12,10 +12,15 @@ namespace REmind.Data
         Effect = 7,
         Camera = 8,
         Marker = 9,
+        CenterTap = 10,
+        Knob = 11,
     }
 
     public static class NoteTypeExtensions
     {
+        public static bool IsCenter(this NoteType noteType) =>
+            noteType == NoteType.CenterTap || noteType == NoteType.Knob;
+
         public static bool IsLong(this NoteType noteType)
         {
             return noteType == NoteType.LongTap ||
@@ -34,7 +39,7 @@ namespace REmind.Data
                 noteType == NoteType.LongTap ||
                 noteType == NoteType.Scratch ||
                 noteType == NoteType.LongScratch ||
-                noteType == NoteType.Air;
+                noteType == NoteType.Air || noteType.IsCenter();
         }
 
         public static bool IsChartEvent(this NoteType noteType)

@@ -3,48 +3,72 @@ using System;
 namespace REmind.Gameplay.Characters
 {
     /// <summary>
-    /// Values for the two connected character stats. Reserved types intentionally
-    /// have no value or conversion until their product meaning is defined.
+    /// Raw character stats and their shared 100% basis. The fourth stat has no
+    /// authored value or runtime effect until its product meaning is decided.
     /// </summary>
     public readonly struct CharacterAbilityStats
     {
-        public int WorldProgressBonusPercent { get; }
-        public int RewardBonusPercent { get; }
+        public int WorldUnlock { get; }
+        public int RegularCurrency { get; }
+        public int HiddenUnlock { get; }
+        public int BasisForOneHundredPercent { get; }
 
-        public decimal WorldProgressMultiplier =>
-            1m + WorldProgressBonusPercent / 100m;
-        public decimal RewardMultiplier =>
-            1m + RewardBonusPercent / 100m;
+        public decimal WorldUnlockMultiplier => Multiplier(WorldUnlock);
+        public decimal RegularCurrencyMultiplier => Multiplier(RegularCurrency);
+        public decimal HiddenUnlockMultiplier => Multiplier(HiddenUnlock);
 
-        public CharacterAbilityStats(int worldProgressBonusPercent,
-            int rewardBonusPercent)
+        public CharacterAbilityStats(int worldUnlock, int regularCurrency,
+            int hiddenUnlock, int basisForOneHundredPercent)
         {
-            if (worldProgressBonusPercent < 0)
+            if (worldUnlock < 0)
+                throw new ArgumentOutOfRangeException(nameof(worldUnlock));
+            if (regularCurrency < 0)
+                throw new ArgumentOutOfRangeException(nameof(regularCurrency));
+            if (hiddenUnlock < 0)
+                throw new ArgumentOutOfRangeException(nameof(hiddenUnlock));
+            if (basisForOneHundredPercent <= 0)
                 throw new ArgumentOutOfRangeException(
-                    nameof(worldProgressBonusPercent));
-            if (rewardBonusPercent < 0)
-                throw new ArgumentOutOfRangeException(
-                    nameof(rewardBonusPercent));
+                    nameof(basisForOneHundredPercent));
 
-            WorldProgressBonusPercent = worldProgressBonusPercent;
-            RewardBonusPercent = rewardBonusPercent;
+            WorldUnlock = worldUnlock;
+            RegularCurrency = regularCurrency;
+            HiddenUnlock = hiddenUnlock;
+            BasisForOneHundredPercent = basisForOneHundredPercent;
         }
 
-        public bool TryGetBonusPercent(CharacterStatType type,
-            out int bonusPercent)
+        public bool TryGetRawValue(CharacterStatType type, out int value)
         {
             switch (type)
             {
-                case CharacterStatType.WorldProgress:
-                    bonusPercent = WorldProgressBonusPercent;
+                case CharacterStatType.WorldUnlock:
+                    value = WorldUnlock;
                     return true;
-                case CharacterStatType.Reward:
-                    bonusPercent = RewardBonusPercent;
+                case CharacterStatType.RegularCurrency:
+                    value = RegularCurrency;
+                    return true;
+                case CharacterStatType.HiddenUnlock:
+                    value = HiddenUnlock;
                     return true;
                 default:
-                    bonusPercent = 0;
+                    value = 0;
                     return false;
             }
         }
+
+        public bool TryGetMultiplier(CharacterStatType type,
+            out decimal multiplier)
+        {
+            if (TryGetRawValue(type, out int value))
+            {
+                multiplier = Multiplier(value);
+                return true;
+            }
+            multiplier = 0m;
+            return false;
+        }
+
+        private decimal Multiplier(int value) =>
+            BasisForOneHundredPercent > 0
+                ? value / (decimal)BasisForOneHundredPercent : 0m;
     }
 }

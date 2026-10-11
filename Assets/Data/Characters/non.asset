@@ -1,0 +1,30 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9ef2d054b5c14b00b997b74b457e97e7, type: 3}
+  m_Name: non
+  m_EditorClassIdentifier: REmind.Gameplay::REmind.Gameplay.Characters.CharacterDefinitionAsset
+  characterId: non
+  definitionVersion: 1
+  displayName: 논
+  englishName: NON
+  profileText: '「 … 잊혀진 마음도, 어딘가에 빛나고 있을 거야. 」'
+  portraitTexture: {fileID: 2800000, guid: a4583f830688e0942aa61f3faa4dbaa4, type: 3}
+  portraitUv:
+    serializedVersion: 2
+    x: 0.26
+    y: 0.60
+    width: 0.20
+    height: 0.31
+  gaugeRule: {fileID: 11400000, guid: f8ac394c9c037289470c6e953c51d9fa, type: 2}
+  worldUnlock: 50
+  regularCurrency: 50
+  hiddenUnlock: 50

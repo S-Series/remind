@@ -25,7 +25,7 @@ namespace REmind.Gameplay.Input.Judgement
         private PlayableChartSnapshot chart;
         private PlayableJudgementSession session;
         private EffectRunner effectRunner;
-        private long effectRunnerGeneration;
+        private long frameGeneration;
         private long inputSequence;
         private double chartOffsetMs;
         private double timelineTimeMs = double.NegativeInfinity;
@@ -35,6 +35,7 @@ namespace REmind.Gameplay.Input.Judgement
 
         public event Action<NoteJudgementEvent> NoteJudged;
         public event Action<EffectRunner> EffectFrameCompleted;
+        public event Action<string> PlaybackFailed;
         public Func<PlayableNoteSnapshot, RuleContext> RuleContextFactory
             { get; set; }
         public bool IsInitialized => session != null;
@@ -42,6 +43,8 @@ namespace REmind.Gameplay.Input.Judgement
         /// <summary>Sticky for the current attempt; only a fresh start clears it.</summary>
         public bool UsedAutoPlayInCurrentAttempt { get; private set; }
         public int PendingNoteCount => session?.PendingNoteCount ?? 0;
+        public double PlayerKnobX => session?.PlayerKnobX ?? 0d;
+        public string PlayerKnobNoteId => session?.PlayerKnobNoteId;
         public double ChartOffsetMs => chartOffsetMs;
         public double UserOffsetMs => userOffsetMs;
         public string LastTimelineError { get; private set; }
@@ -67,17 +70,50 @@ namespace REmind.Gameplay.Input.Judgement
             inputRouter.InputPerformed += HandleInput;
             inputRouter.InputReleased += HandleInput;
             if (gameManager && gameManager.GamePlay)
+            {
                 gameManager.GamePlay.PlaybackStarted += HandlePlaybackStarted;
+                gameManager.GamePlay.PlaybackStateChanged += HandlePlaybackStateChanged;
+            }
         }
 
         private void OnDisable()
         {
+            // A disabled component leaves its GameObject active; scene teardown
+            // disables the hierarchy while the component's enabled flag stays set.
+            bool interrupted = !enabled && gameObject.activeInHierarchy &&
+                gameManager && gameManager.GamePlay &&
+                (gameManager.PlaybackState == PlaybackState.Playing ||
+                 gameManager.PlaybackState == PlaybackState.Paused);
             pendingInputs.Clear();
-            if (!inputRouter) return;
-            inputRouter.InputPerformed -= HandleInput;
-            inputRouter.InputReleased -= HandleInput;
+            session?.Halt();
+            unchecked { frameGeneration++; }
+            if (inputRouter)
+            {
+                inputRouter.InputPerformed -= HandleInput;
+                inputRouter.InputReleased -= HandleInput;
+            }
             if (gameManager && gameManager.GamePlay)
+            {
                 gameManager.GamePlay.PlaybackStarted -= HandlePlaybackStarted;
+                gameManager.GamePlay.PlaybackStateChanged -= HandlePlaybackStateChanged;
+            }
+            if (interrupted)
+            {
+                gameManager.StopGame();
+                const string reason = "Judgement component was disabled during playback.";
+                Debug.LogError(reason, this);
+                NotifyPlaybackFailed(reason);
+            }
+        }
+
+        private void NotifyPlaybackFailed(string reason)
+        {
+            if (PlaybackFailed == null) return;
+            foreach (Delegate callback in PlaybackFailed.GetInvocationList())
+            {
+                try { ((Action<string>)callback)(reason); }
+                catch (Exception exception) { Debug.LogException(exception, this); }
+            }
         }
 
         private void LateUpdate()
@@ -98,6 +134,7 @@ namespace REmind.Gameplay.Input.Judgement
                 double.IsInfinity(noteChartOffsetMs) || !gameRule)
                 return false;
             chart = snapshot;
+            if (inputRouter) inputRouter.RefreshSpaceTap();
             chartOffsetMs = noteChartOffsetMs;
             session = CreateSession(snapshot);
             return true;
@@ -106,7 +143,7 @@ namespace REmind.Gameplay.Input.Judgement
         public void AttachEffectRunner(EffectRunner runner)
         {
             effectRunner = runner;
-            unchecked { effectRunnerGeneration++; }
+            unchecked { frameGeneration++; }
             pendingInputs.Clear();
             timelineTimeMs = double.NegativeInfinity;
             lastCommittedEffectTimeMs = double.NegativeInfinity;
@@ -126,7 +163,7 @@ namespace REmind.Gameplay.Input.Judgement
                 double.IsInfinity(songTimeMs)) return;
             double currentTime = songTimeMs - chartOffsetMs;
             EffectRunner frameRunner = effectRunner;
-            long generation = effectRunnerGeneration;
+            long generation = frameGeneration;
             try
             {
                 if (LastTimelineError != null) return;
@@ -140,7 +177,7 @@ namespace REmind.Gameplay.Input.Judgement
                     int order = a.ChartTimeMs.CompareTo(b.ChartTimeMs);
                     return order != 0 ? order : a.Sequence.CompareTo(b.Sequence);
                 });
-                while (generation == effectRunnerGeneration)
+                while (generation == frameGeneration)
                 {
                     double effectTime = frameRunner?.NextEventTimeMs ??
                         double.PositiveInfinity;
@@ -158,6 +195,7 @@ namespace REmind.Gameplay.Input.Judgement
                         judgementTimeMs = effectTime;
                         if (!frameRunner.TriggerThrough(effectTime, currentTime))
                             break;
+                        if (generation != frameGeneration) break;
                         lastCommittedEffectTimeMs = effectTime;
                         continue;
                     }
@@ -188,27 +226,36 @@ namespace REmind.Gameplay.Input.Judgement
                     if (IsAutoPlayEnabled)
                         UsedAutoPlayInCurrentAttempt = true;
                     session.ProcessAutomatic(autoTime, IsAutoPlayEnabled);
+                    if (generation != frameGeneration) break;
                     lastAutomaticTimeMs = autoTime;
                 }
-                if (generation == effectRunnerGeneration &&
+                if (generation == frameGeneration &&
                     frameRunner != null && LastTimelineError == null &&
                     !frameRunner.TransitionRequested &&
                     frameRunner.Failure == null)
                     frameRunner.AdvanceTo(currentTime);
-                if (generation == effectRunnerGeneration)
+                if (generation == frameGeneration)
+                {
+                    session.UpdateKnobDisplayTime(currentTime, IsAutoPlayEnabled);
                     timelineTimeMs = Math.Max(timelineTimeMs, currentTime);
+                }
             }
             catch (Exception exception)
             {
-                if (generation == effectRunnerGeneration)
+                if (generation == frameGeneration)
                     LastTimelineError = "Timeline processing failed: " +
                         exception.Message;
             }
-            finally { NotifyEffectFrameCompleted(frameRunner); }
+            finally
+            {
+                if (generation == frameGeneration)
+                    NotifyEffectFrameCompleted(frameRunner);
+            }
         }
 
         public void ResetJudgements(bool reactivateRegisteredViews = true)
         {
+            unchecked { frameGeneration++; }
             pendingInputs.Clear();
             inputSequence = 0;
             timelineTimeMs = double.NegativeInfinity;
@@ -233,7 +280,12 @@ namespace REmind.Gameplay.Input.Judgement
                 throw new InvalidOperationException(
                     "Change judgement offset before starting playback.");
             userOffsetMs = value;
-            if (chart != null) session = CreateSession(chart);
+            if (chart != null)
+            {
+                session?.Halt();
+                unchecked { frameGeneration++; }
+                session = CreateSession(chart);
+            }
         }
 
         public void SetAutoPlayEnabled(bool value)
@@ -277,7 +329,8 @@ namespace REmind.Gameplay.Input.Judgement
         {
             pendingInputs.Clear();
             effectRunner = null;
-            unchecked { effectRunnerGeneration++; }
+            session?.Halt();
+            unchecked { frameGeneration++; }
             inputSequence = 0;
             timelineTimeMs = double.NegativeInfinity;
             lastCommittedEffectTimeMs = double.NegativeInfinity;
@@ -306,11 +359,24 @@ namespace REmind.Gameplay.Input.Judgement
 
         private void HandlePlaybackStarted(double songTimeMs)
         {
+            if (inputRouter) inputRouter.RefreshSpaceTap();
             if (gameManager.GamePlay.StartReason != PlaybackStartReason.Resume)
                 UsedAutoPlayInCurrentAttempt = IsAutoPlayEnabled;
             if (gameManager.GamePlay.StartReason == PlaybackStartReason.Resume &&
                 session != null && inputRouter != null)
-                session.BreakReleasedHolds(inputRouter.IsLanePressed);
+                session.BreakReleasedHolds(inputRouter.IsLanePressed,
+                    songTimeMs - chartOffsetMs);
+        }
+
+        private void HandlePlaybackStateChanged(PlaybackState state)
+        {
+            // Ready/Empty are terminal for this attempt. Pause and Resume keep
+            // the same judgement session and queued timeline position.
+            if (state != PlaybackState.Ready && state != PlaybackState.Empty)
+                return;
+            session?.Halt();
+            pendingInputs.Clear();
+            unchecked { frameGeneration++; }
         }
 
         private PlayableJudgementSession CreateSession(
@@ -374,8 +440,7 @@ namespace REmind.Gameplay.Input.Judgement
         private void HandleResolution(ChartJudgementResolution resolution)
         {
             PlayableNoteSnapshot note = resolution.Note;
-            bool final = resolution.SegmentIndex < 0 ||
-                resolution.SegmentIndex == note.Points.Count - 2;
+            bool final = resolution.IsNoteComplete;
             if (final && noteViews.TryGetValue(note.Id, out GameObject view) &&
                 view) view.SetActive(false);
             NoteJudged?.Invoke(new NoteJudgementEvent(note,
@@ -384,7 +449,8 @@ namespace REmind.Gameplay.Input.Judgement
                 resolution.OffsetMs,
                 resolution.TargetTimeMs + chartOffsetMs,
                 resolution.EvaluationTimeMs,
-                resolution.IsAutomaticMiss));
+                resolution.IsAutomaticMiss, resolution.IsNoteComplete,
+                resolution.TargetKind));
         }
 
         private void NotifyEffectFrameCompleted(EffectRunner runner)
@@ -408,6 +474,8 @@ namespace REmind.Gameplay.Input.Judgement
                 case ChartNoteKind.Scratch: return NoteType.Scratch;
                 case ChartNoteKind.LongScratch: return NoteType.LongScratch;
                 case ChartNoteKind.Air: return NoteType.Air;
+                case ChartNoteKind.CenterTap: return NoteType.CenterTap;
+                case ChartNoteKind.Knob: return NoteType.Knob;
                 default: return NoteType.Unknown;
             }
         }

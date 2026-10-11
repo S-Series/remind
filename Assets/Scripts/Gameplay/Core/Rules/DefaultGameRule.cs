@@ -26,11 +26,18 @@ public sealed class DefaultGameRule : GameRule
             return true;
         }
 
-        return context.IsChartCompleted && context.CurrentHealth < BaseClearHealth;
+        return context.IsChartCompleted && !HasClearHealth(context.CurrentHealth);
     }
 
     protected override bool EvaluateBaseIsCleared(RuleContext context)
     {
-        return context.IsChartCompleted && context.CurrentHealth >= BaseClearHealth;
+        return context.IsChartCompleted && HasClearHealth(context.CurrentHealth);
+    }
+
+    private bool HasClearHealth(double health)
+    {
+        return GaugeType == HealthGaugeType.Hard
+            ? health > 0d
+            : health >= 70d;
     }
 }

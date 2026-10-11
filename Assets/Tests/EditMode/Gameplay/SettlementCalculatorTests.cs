@@ -17,49 +17,80 @@ namespace REmind.Gameplay.Tests
         public void TearDown() => UnityEngine.Object.DestroyImmediate(normalRule);
 
         [Test]
-        public void StartSnapshotAppliesOnlyItsTwoSettlementBonuses()
+        public void StartSnapshotAppliesOnlyExistingTwoSettlementQuantities()
         {
-            CharacterAbilityStartSnapshot start = StartWithBonuses(20, 50);
+            CharacterAbilityStartSnapshot start = StartWithStats(60, 75);
 
             SettlementCalculation calculated = SettlementCalculator.Calculate(
                 100m, 100m, start);
 
-            Assert.AreEqual(120m, calculated.WorldProgress);
-            Assert.AreEqual(150m, calculated.Reward);
-            Assert.IsFalse(start.Stats.TryGetBonusPercent(
-                CharacterStatType.ReservedExtension1, out _));
-            Assert.IsFalse(start.Stats.TryGetBonusPercent(
-                CharacterStatType.ReservedExtension2, out _));
+            Assert.AreEqual(120m, calculated.WorldUnlock);
+            Assert.AreEqual(150m, calculated.RegularCurrency);
+            Assert.IsFalse(start.Stats.TryGetMultiplier(
+                CharacterStatType.Reserved, out _));
         }
 
         [Test]
-        public void EachBonusChangesOnlyItsOwnQuantity()
+        public void EachRawStatChangesOnlyItsOwnQuantity()
         {
             SettlementCalculation worldOnly = SettlementCalculator.Calculate(
-                10m, 10m, StartWithBonuses(20, 0));
+                10m, 10m, StartWithStats(60, 50));
             SettlementCalculation rewardOnly = SettlementCalculator.Calculate(
-                10m, 10m, StartWithBonuses(0, 50));
+                10m, 10m, StartWithStats(50, 75));
 
-            Assert.AreEqual(12m, worldOnly.WorldProgress);
-            Assert.AreEqual(10m, worldOnly.Reward);
-            Assert.AreEqual(10m, rewardOnly.WorldProgress);
-            Assert.AreEqual(15m, rewardOnly.Reward);
+            Assert.AreEqual(12m, worldOnly.WorldUnlock);
+            Assert.AreEqual(10m, worldOnly.RegularCurrency);
+            Assert.AreEqual(10m, rewardOnly.WorldUnlock);
+            Assert.AreEqual(15m, rewardOnly.RegularCurrency);
+        }
+
+        [Test]
+        public void ZeroRawStatsProduceZeroExistingQuantities()
+        {
+            SettlementCalculation calculated = SettlementCalculator.Calculate(
+                10m, 10m, StartWithStats(0, 0));
+
+            Assert.AreEqual(0m, calculated.WorldUnlock);
+            Assert.AreEqual(0m, calculated.RegularCurrency);
         }
 
         [Test]
         public void FractionalQuantitiesRemainUnrounded()
         {
             SettlementCalculation calculated = SettlementCalculator.Calculate(
-                0.5m, 0.5m, StartWithBonuses(20, 50));
+                0.5m, 0.5m, StartWithStats(60, 75));
 
-            Assert.AreEqual(0.6m, calculated.WorldProgress);
-            Assert.AreEqual(0.75m, calculated.Reward);
+            Assert.AreEqual(0.6m, calculated.WorldUnlock);
+            Assert.AreEqual(0.75m, calculated.RegularCurrency);
+        }
+
+        [Test]
+        public void LaterBasisChangeCannotRepriceAnExistingStart()
+        {
+            var oldDefinition = new CharacterAbilityDefinition(
+                "sample", HealthGaugeType.Normal,
+                new CharacterAbilityStats(50, 50, 0, 50));
+            CharacterAbilityStartSnapshot oldStart =
+                oldDefinition.FreezeForStart(normalRule);
+            var updatedDefinition = new CharacterAbilityDefinition(
+                "sample", HealthGaugeType.Normal,
+                new CharacterAbilityStats(50, 50, 0, 25));
+            CharacterAbilityStartSnapshot laterStart =
+                updatedDefinition.FreezeForStart(normalRule);
+
+            Assert.AreEqual(100m,
+                SettlementCalculator.Calculate(100m, 100m, oldStart)
+                    .WorldUnlock);
+            Assert.AreEqual(200m,
+                SettlementCalculator.Calculate(100m, 100m, laterStart)
+                    .WorldUnlock);
+            Assert.AreEqual(50, oldStart.StatBasis);
         }
 
         [Test]
         public void InvalidInputsAreRejectedBeforeCalculation()
         {
-            CharacterAbilityStartSnapshot start = StartWithBonuses(20, 50);
+            CharacterAbilityStartSnapshot start = StartWithStats(60, 75);
 
             Assert.Throws<ArgumentNullException>(() =>
                 SettlementCalculator.Calculate(1m, 1m, null));
@@ -69,13 +100,14 @@ namespace REmind.Gameplay.Tests
                 SettlementCalculator.Calculate(1m, -1m, start));
         }
 
-        private CharacterAbilityStartSnapshot StartWithBonuses(
-            int worldBonusPercent, int rewardBonusPercent)
+        private CharacterAbilityStartSnapshot StartWithStats(
+            int worldUnlock, int regularCurrency)
         {
             var character = new CharacterAbilityDefinition(
                 "settlement-test", HealthGaugeType.Normal,
-                new CharacterAbilityStats(worldBonusPercent,
-                    rewardBonusPercent));
+                new CharacterAbilityStats(worldUnlock,
+                    regularCurrency, hiddenUnlock: 0,
+                    basisForOneHundredPercent: 50));
             return character.FreezeForStart(normalRule);
         }
     }

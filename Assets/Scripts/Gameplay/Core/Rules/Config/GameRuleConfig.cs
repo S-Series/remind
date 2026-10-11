@@ -5,7 +5,7 @@ using UnityEngine;
 public sealed class GameRuleConfig : ScriptableObject
 {
     [Header("Judgement")]
-    [SerializeField] private JudgeWindows baseJudgeWindows = new JudgeWindows(50, 50, 100, 100);
+    [SerializeField] private JudgeWindows baseJudgeWindows = new JudgeWindows(40, 80, 130, 175);
 
     [Header("Gauge")]
     [SerializeField] private HealthGaugeType gaugeType = HealthGaugeType.Normal;
@@ -13,6 +13,8 @@ public sealed class GameRuleConfig : ScriptableObject
     [SerializeField, Min(0)] private int initialHealth = 100;
     [SerializeField, Min(0)] private int clearHealth = 70;
     [SerializeField] private JudgeHealthDeltaSettings healthDelta = new JudgeHealthDeltaSettings();
+    [SerializeField] private bool useSpecialHardGauge;
+    [SerializeField] private SpecialHardGaugeSettings specialHardGauge;
 
     [Header("Score")]
     [SerializeField, Min(0)] private int maxScore = 1_000_000;
@@ -35,12 +37,15 @@ public sealed class GameRuleConfig : ScriptableObject
     public int InitialHealth => initialHealth;
     public int ClearHealth => clearHealth;
     public JudgeHealthDeltaSettings HealthDelta => healthDelta;
+    public SpecialHardGaugeSettings SpecialHardGauge =>
+        useSpecialHardGauge ? specialHardGauge : null;
     public int MaxScore => maxScore;
     public JudgeScoreWeightSettings ScoreWeight => scoreWeight;
     public RankThresholdSettings RankThresholds => rankThresholds;
     public JudgeComboBehaviorSettings ComboBehavior => comboBehavior;
-    public bool FailImmediately => failImmediately;
-    public bool ContinueAfterFail => continueAfterFail;
+    public bool FailImmediately => gaugeType == HealthGaugeType.Hard;
+    public bool ContinueAfterFail =>
+        gaugeType != HealthGaugeType.Hard && continueAfterFail;
     public LongNoteJudgeMode LongNoteJudgeMode => longNoteJudgeMode;
 
     /// <summary>Reject malformed authored data before it becomes a live session rule.</summary>
@@ -53,17 +58,17 @@ public sealed class GameRuleConfig : ScriptableObject
             clearHealth > maxHealth || maxScore < 0 ||
             healthDelta == null || scoreWeight == null ||
             rankThresholds == null || comboBehavior == null ||
-            baseJudgeWindows.PerfectWindowMs < 0 ||
+            baseJudgeWindows.PerfectPlusWindowMs < 0 ||
+            baseJudgeWindows.PerfectWindowMs <
+                baseJudgeWindows.PerfectPlusWindowMs ||
             baseJudgeWindows.GreatWindowMs <
                 baseJudgeWindows.PerfectWindowMs ||
-            baseJudgeWindows.GoodWindowMs <
-                baseJudgeWindows.GreatWindowMs ||
             baseJudgeWindows.MissWindowMs <
-                baseJudgeWindows.GoodWindowMs)
+                baseJudgeWindows.GreatWindowMs)
             throw new InvalidOperationException(
                 "GameRuleConfig has invalid session values.");
 
-        for (int grade = (int)JudgeResult.Perfect;
+        for (int grade = (int)JudgeResult.PerfectPlus;
              grade <= (int)JudgeResult.Miss; grade++)
         {
             double weight = scoreWeight.GetValue((JudgeResult)grade);
@@ -71,6 +76,14 @@ public sealed class GameRuleConfig : ScriptableObject
                 weight < 0d)
                 throw new InvalidOperationException(
                     "GameRuleConfig has an invalid score weight.");
+        }
+        if (useSpecialHardGauge)
+        {
+            if (specialHardGauge == null ||
+                gaugeType != HealthGaugeType.Hard || maxHealth == 0)
+                throw new InvalidOperationException(
+                    "Special Hard health values require a positive Hard gauge.");
+            specialHardGauge.Validate();
         }
     }
 

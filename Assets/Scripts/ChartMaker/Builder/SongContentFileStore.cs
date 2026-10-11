@@ -17,8 +17,6 @@ public static class SongContentFileStore
             if (!File.Exists(path))
                 throw new FileNotFoundException("Song resource is missing: " + reference, path);
         }
-        foreach (SongChartEntry entry in song.Charts)
-            SongContentCodec.ResolveReference(fullPath, entry.ChartFile);
         return song;
     }
 
@@ -31,11 +29,16 @@ public static class SongContentFileStore
         if (!string.Equals(song.MusicId, chart.MusicId, StringComparison.Ordinal))
             throw new FormatException("Chart musicId does not match song data: " +
                 chart.MusicId + " / " + song.MusicId);
-        SongChartEntry entry = song.FindChart(chart.DifficultyId);
-        if (entry == null || !SamePath(
-                SongContentCodec.ResolveReference(dataPath, entry.ChartFile),
+        string fileName = Path.GetFileName(fullChartPath);
+        string difficultyId = SongChartFiles.GetDifficultyIdFromFileName(fileName);
+        SongChartFiles.Validate(fileName, chart.Level, chart.Author, chart.ExtraName);
+        if (!string.IsNullOrWhiteSpace(chart.DifficultyId) &&
+            !string.Equals(chart.DifficultyId, difficultyId, StringComparison.Ordinal))
+            throw new FormatException("Legacy chart difficultyId does not match its filename.");
+        chart.DifficultyId = difficultyId;
+        if (!SamePath(SongContentCodec.ResolveReference(dataPath, fileName),
                 fullChartPath))
-            throw new FormatException("The song data does not list this chart and difficulty.");
+            throw new FormatException("Song charts must be in the song folder.");
         return song;
     }
 

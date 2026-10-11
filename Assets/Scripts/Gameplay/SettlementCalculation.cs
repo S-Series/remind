@@ -9,33 +9,35 @@ namespace REmind.Gameplay
     /// </summary>
     public readonly struct SettlementCalculation
     {
-        public decimal WorldProgress { get; }
-        public decimal Reward { get; }
+        public decimal WorldUnlock { get; }
+        public decimal RegularCurrency { get; }
 
-        internal SettlementCalculation(decimal worldProgress, decimal reward)
+        internal SettlementCalculation(decimal worldUnlock,
+            decimal regularCurrency)
         {
-            WorldProgress = worldProgress;
-            Reward = reward;
+            WorldUnlock = worldUnlock;
+            RegularCurrency = regularCurrency;
         }
     }
 
     public static class SettlementCalculator
     {
         public static SettlementCalculation Calculate(
-            decimal baseWorldProgress, decimal baseReward,
+            decimal baseWorldUnlock, decimal baseRegularCurrency,
             CharacterAbilityStartSnapshot startSnapshot)
         {
             if (startSnapshot == null)
                 throw new ArgumentNullException(nameof(startSnapshot));
-            if (baseWorldProgress < 0m)
-                throw new ArgumentOutOfRangeException(nameof(baseWorldProgress));
-            if (baseReward < 0m)
-                throw new ArgumentOutOfRangeException(nameof(baseReward));
+            if (baseWorldUnlock < 0m)
+                throw new ArgumentOutOfRangeException(nameof(baseWorldUnlock));
+            if (baseRegularCurrency < 0m)
+                throw new ArgumentOutOfRangeException(
+                    nameof(baseRegularCurrency));
 
-            CharacterAbilityStats stats = startSnapshot.Stats;
             return new SettlementCalculation(
-                baseWorldProgress * stats.WorldProgressMultiplier,
-                baseReward * stats.RewardMultiplier);
+                baseWorldUnlock * startSnapshot.WorldUnlockMultiplier,
+                baseRegularCurrency *
+                    startSnapshot.RegularCurrencyMultiplier);
         }
     }
 }

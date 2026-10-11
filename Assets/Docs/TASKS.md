@@ -3,7 +3,47 @@
 > 상태: Working Document  
 > 현재 작업과 바로 다음 작업만 기록한다.
 
+## 독립 제품 정리 통합 기준선 — 2026-10-06
+
+- 현재 작업트리의 `Assets`·`Packages`·`ProjectSettings`를 새 격리본에 고정했다.
+  복사 직후 1,817개 파일의 SHA-256이 원본과 일치했다. 정리 전 1,838개 파일과
+  검사 결과는 `Logs/IntegrationBaseline/20261006-cleanup-before/report.md`에 있다.
+- 삭제된 씬을 Game 빌드 목록과 Editor Build Settings에서 제외했다. Game은
+  Bootstrap·Home·MusicSelect·ReMind·Game·Result 6개, ChartMaker는 전용 1개
+  씬으로 Windows 독립 빌드가 성공했다. 서로의 제품 DLL은 산출물에서 제외됐다.
+  종합 Game 스모크는 NON 재시도 attempt ID 분리, Hard, Effect 실패, 컴포넌트
+  비활성화까지 통과했고, 최종 Unity EditMode는 **159/159 통과**했다.
+- 원본 Art·Data·Scenes·Prefabs 1,199개 파일은 정리 전과 해시 차이가 없다.
+  `STORY_Button`은 삭제된 Story 씬으로 가는 호출을 유지하므로 제품 동선 결정이
+  필요하다. 실제 Player의 화면·청음·물리 입력 검수도 남는다. 명령, 종료 코드,
+  해시, 빌드 산출물, 중간 실패와 최종 결과는
+  `Logs/IntegrationBaseline/20261006-cleanup-after/report.md`에 있다.
+
+## Home 모달 Intro/Outro 통합 검증 — 2026-10-02
+
+- `CharacterOverlay.prefab`과 `SettingsOverlay.prefab`에 공통
+  `OverlayPresentation`을 연결했다. 기존 패널·아트 배치를 재생성하지 않았고,
+  Home의 Option은 Settings 모달을 연다. 두 모달은 비축척 시간으로 Intro/Outro를
+  진행하며 닫힘 완료 뒤 Home 탐색 Scope를 복원한다.
+- Unity 6000.3.15f1 격리 복사본에서 두 프리팹만 바인딩해 원본에 반영했다.
+  EditMode 전체 **158/158 통과**, Game PlayMode 스모크의
+  `GAME_NON_PLAYMODE_SMOKE_PASSED`와 `GAME_PLAYMODE_SMOKE_PASSED`를 확인했다.
+  스모크는 빠른 취소·중복 열기, Option 경로, `Time.timeScale=0`인 Intro,
+  Settings 재지정 취소 후 모달 포커스 복원, 저장과 씬 이동 정리, Character 미리보기·
+  BEGIN, 기존 Game/Result 경로를 검사한다. 로그와 결과는
+  `Logs/IntegrationBaseline/20261002-overlay`에 있다.
+- 같은 격리본에서 두 모달의 열린 상태와 Intro 중간을 1920×1080 PNG로 렌더링해
+  패널이 화면 밖으로 잘리지 않는 것을 확인했다. 중간 상태는 표시 파라미터를
+  편집기 렌더에 대입한 정적 프레임이며 실제 플레이 프레임 캡처가 아니다.
+  Settings 하단 상태 문구와 Reset 버튼, 일부 Audio 라벨과 슬라이더의 겹침은
+  기존 프리팹 배치에 남아 있다. 이번 바인딩 diff는 표시 컴포넌트·참조뿐이다.
+  실제 입력 장치, 화면 비율별 UI, 청음은 별도 수동 검수 대상이다.
+
 ## 현황 검토 — 2026-09-30
+
+아래 `978da3e` 기준과 당시 미커밋 상태는 9/30 검토 이력이다. 10/1 통합 경계
+재검증은 `fd03463` 관련 사전 파일과 그 이후 작업 트리 수정본을 별도 격리본으로
+비교했으며, 결과와 적용 시점은 아래 10/1 항목에 기록한다.
 
 기준은 `main`의 `978da3e`(`Game 전환 연출과 설정 오버레이 통합`)다.
 검토 시작 시 `a5f6026` 이후 로컬 변경을 조사했고, 마무리 중 새 커밋에 반영된 것을
@@ -135,6 +175,38 @@ Editor Search 시작 예외와 스모크의 강제 시간 진행 로그는 남�
 방지·저장 이행, 최종 Hard 밸런스는 완료로 계산하지 않는다. 실제 화면·청음·
 물리 입력과 빌드 실행도 별도 검수 대상이다.
 
+#### 통합 경계 재검증 — 2026-10-01
+
+세 가지 회귀를 수정·검증했다. Hard의 동일 시각 자동 Miss 뒤 회복 판정은 종료
+실패를 되돌리지 않는다. Game 재생은 음원 준비와 화면 전환 종료를 모두 기다린다.
+실행 중 Effect 실패는 오류 화면과 Music Select 복귀로 이어지며 결과·저장을
+만들지 않는다. 실행 중 Effect/판정 컴포넌트의 독립 비활성화도 같은 실패 경계로
+확인했다. 실제 Bootstrap/Character 오버레이 경로와 Game 오류 글꼴 참조를 함께
+검사했다. 격리 복사본의 사전 회귀는 135개 중 해당 3개 실패, 수정 후 EditMode는
+145/145 통과했다. 최신 씬·스모크 러너를 덧씌운 PlayMode Normal, Hard, Effect
+실패, 컴포넌트 비활성화 경로와 Game Windows 빌드가 통과했다. ChartMaker 독립
+빌드는 해당 Game 씬 수정 전의 동일 Shared/ChartMaker 코드로 성공했다. 두 빌드에서
+상대 제품 DLL은 제외됐다. 산출물과 적용 시점 차이는
+`Logs/IntegrationBaseline/20261001-boundary/report.md`에 기록했다. Unity Editor
+Search 시작 예외와 Character 장식 글리프 경고는 남아 있고, 실제 Player 실행·
+화면·청음·물리 입력은 검수하지 않았다.
+
+#### 기본 캐릭터 NON 실제 시작 흐름 — 2026-10-01
+
+Game 전용 `CharacterCatalog`/NON 정의와 기본 게이지 시작 0/최대 100을 연결했다.
+`LocalPlayerDataStore` v2는 기본 보유·장착, v1 곡 기록/즐겨찾기 이행, 잘못된 장착
+ID 복구와 저장 실패 롤백을 다룬다. Home의 Character 오버레이에서 실제 카드
+미리보기·취소·BEGIN 장착을 거쳐 Music Select Play→Game 시작 snapshot→Result의
+NON ID/정의 버전/raw stat·게이지 값을 확인했다. 격리본 전체 EditMode **158/158**,
+NON Normal 스모크와 기존 Hard/Effect 오류/컴포넌트 비활성화 스모크, Game·
+ChartMaker Windows 독립 빌드가 통과했다. 두 제품의 상대 DLL은 제외됐다.
+NON 월드/통상/히든 raw 50, basis 50, 스킬·성장 없음은 중립 캐릭터의 조정 가능한
+개발값이며 네 번째 stat은 미정이다. 실제 보상·월드/히든 진행 지급과 중복 방지
+정산은 아직 연결하지 않았다. PlayMode는 저장소를 다시 읽어 장착을 확인했지만
+**앱을 종료 후 재실행하는 검증은 하지 않았다.** 수동 화면·청음·물리 입력,
+글리프와 stat 바의 척도 표현도 남는다. 명령·manifest·로그·Builder 적용 범위는
+`Logs/IntegrationBaseline/20261001-non/report.md`에 있다.
+
 #### E2a 판정 비용 기준선 — 2026-09-30
 
 순수 ChartCore 판정 재생을 간섭 프로세스 없는 조건에서 두 번 측정했다. 밀집 2,000노트
@@ -190,6 +262,78 @@ DemoPlay의 테스트 fixture 이동, 이에 따른 프로필·회귀 검사·�
 
 ## Current
 
+- **시작 전 Step 포함 구현·고정 검증본 검사/빌드 완료, 수동 검수 남음: Knob v2 (2026-10-08).**
+  기존 v1 좌우 채보와 Main/Air는 무변환 보존하고, 새 CenterTap/Knob이 있는 채보만
+  v2로 저장한다. 공용 위치 추적 계약, Game/Maker RibbonMesh·실제 cursor와
+  한 경로 지점 편집을 연결했다. 사용자 제공 새 외관은 후속 작업이다.
+- Space 보조 입력은 기본 OFF다. ON이면 Shift와 Space 모두 중앙 Tap을 처리하고,
+  노브는 논리 L/R 입력으로 위치를 조작한다. 일반 시작은 시작값으로 위치를 지정하되
+  유효한 시작 전 Step 이동이 있으면 그 위치를 유지한다. 이후 입력이나 다음 시작 전까지
+  위치를 유지한다. 시작 새 Down/종료 Up은 요구하지 않는다.
+  설정은 Home→Settings→Controls의 Space Tap에서 바꾸며 다음 플레이부터 적용한다.
+  Space가 다른 레인에 할당돼 있으면 ON을 거부한다.
+- v2는 기존 9열 `notes`를 유지하고 `centerNotes`에 절대 정수 `position`,
+  `kind`(`tap`/`knobStart`/`knobMid`/`knobEnd`), `x`(-1~1)를 둔다.
+  목적지 incoming `interpolation`은 linear/step이며 생략하면 linear다. 첫 동일 X 구간도
+  허용한다. [ChartFormat.md](ChartFormat.md) 18.3절에 새 계약을 반영했다.
+- 논리 위치 ±2.5, 속도 5 units/s, 공간 판정·보정 ±0.25, 체크 간격 100ms를 적용한다.
+  사선은 범위 안에서 올바른 키를 유지하면 추적하고, 해제하면 위치를 유지한다.
+  양키는 수동/사선 추적 중립이며 정상 세로 구간은 어느 키로도 이탈하지 않는다.
+  목표와 위치가 0으로 일치하는 무입력도 정상이다. 정상 시작·추적·예약은 Perfect+,
+  실패는 Miss다. 이전 150ms/50ms 유예는 재사용하지 않고 기존 Tap 네 등급 창은 유지한다.
+- Step의 새 방향 Down ±80ms는 목적지 X로 즉시 이동하며 Tap보다 먼저 소비한다.
+  조기 입력은 직전 구간의 남은 판정만 원래 timestamp에 Perfect+로 예약한다.
+  과거 Miss 복구·다음 구간 일괄 보상·입력 순간의 추가 점수는 없으며 늦은 입력은 이후 정렬만 바꾼다.
+  예약은 해당 Knob의 직전 구간만 대상으로 한다. 시작 전 snap으로 진행 중인 다른
+  Knob을 벗어나면 그 Knob은 Miss가 될 수 있고 다른 Knob에 성공 보정을 전파하지 않는다.
+- Maker Edit 메뉴의 `Draw Knob Path`로 지점을 이어 놓고 `Finish Knob Path`로 닫는다.
+  `Insert Knob Point`, `Knob Segment: Vertical / Linear / Step`,
+  `Toggle Knob X Snap (0.25)`를 제공하며 개별 Start/Mid/End 배치도 유지한다.
+- **새 위치 추적 검증:** `Logs/IntegrationBaseline/20261008-knob-position/`의
+  `editmode-focused-prestart.xml` 87/87, `editmode-full-prestart.xml` 316/316가 통과했다.
+  전체에는 집중 검사와 격리용 probe 4개(시작 전 입력 1·Maker 경로 1·Game 표시 2)가 포함된다.
+  별도 재실행한 `game-scene-probe-prestart-3.xml` 2/2와 Maker probe 1/1을 중복 합산하지 않는다.
+  Game은 실제 PlayerKnobX cursor/Ribbon·PlayerKnobNoteId 소유 경로, Maker는 공용
+  TargetX·ScrollMap 경계·Vertical/Step ribbon을 검사했다. 순수 Core 79개는 Unity 검사와 별도다.
+  이전 `editmode-focused.xml` 76/76·`editmode-full.xml` 304/304와 순수 Core 71개는 수정 전 기록이다.
+- 같은 폴더의 `game-build-prestart.log`, `chartmaker-build-prestart.log`에서 빌드 Success와 정상 batchmode
+  종료를 확인했다. 대상은 고정 검증본이며 최신 원본 전체의 검증으로 해석하지 않는다.
+  Game 씬 SHA-256은 `67011662207382758AC65641CA92B7AC1069722F36580A44E6307B0822DA407B`다.
+  사용자 후속 Game 씬 편집이 계속돼 현재 원본 씬 전체의 빌드는 미검증이다.
+  두 제품에 상대 제품 DLL은 없다. 동기화 목록 143개에서 후속 문서 4개·Game 씬 1개와
+  격리 importer가 재직렬화한 폰트 2개의 차이를 구분했고 코드·규칙·Maker·표시 source는 일치한다.
+- **수정·재검증 완료 경계:** 추가 `prestart-step-probe.xml`의 이전 결과는 0/1이다.
+  Knob 시작 100ms·Step 150ms의 Down 70ms(Step -80ms)를 거부해 Miss가 발생했다.
+  사용자는 시작 전에도 ±80ms 양끝을 포함해 허용하는 것으로 확정했다. 예제는 70ms에
+  목적지로 이동하고 100ms에도 위치를 유지하며 미확정 이전 구간 Start/tick을 원래 시각에
+  Perfect+로 확정하도록 예약한다. 유효한 조기 입력이 없는 일반 시작은 시작값을 지정한다.
+  Core·표시 수정 후 위 87/316 검사와 두 제품 빌드로 재검증했다. `PlayerKnobNoteId`는
+  유효한 조기 입력부터 소유 Knob을 지정하고 Reset 시 null로 돌아가며 Game cursor가 사용한다.
+  중간 실패 로그도 보존한다. `game-scene-probe-prestart-2.xml`의 실패는
+  씬에 직렬화된 userOffsetMs=-50과 합성 chart time을 혼용한 검사 설정 문제다. probe에서
+  보정을 0으로 명시한 `game-scene-probe-prestart-3.xml`이 통과했으며 제품 결함으로 분류하지 않는다.
+- **아래 증거는 이전 방향 Hold 모델의 검사 기록이다. 새 위치 추적 규칙의 완료 근거가 아니다.**
+  `Logs/IntegrationBaseline/20261008-center-knob/`에 당시 자동 검증 근거를 보존한다.
+  `editmode-focused-4.xml`은 64/64, `editmode-full.xml`은 299/299 통과했다.
+  전체 299개에 집중 검사가 포함되므로 두 수를 합산하지 않는다. Maker 저장·재열기·
+  컴파일·패키지·Preview 자동 큐 동등성과 Game 입력→점수/클리어·Hard·판정 창을
+  각 검사 경계에서 확인했다.
+- `game-build-current.log`, `chartmaker-build.log` 모두 `Build Finished, Result: Success.`다.
+  격리 검증 복사본의 `Logs/ProductBuilds/Game`에는 Gameplay DLL만,
+  `Logs/ProductBuilds/ChartMaker`에는 ChartMaker DLL만 있으며 상대 제품 DLL은 없다.
+  검증 복사본은 `Logs/IntegrationBaseline/20261006-cleanup-after/isolated/`를 재사용했고,
+  이번 원본 동기화 목록은 위 증거 폴더의 `sync-manifest.tsv`에 기록했다. 목록 139개 중
+  코드·씬·프리팹은 당시 원본과 일치했다. 검증 중 바뀐 Game 씬·Tap 프리팹을 다시 동기화해
+  Game 빌드와 씬 probe를 재실행한 당시 결과다. 문서 4개의 후속 편집과 격리 복사본의
+  TMP 폰트 2개 importer 재직렬화 차이는 코드 검증 대상 차이와 구분한다.
+- `game-scene-probe-current.xml` 1/1은 실제 `Game.unity`를 로드하고 v2 패키지를
+  `GameplayChartPreparation.Prepare`→`DemoPlayController.BuildPreparedChartViews`에
+  전달해 CenterTap X=0, Knob LineRenderer와 cursor 생성을 확인했다. EditMode의 기존
+  오브젝트 Destroy 제약을 피하려고 격리된 빈 noteField를 사용했으므로 실제 런타임
+  Cleanup/Retry 성공의 근거로 사용하지 않는다.
+- 남은 검수는 단일 PlayMode에서 Maker→Game 전체 세션, 실제 메뉴·화면·물리 입력·
+  청음·Pause/Retry 실플레이, 개발값의 밸런스와 사용자 새 아트다. 개별 자동 검사와
+  빌드 성공을 이 수동 검수의 완료로 승계하지 않는다.
 - `Result` 씬에 참고 이미지 기준의 곡 정보, 난이도, 점수·랭크, 판정 통계,
   콤보·정확도, 기억 조각, 보상과 하단 메뉴를 uGUI로 배치했다. 배경과 재킷은
   기존 이미지를 임시로 연결했다. 씬에 저장된 수치는 편집용 예시 값이며
@@ -380,28 +524,25 @@ DemoPlay의 테스트 fixture 이동, 이에 따른 프로필·회귀 검사·�
 
 ## Next — 작업 순서
 
-1. **A1~A3: 최신 통합 기준선.** 설정 모달·Bootstrap·전환·UI 에셋/fixture 이동이 포함된
-   대상 파일을 고정한다. 미리보기 씬과 생성기 경로를 맞추고 GUID·참조를 확인한 뒤
-   EditMode, 두 곡 PlayMode smoke, Play/Chart 빌드를 확인한다.
-   일반 Intro/Loop/Outro와 흰 결정 경로를 구분한다. 예전 48프레임 스모크의 통과를
-   최신 전환 전체 검증으로 간주하지 않는다. 로그·XML·대상 파일 해시를 연결해 남긴다.
-2. **D1: 출시 범위 결정.** 임시 메뉴, 빈 설정 카테고리·Voice, 수동 Test Play,
-   진행·해금·서사, 목표 하드웨어/지원 환경을 출시 필수와 후속으로 구분한다.
-   능력 중첩·게이지/초기 HP·발동/만료·재시도·정산 자격과 월드 진행 정책을 확정하고
-   D2a 시작 조건→D2b 조건부 발동→D2c 종료 정산→D2d 캐릭터 한 명 검증으로 배분한다.
-   사용자 기획 결정은 임의로 확정하지 않으며 A와 병행해 준비한다.
-3. **B/C: 실제 Game·ChartMaker 검수.** 사용자 수동 확인 일정에 맞춰 위 확인 목록과
-   복합 채보 제작→Game 대조를 수행한다. 정식 아트가 없어도 테스트용 콘텐츠로 진행한다.
-   ESC 확인 이력은 보존하되 전체 물리 입력 검수로 확대 해석하지 않는다.
-4. **E2 후속 측정·최적화.** E2a의 순수 Core 판정 기준선은 기록했다. 합의한 하드웨어의
-   Unity Player 프레임 시간·GC·메모리·전환 비용은 아직 계측해야 한다. D2 통합 후
-   기준선을 갱신해 E2b/E2c로 판정 탐색을 줄이고 동등성을 검증한다. 표시·곡 선택·HUD는
-   E2d에서 측정에 따라 개선한다.
-   최종 콘텐츠가 들어오면 영향을 받은 구간을 다시 측정한다.
+1. **A 경계 수정 확인.** 10/1 Hard 실패 고정·전환 종료 후 재생·실행 실패 오류 복귀를
+   기준선으로 삼는다. 현재 자동 검사와 빌드 근거는 위 보고서에 있다. 실제 Player
+   화면·청음·물리 입력과 ChartMaker 복합 채보 검수는 B/C에서 수행한다.
+2. **D1/D2 후속: 능력과 정산.** NON의 기본 보유·장착→시작 조건 고정→Result와
+   저장소 재로드까지 확인했다. 사용자가 능력 중첩·발동·만료, 종료 자격·보상·월드
+   진행·중복 지급 정책을 결정한다. 다음에는 조건부 능력 한 개의 횟수·수명·동일
+   시각 판정을 검증하고 실제 정산·저장 계약을 한 캐릭터의 재시도/중단까지 잇는다.
+   기능을 더하기 전에 `GameFlowController`의 시작/시도 책임 추출을 검토한다.
+   현재 예시 계산은 실제 지급이 아니다.
+3. **연속 도전 한 경로.** 정책 확정 후 A곡 조건 달성→B곡 전환→해금 저장을
+   구현하고 실패·중단·재시도·제약 충돌과 저장 복구를 검증한다.
+4. **E2: 성능과 나머지 수용 검수.** 순수 Core 2,000노트 전체 재생 66~69ms는
+   프레임 시간이나 개선율이 아니다. 능력·정산 경계가 안정되면 Unity Player
+   프레임/GC 기준선을 측정하고 탐색 개선 전후 판정 동등성을 확인한다. B/C 수동
+   검수와 출시 범위 결정도 이어간다.
 
 이후의 기능·콘텐츠·레거시 정리·배포 작업은 ROADMAP의 D2~F에서 관리한다.
-`ChartLoader`/`NoteData`는 `ChartLoadService` 내부 참조와 직렬화 사용까지 확인한 뒤
-별도 작업으로 정리한다. 위 계획 작성은 구현·배포·commit/push 실행을 뜻하지 않는다.
+구형 `ChartLoader`/`NoteData` 경로는 참조 확인 뒤 정리했다. 남은 `TempLoader`는
+별도 사용 조사 대상이다. 위 계획 작성은 구현·배포·commit/push 실행을 뜻하지 않는다.
 
 ## Notes
 

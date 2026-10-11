@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
@@ -12,18 +13,24 @@ namespace REmind.Gameplay.Demo
     // Static UI lives in the scene; song rows come from the data catalog and authored prefab.
     public sealed class MusicSelectController : MonoBehaviour
     {
+        [Serializable]
+        private sealed class DifficultySlot
+        {
+            public RectTransform holder;
+            public Image ring;
+            public TMP_Text level;
+            public TMP_Text caption;
+            [NonSerialized] public Button button;
+        }
+
         [Header("Song List")]
         [SerializeField] private MusicCatalog catalog;
         [SerializeField] private MusicTrackRow trackPrefab;
         [SerializeField] private RectTransform trackContainer;
-        [SerializeField] private RectTransform scenePreviewRow;
-        [SerializeField, Min(1f)] private float rowSpacing = 85f;
         [SerializeField] private Button[] categoryButtons;
         [SerializeField] private Sprite categoryNormalSprite;
         [SerializeField] private Sprite categorySelectedSprite;
-        [SerializeField] private Button[] difficultyButtons;
-        [SerializeField] private Image[] difficultyRings;
-        [SerializeField] private TMP_Text[] difficultyLevelLabels;
+        [SerializeField] private DifficultySlot[] difficultySlots;
         [SerializeField] private Sprite difficultyNormalSprite;
         [SerializeField] private Sprite difficultySelectedSprite;
         [Header("Selection Presentation")]
@@ -35,19 +42,15 @@ namespace REmind.Gameplay.Demo
         [SerializeField, Min(0.01f)] private float jacketFadeSeconds = 0.16f;
         [SerializeField] private TMP_Text selectedTitle;
         [SerializeField] private TMP_Text selectedArtist;
-        [SerializeField] private TMP_Text selectedDescription;
-        [SerializeField] private TMP_Text selectedLevel;
-        [SerializeField] private TMP_Text selectedRank;
         [SerializeField] private TMP_Text selectedBestScore;
         [SerializeField] private TMP_Text artworkCaption;
         [SerializeField] private Image selectedArtwork;
         [SerializeField] private GameObject[] categoryIndicators;
         [SerializeField] private TMP_Text sortLabel;
         [SerializeField] private TMP_Text filterLabel;
-        [SerializeField] private TMP_Text favoriteLabel;
         [SerializeField] private GameObject playNotice;
-        [SerializeField] private Color rowNormal = new(0.05f, 0.08f, 0.17f, 0.78f);
-        [SerializeField] private Color rowSelected = new(0.77f, 0.83f, 0.98f, 0.98f);
+        [SerializeField] private TMP_Text playErrorLabel;
+        [SerializeField] private Color optionNormal = new(0.05f, 0.08f, 0.17f, 0.78f);
         [SerializeField] private Color optionSelected = new(0.20f, 0.29f, 0.47f, 0.98f);
 
         private MusicTrackRow[] tracks = Array.Empty<MusicTrackRow>();
@@ -59,22 +62,34 @@ namespace REmind.Gameplay.Demo
         private int sort;
         private int presentedTrack = -1;
         private Sprite presentedArtwork;
+        private AudioClip presentedPreview;
+        private TMP_Text noticeTitle;
+        private GameObject noticePreviousSelection;
+        private readonly List<Selectable> noticeBlockedControls = new();
+        private bool IsNoticeOpen => playNotice && playNotice.activeSelf;
         private int presentedPosition = -1;
         private int previewStartSample;
         private int previewEndSample;
         private float previewTargetVolume;
+        private float rowSpacing;
+        private Vector2 rowBasePosition;
         private Vector2 listRestPosition;
         private Vector2 jacketRestPosition;
         private Vector3 jacketRestScale;
         private Coroutine listTransition;
         private Coroutine jacketTransition;
-        private static readonly string[] DifficultyIds = { "easy", "normal", "hard", "chaos" };
         private static readonly string[] Filters = { "모두", "Lv.8 이하", "Lv.10 이하", "Lv.11 이상" };
         private static readonly string[] Sorts = { "기본", "제목", "레벨" };
 
         private void Awake()
         {
             if (trackContainer) listRestPosition = trackContainer.anchoredPosition;
+            if (trackPrefab && trackPrefab.transform is RectTransform prefabRect)
+            {
+                rowSpacing = Mathf.Max(1f,
+                    prefabRect.rect.height * Mathf.Abs(prefabRect.localScale.y));
+                rowBasePosition = prefabRect.anchoredPosition;
+            }
             if (jacketContainer)
             {
                 jacketRestPosition = jacketContainer.anchoredPosition;
@@ -85,7 +100,7 @@ namespace REmind.Gameplay.Demo
                 previewAudioSource.playOnAwake = false;
                 previewAudioSource.loop = false;
             }
-            if (scenePreviewRow) scenePreviewRow.gameObject.SetActive(false);
+            InitializeDifficultySlots();
             if (!catalog || !trackPrefab || !trackContainer)
             {
                 Debug.LogError("Music Select needs a catalog, track prefab and row container.", this);
@@ -122,8 +137,9 @@ namespace REmind.Gameplay.Demo
                     {
                         selected = index;
                         for (int difficulty = 0;
-                             difficulty < DifficultyIds.Length; difficulty++)
-                            if (DifficultyIds[difficulty] == previous.DifficultyId)
+                             difficulty < MusicDifficultySlots.Count; difficulty++)
+                            if (MusicDifficultySlots.GetId(tracks[index].Difficulties,
+                                    difficulty) == previous.DifficultyId)
                             {
                                 selectedDifficulty = difficulty;
                                 break;
@@ -131,6 +147,7 @@ namespace REmind.Gameplay.Demo
                         break;
                     }
             }
+            SelectUnlockedDifficultyIfNeeded();
             Refresh();
         }
 
@@ -163,6 +180,8 @@ namespace REmind.Gameplay.Demo
 
         private void OnDisable()
         {
+            if (playNotice) playNotice.SetActive(false);
+            ReleaseNoticeFocus();
             StopPreview();
             if (listTransition != null) StopCoroutine(listTransition);
             if (jacketTransition != null) StopCoroutine(jacketTransition);
@@ -180,29 +199,58 @@ namespace REmind.Gameplay.Demo
 
         public void SelectTrack(int index)
         {
+            if (playNotice && playNotice.activeSelf) return;
             if (index < 0 || index >= tracks.Length || !tracks[index].gameObject.activeInHierarchy) return;
             selected = index;
+            SelectUnlockedDifficultyIfNeeded();
             Refresh();
+            ShowSelectedPuzzleHint();
         }
 
         private void MoveSelection(int direction)
         {
+            if (IsNoticeOpen) return;
             if (visibleOrder.Count == 0) return;
             int position = visibleOrder.IndexOf(selected);
             selected = visibleOrder[Mathf.Clamp(position + direction, 0, visibleOrder.Count - 1)];
+            SelectUnlockedDifficultyIfNeeded();
             Refresh();
+            ShowSelectedPuzzleHint();
         }
 
         private void MoveDifficulty(int direction)
         {
+            if (IsNoticeOpen) return;
             if (selected < 0 || selected >= tracks.Length) return;
-            for (int step = 1; step <= DifficultyIds.Length; step++)
+            for (int step = 1; step <= MusicDifficultySlots.Count; step++)
             {
-                int index = (selectedDifficulty + direction * step + DifficultyIds.Length * 2) %
-                    DifficultyIds.Length;
-                if (!tracks[selected].TryGetLevel(DifficultyIds[index], out _)) continue;
+                int index = (selectedDifficulty + direction * step +
+                    MusicDifficultySlots.Count * 2) % MusicDifficultySlots.Count;
+                string id = MusicDifficultySlots.GetId(tracks[selected].Difficulties, index);
+                if (id == null || !tracks[selected].TryGetLevel(id, out _)) continue;
                 if (index != selectedDifficulty) SetDifficulty(index);
                 return;
+            }
+        }
+
+        private void InitializeDifficultySlots()
+        {
+            if (difficultySlots == null) return;
+            for (int index = 0; index < difficultySlots.Length; index++)
+            {
+                DifficultySlot slot = difficultySlots[index];
+                if (slot?.holder == null) continue;
+                if (!slot.holder.TryGetComponent(out slot.button))
+                    slot.button = slot.holder.gameObject.AddComponent<Button>();
+                slot.button.transition = Selectable.Transition.None;
+                slot.button.navigation = new Navigation { mode = Navigation.Mode.None };
+                if (slot.ring)
+                {
+                    slot.ring.raycastTarget = true;
+                    slot.button.targetGraphic = slot.ring;
+                }
+                int selectedIndex = index;
+                slot.button.onClick.AddListener(() => SetDifficulty(selectedIndex));
             }
         }
 
@@ -210,15 +258,37 @@ namespace REmind.Gameplay.Demo
         {
             int nearest = -1;
             int distance = int.MaxValue;
-            for (int index = 0; index < DifficultyIds.Length; index++)
+            for (int index = 0; index < MusicDifficultySlots.Count; index++)
             {
-                if (!row.TryGetLevel(DifficultyIds[index], out _)) continue;
+                string id = MusicDifficultySlots.GetId(row.Difficulties, index);
+                if (id == null || !row.TryGetLevel(id, out _)) continue;
                 int nextDistance = Math.Abs(index - preferred);
                 if (nextDistance >= distance) continue;
                 nearest = index;
                 distance = nextDistance;
             }
             return nearest;
+        }
+
+        private void SelectUnlockedDifficultyIfNeeded()
+        {
+            if (selected < 0 || selected >= tracks.Length || !AppRoot.Current)
+                return;
+            MusicTrackRow row = tracks[selected];
+            int nearest = -1;
+            int distance = int.MaxValue;
+            for (int index = 0; index < MusicDifficultySlots.Count; index++)
+            {
+                string id = MusicDifficultySlots.GetId(row.Difficulties, index);
+                if (id == null || !row.TryGetLevel(id, out _) ||
+                    row.GetDifficultyAccess(id).NeedsUnlock)
+                    continue;
+                int nextDistance = Math.Abs(index - selectedDifficulty);
+                if (nextDistance >= distance) continue;
+                nearest = index;
+                distance = nextDistance;
+            }
+            if (nearest >= 0) selectedDifficulty = nearest;
         }
 
         private void ApplyAvailableDifficulties()
@@ -231,24 +301,48 @@ namespace REmind.Gameplay.Demo
             foreach (MusicTrackRow row in tracks)
             {
                 int available = AvailableDifficulty(row, selectedDifficulty);
-                if (available >= 0) row.SelectDifficulty(DifficultyIds[available]);
+                if (available >= 0)
+                    row.SelectDifficulty(MusicDifficultySlots.GetId(row.Difficulties, available));
             }
         }
 
-        public void SetCategory(int index) { category = Mathf.Clamp(index, 0, 4); Refresh(); }
+        public void SetCategory(int index)
+        {
+            if (IsNoticeOpen) return;
+            category = Mathf.Clamp(index, 0, 4);
+            Refresh();
+        }
         public void SetDifficulty(int index)
         {
-            if (index < 0 || index >= DifficultyIds.Length ||
-                selected < 0 || selected >= tracks.Length ||
-                !tracks[selected].TryGetLevel(DifficultyIds[index], out _)) return;
+            if (IsNoticeOpen) return;
+            if (selected < 0 || selected >= tracks.Length) return;
+            string id = MusicDifficultySlots.GetId(tracks[selected].Difficulties, index);
+            if (id == null || !tracks[selected].TryGetLevel(id, out _)) return;
             selectedDifficulty = index;
             Refresh();
         }
-        public void CycleSort() { sort = (sort + 1) % Sorts.Length; Refresh(); }
-        public void CycleLevelFilter() { levelFilter = (levelFilter + 1) % Filters.Length; Refresh(); }
+        public void CycleSort()
+        {
+            if (IsNoticeOpen) return;
+            sort = (sort + 1) % Sorts.Length;
+            Refresh();
+        }
+        public void CycleLevelFilter()
+        {
+            if (IsNoticeOpen) return;
+            levelFilter = (levelFilter + 1) % Filters.Length;
+            Refresh();
+        }
         public void ToggleFavorite()
         {
+            if (IsNoticeOpen) return;
             if (tracks.Length == 0 || !tracks[selected].gameObject.activeInHierarchy) return;
+            if (AppRoot.Current &&
+                !string.IsNullOrEmpty(AppRoot.Current.PlayerDataError))
+            {
+                ShowPlayError(AppRoot.Current.PlayerDataError);
+                return;
+            }
             tracks[selected].ToggleFavorite();
             if (AppRoot.Current)
                 AppRoot.Current.SetFavorite(tracks[selected].MusicId,
@@ -257,24 +351,110 @@ namespace REmind.Gameplay.Demo
         }
         public void PlaySelectedSong()
         {
+            if (playNotice && playNotice.activeSelf) return;
             if (selected < 0 || selected >= tracks.Length ||
                 !tracks[selected].gameObject.activeInHierarchy) return;
 
             MusicTrackRow track = tracks[selected];
+            track.RefreshAccess();
+            SongAccessPolicy access = track.GetDifficultyAccess(track.DifficultyId);
+            if (!access.CanPlay)
+            {
+                StopPreview();
+                ShowNotice(access.ShowPuzzleHint ? track.UnlockHint
+                    : access.NeedsUnlock ? "아직 해금되지 않은 난이도입니다."
+                    : "이 곡의 이용 권한이 필요합니다.",
+                    access.ShowPuzzleHint ? "해금 조건" : "이용 안내");
+                return;
+            }
             if (!AppRoot.Current)
             {
                 Debug.LogError("Start the Game from Bootstrap to keep the selected song.", this);
                 return;
             }
             if (AppRoot.Current.IsTransitioning) return;
-            AppRoot.Current.SelectSong(track.MusicId, track.DifficultyId);
+            if (!AppRoot.Current.TrySelectSongWithEquippedCharacter(
+                track.MusicId, track.DifficultyId, out string error))
+            {
+                ShowPlayError(error);
+                return;
+            }
             StopPreview();
             if (!AppRoot.Current.TryStartSelectedGame())
                 Debug.LogError("Music Selected transition is not configured.", this);
         }
-        public void CloseNotice() => playNotice.SetActive(false);
+        private void ShowPlayError(string error)
+        {
+            Debug.LogError("Cannot update player selection: " + error,
+                this);
+            ShowNotice(error);
+        }
+
+        private void ShowSelectedPuzzleHint()
+        {
+            if (selected >= 0 && selected < tracks.Length &&
+                tracks[selected].gameObject.activeInHierarchy &&
+                tracks[selected].Access.ShowPuzzleHint)
+                ShowNotice(tracks[selected].UnlockHint, "해금 조건");
+        }
+
+        private void ShowNotice(string message, string title = "안내")
+        {
+            StopPreview();
+            if (!IsNoticeOpen && playNotice)
+            {
+                noticePreviousSelection = EventSystem.current?.currentSelectedGameObject;
+                Canvas canvas = playNotice.GetComponentInParent<Canvas>();
+                if (canvas)
+                    foreach (Selectable control in canvas.GetComponentsInChildren<Selectable>(true))
+                        if (!control.transform.IsChildOf(playNotice.transform) && control.interactable)
+                        {
+                            noticeBlockedControls.Add(control);
+                            control.interactable = false;
+                        }
+            }
+            if (!noticeTitle && playNotice)
+            {
+                Transform heading = playNotice.transform.Find("Notice Window/Notice Title");
+                if (heading) noticeTitle = heading.GetComponent<TMP_Text>();
+            }
+            if (noticeTitle) noticeTitle.text = title;
+            if (!playErrorLabel && playNotice)
+            {
+                Transform body = playNotice.transform.Find(
+                    "Notice Window/Notice Body");
+                if (body) playErrorLabel = body.GetComponent<TMP_Text>();
+            }
+            if (playErrorLabel) playErrorLabel.text = message;
+            if (playNotice) playNotice.SetActive(true);
+            Button closeButton = playNotice ? playNotice.GetComponentInChildren<Button>(true) : null;
+            if (closeButton)
+            {
+                closeButton.navigation = new Navigation { mode = Navigation.Mode.None };
+                EventSystem.current?.SetSelectedGameObject(closeButton.gameObject);
+            }
+        }
+        public void CloseNotice()
+        {
+            if (playNotice) playNotice.SetActive(false);
+            ReleaseNoticeFocus();
+            if (selected >= 0 && selected < tracks.Length &&
+                tracks[selected].gameObject.activeInHierarchy)
+                StartPreview(tracks[selected]);
+        }
+
+        private void ReleaseNoticeFocus()
+        {
+            foreach (Selectable control in noticeBlockedControls)
+                if (control) control.interactable = true;
+            noticeBlockedControls.Clear();
+            if (noticePreviousSelection && noticePreviousSelection.activeInHierarchy)
+                EventSystem.current?.SetSelectedGameObject(noticePreviousSelection);
+            noticePreviousSelection = null;
+        }
         public void Back()
         {
+            if (IsNoticeOpen) return;
             if (AppRoot.Current && AppRoot.Current.IsTransitioning) return;
             AppRoot.NavigateToScene("Home");
         }
@@ -282,6 +462,8 @@ namespace REmind.Gameplay.Demo
         private void StartPreview(MusicTrackRow track)
         {
             StopPreview();
+            if (IsNoticeOpen) return;
+            presentedPreview = track.PreviewAudio;
             if (!previewAudioSource || !track.PreviewAudio) return;
             AudioClip clip = track.PreviewAudio;
             if (clip.samples <= 0) return;
@@ -331,6 +513,7 @@ namespace REmind.Gameplay.Demo
 
         private void StopPreview()
         {
+            presentedPreview = null;
             if (!previewAudioSource) return;
             previewAudioSource.Stop();
             previewAudioSource.clip = null;
@@ -341,7 +524,11 @@ namespace REmind.Gameplay.Demo
 
         private void SetArtwork(MusicTrackRow track)
         {
-            if (selectedArtwork) selectedArtwork.sprite = track?.Artwork;
+            if (selectedArtwork)
+            {
+                selectedArtwork.sprite = track?.Artwork;
+                selectedArtwork.enabled = track?.Artwork != null;
+            }
             if (artworkCaption) artworkCaption.text = track == null
                 ? "JACKET ART" : track.Title + "    /    ReMind";
         }
@@ -407,7 +594,7 @@ namespace REmind.Gameplay.Demo
 
         private bool Matches(MusicTrackRow row)
         {
-            if (row.HasSongError) return false;
+            if (row.HasSongError || !row.Access.IsVisible) return false;
             bool group = category == 0 || category == 4 && row.Favorite || category - 1 == (int)row.Category;
             bool level = levelFilter == 0 || row.Level > 0 &&
                 (levelFilter == 1 && row.Level <= 8 ||
@@ -439,24 +626,30 @@ namespace REmind.Gameplay.Demo
 
         private void Refresh()
         {
+            foreach (MusicTrackRow row in tracks) row.RefreshAccess();
             ApplyAvailableDifficulties();
             if (AppRoot.Current)
                 foreach (MusicTrackRow row in tracks)
                 {
                     bool hasRecord = AppRoot.Current.TryGetBestRecord(
                         row.MusicId, row.DifficultyId,
-                        out double score, out RankGrade grade);
+                        out double score, out _);
                     row.ApplyPlayerData(
                         AppRoot.Current.IsFavorite(row.MusicId),
-                        hasRecord, score, grade);
+                        hasRecord, score);
                 }
             int first = BuildVisibleOrder();
-            if (first >= 0 && !visibleOrder.Contains(selected))
+            for (int attempts = 0; first >= 0 &&
+                 !visibleOrder.Contains(selected) &&
+                 attempts < tracks.Length; attempts++)
             {
                 selected = first;
+                SelectUnlockedDifficultyIfNeeded();
                 ApplyAvailableDifficulties();
                 first = BuildVisibleOrder();
             }
+            if (first < 0 || !visibleOrder.Contains(selected))
+                selected = -1;
             int selectedPosition = visibleOrder.IndexOf(selected);
             var shown = new bool[tracks.Length];
             for (int position = 0; position < visibleOrder.Count; position++)
@@ -468,7 +661,8 @@ namespace REmind.Gameplay.Demo
                 MusicTrackRow row = tracks[index];
                 if (!row.gameObject.activeSelf) row.gameObject.SetActive(true);
                 if (row.transform is RectTransform rect)
-                    rect.anchoredPosition = new Vector2(0f, distance * rowSpacing);
+                    rect.anchoredPosition = rowBasePosition + Vector2.up *
+                        (distance * rowSpacing);
                 row.transform.SetAsLastSibling();
             }
             for (int i = 0; i < tracks.Length; i++)
@@ -491,15 +685,19 @@ namespace REmind.Gameplay.Demo
                 if (jacketCanvasGroup) jacketCanvasGroup.alpha = 1f;
                 selectedTitle.text = "표시할 곡이 없습니다";
                 selectedArtist.text = "다른 분류를 선택하세요";
-                selectedDescription.text = "";
-                selectedLevel.text = selectedRank.text = selectedBestScore.text = "-";
-                favoriteLabel.text = "☆ 즐겨찾기";
+                selectedBestScore.text = "0";
                 SetArtwork(null);
             }
             else
             {
                 if (!tracks[selected].gameObject.activeSelf) selected = first;
                 var track = tracks[selected];
+                if (track.Access.IsMasked)
+                {
+                    if (jacketTransition != null) StopCoroutine(jacketTransition);
+                    jacketTransition = null;
+                    SetArtwork(track);
+                }
                 if (presentedTrack != selected)
                 {
                     if (presentedTrack < 0) SetArtwork(track);
@@ -523,14 +721,13 @@ namespace REmind.Gameplay.Demo
                 presentedPosition = selectedPosition;
                 selectedTitle.text = track.Title;
                 selectedArtist.text = track.Artist;
-                selectedDescription.text = track.Description;
-                selectedLevel.text = track.Level > 0 ? $"Lv. {track.Level}" : "Lv. -";
-                selectedRank.text = track.Rank;
                 selectedBestScore.text = track.BestScore;
-                favoriteLabel.text = track.Favorite ? "★ 즐겨찾기" : "☆ 즐겨찾기";
+                if (!(playNotice && playNotice.activeSelf) &&
+                    presentedPreview != track.PreviewAudio)
+                    StartPreview(track);
             }
             for (int i = 0; i < tracks.Length; i++)
-                tracks[i].Display(i == selected && tracks[i].gameObject.activeSelf, rowNormal, rowSelected);
+                tracks[i].Display(i == selected && tracks[i].gameObject.activeSelf);
             for (int i = 0; i < categoryButtons.Length; i++)
             {
                 Image categoryImage = categoryButtons[i].GetComponent<Image>();
@@ -539,31 +736,34 @@ namespace REmind.Gameplay.Demo
                     categoryImage.sprite = i == category ? categorySelectedSprite : categoryNormalSprite;
                     categoryImage.color = Color.white;
                 }
-                else categoryImage.color = i == category ? optionSelected : rowNormal;
+                else categoryImage.color = i == category ? optionSelected : optionNormal;
                 if (categoryIndicators != null && i < categoryIndicators.Length && categoryIndicators[i] != null)
                     categoryIndicators[i].SetActive(i == category);
             }
-            for (int i = 0; i < difficultyButtons.Length; i++)
+            for (int i = 0; difficultySlots != null && i < difficultySlots.Length; i++)
             {
-                Image difficultyImage = difficultyButtons[i].GetComponent<Image>();
+                DifficultySlot slot = difficultySlots[i];
+                if (slot == null) continue;
+                string id = first >= 0
+                    ? MusicDifficultySlots.GetId(tracks[selected].Difficulties, i) : null;
                 int chartLevel = 0;
-                bool available = first >= 0 && i < DifficultyIds.Length &&
-                    tracks[selected].TryGetLevel(DifficultyIds[i], out chartLevel);
-                difficultyButtons[i].interactable = available;
-                if (difficultyLevelLabels != null && i < difficultyLevelLabels.Length &&
-                    difficultyLevelLabels[i] != null)
-                    difficultyLevelLabels[i].text = available && chartLevel > 0
-                        ? chartLevel.ToString() : "-";
-                if (difficultyRings != null && i < difficultyRings.Length && difficultyRings[i] != null &&
-                    difficultyNormalSprite != null && difficultySelectedSprite != null)
+                bool available = id != null && tracks[selected].TryGetLevel(id, out chartLevel);
+                if (slot.button) slot.button.interactable = available;
+                if (slot.level)
+                    slot.level.text = available && chartLevel > 0 ? chartLevel.ToString() : "-";
+                if (slot.caption)
+                    slot.caption.text = available
+                        ? tracks[selected].FindDifficulty(id).DisplayName +
+                          (tracks[selected].GetDifficultyAccess(id).NeedsUnlock
+                              ? " · 잠김" : string.Empty)
+                        : id?.ToUpperInvariant() ?? "—";
+                if (slot.ring)
                 {
-                    difficultyRings[i].sprite = available && i == selectedDifficulty
-                        ? difficultySelectedSprite : difficultyNormalSprite;
-                    difficultyRings[i].color = available ? Color.white : new Color(1f, 1f, 1f, 0.28f);
-                    difficultyImage.color = Color.clear;
+                    if (difficultyNormalSprite && difficultySelectedSprite)
+                        slot.ring.sprite = available && i == selectedDifficulty
+                            ? difficultySelectedSprite : difficultyNormalSprite;
+                    slot.ring.color = available ? Color.white : new Color(1f, 1f, 1f, 0.28f);
                 }
-                else difficultyImage.color = available && i == selectedDifficulty
-                    ? optionSelected : rowNormal;
             }
             sortLabel.text = "R  정렬: " + Sorts[sort];
             filterLabel.text = "T  난이도: " + Filters[levelFilter];

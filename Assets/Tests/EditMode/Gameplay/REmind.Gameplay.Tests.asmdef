@@ -1,6 +1,6 @@
 {
   "name": "REmind.Gameplay.Tests",
-  "references": ["REmind.Gameplay"],
+  "references": ["REmind.Gameplay", "REmind.ChartCore", "REmind.Common", "REmind.NoteRules", "Unity.InputSystem"],
   "includePlatforms": ["Editor"],
   "autoReferenced": false,
   "defineConstraints": ["UNITY_INCLUDE_TESTS"],

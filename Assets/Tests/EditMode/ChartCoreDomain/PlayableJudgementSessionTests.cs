@@ -35,16 +35,25 @@ namespace REmind.Charting.Tests
         public void LongScratch_HeldMidsAndEndReleaseScoreEveryInterval()
         {
             var results = new List<ChartJudgementResolution>();
-            var session = Create(LongScratchChart(), results);
+            var session = new PlayableJudgementSession(LongScratchChart(),
+                (_, point, offset) => Math.Abs(offset) <=
+                    (point == 3 ? 75d : 100d)
+                    ? point == 0 ? ChartJudgementGrade.PerfectPlus :
+                        ChartJudgementGrade.Perfect
+                    : ChartJudgementGrade.None,
+                (_, point) => point == 3 ? 75d : 100d, results.Add);
             session.Input((int)ChartLane.GroundLeft, 0d, true);
             session.ProcessAutomatic(1000d, false);
             session.ProcessAutomatic(2000d, false);
             session.Input((int)ChartLane.GroundLeft, 3000d, false);
 
             Assert.That(results.Count, Is.EqualTo(3));
-            foreach (ChartJudgementResolution result in results)
-                Assert.That(result.Grade,
-                    Is.EqualTo(ChartJudgementGrade.Perfect));
+            Assert.That(results[0].Grade,
+                Is.EqualTo(ChartJudgementGrade.PerfectPlus));
+            Assert.That(results[1].Grade,
+                Is.EqualTo(ChartJudgementGrade.PerfectPlus));
+            Assert.That(results[2].Grade,
+                Is.EqualTo(ChartJudgementGrade.Perfect));
         }
 
         [Test]
@@ -71,7 +80,7 @@ namespace REmind.Charting.Tests
                 (_, _, offset) => Math.Abs(offset) <= 30d
                     ? ChartJudgementGrade.Perfect
                     : Math.Abs(offset) <= 100d
-                        ? ChartJudgementGrade.Good
+                        ? ChartJudgementGrade.Great
                         : ChartJudgementGrade.None,
                 (_, _) => 150d, results.Add);
             session.ProcessAutomatic(1000d, false);
@@ -81,7 +90,7 @@ namespace REmind.Charting.Tests
 
             Assert.That(results.Count, Is.EqualTo(3));
             Assert.That(results[2].Grade,
-                Is.EqualTo(ChartJudgementGrade.Good));
+                Is.EqualTo(ChartJudgementGrade.Great));
         }
 
         [Test]
@@ -107,7 +116,7 @@ namespace REmind.Charting.Tests
                     double distance = Math.Abs(offset);
                     if (point == 0)
                         return distance <= 50d ? ChartJudgementGrade.Perfect :
-                            distance <= 100d ? ChartJudgementGrade.Good :
+                            distance <= 100d ? ChartJudgementGrade.Great :
                             ChartJudgementGrade.None;
                     return distance <= (point == 3 ? 75d : 100d)
                         ? ChartJudgementGrade.Perfect :
@@ -124,7 +133,7 @@ namespace REmind.Charting.Tests
             session.Input((int)ChartLane.GroundLeft, 3075d, false);
 
             Assert.That(results.Count, Is.EqualTo(3));
-            Assert.That(results[0].Grade, Is.EqualTo(ChartJudgementGrade.Good));
+            Assert.That(results[0].Grade, Is.EqualTo(ChartJudgementGrade.Great));
             Assert.That(results[1].Grade, Is.EqualTo(ChartJudgementGrade.Miss));
             Assert.That(results[2].Grade, Is.EqualTo(ChartJudgementGrade.Perfect));
             Assert.That(session.PendingNoteCount, Is.Zero);
@@ -138,6 +147,107 @@ namespace REmind.Charting.Tests
             Assert.That(results.Count, Is.EqualTo(2));
             session.ProcessAutomatic(session.NextAutomaticTime(false), false);
             Assert.That(results[2].Grade, Is.EqualTo(ChartJudgementGrade.Miss));
+        }
+
+        [Test]
+        public void AutomaticBatch_ResetInResolutionDoesNotContinueOldAttempt()
+        {
+            var document = new ChartDocument(4800, 4, 120);
+            document.Notes.Add(new ChartDocumentNote("a-miss", ChartNoteKind.Tap,
+                (int)ChartLane.GroundLeft, 0));
+            document.Notes.Add(new ChartDocumentNote("z-later", ChartNoteKind.Tap,
+                (int)ChartLane.GroundRight, 0));
+            ChartCompileResult compiled = ChartCompiler.Compile(document);
+            Assert.That(compiled.Succeeded, Is.True);
+
+            var results = new List<ChartJudgementResolution>();
+            PlayableJudgementSession session = null;
+            session = new PlayableJudgementSession(compiled.Snapshot,
+                (_, _, _) => ChartJudgementGrade.Perfect,
+                (_, _) => 100d,
+                result =>
+                {
+                    results.Add(result);
+                    if (results.Count == 1) session.Reset();
+                });
+
+            session.ProcessAutomatic(100.000001d, false);
+
+            Assert.That(results.Count, Is.EqualTo(1));
+            Assert.That(session.PendingNoteCount, Is.EqualTo(2));
+            session.ProcessAutomatic(100.000001d, false);
+            Assert.That(results.Count, Is.EqualTo(3));
+        }
+
+        [Test]
+        public void AutomaticBatch_HaltInResolutionStopsLaterSameTimeJudgements()
+        {
+            var document = new ChartDocument(4800, 4, 120);
+            document.Notes.Add(new ChartDocumentNote("a-miss", ChartNoteKind.Tap,
+                (int)ChartLane.GroundLeft, 0));
+            document.Notes.Add(new ChartDocumentNote("z-heal", ChartNoteKind.Tap,
+                (int)ChartLane.GroundRight, 0));
+            ChartCompileResult compiled = ChartCompiler.Compile(document);
+            Assert.That(compiled.Succeeded, Is.True);
+
+            var results = new List<ChartJudgementResolution>();
+            PlayableJudgementSession session = null;
+            session = new PlayableJudgementSession(compiled.Snapshot,
+                (_, _, _) => ChartJudgementGrade.Perfect,
+                (_, _) => 100d,
+                result =>
+                {
+                    results.Add(result);
+                    session.Halt();
+                });
+
+            session.ProcessAutomatic(100.000001d, false);
+            session.ProcessAutomatic(100.000001d, false);
+
+            Assert.That(results.Count, Is.EqualTo(1));
+            Assert.That(session.NextAutomaticTime(false),
+                Is.EqualTo(double.PositiveInfinity));
+            session.Input((int)ChartLane.GroundRight, 0d, true);
+            Assert.That(results.Count, Is.EqualTo(1));
+            session.Reset();
+            session.ProcessAutomatic(100.000001d, false);
+            Assert.That(results.Count, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void LongScratchMiss_HaltSkipsHeldIntervalAtSameTimestamp()
+        {
+            var document = new ChartDocument(4800, 4, 120);
+            document.Notes.Add(new ChartDocumentNote("a-miss", ChartNoteKind.LongScratch,
+                (int)ChartLane.GroundLeft, 0, 4800));
+            document.Notes.Add(new ChartDocumentNote("z-held", ChartNoteKind.LongScratch,
+                (int)ChartLane.GroundRight, 0, 4800));
+            foreach (ChartDocumentNote note in document.Notes)
+                note.Points.Insert(1, new ChartNotePoint(2400,
+                    ChartNotePointKind.Mid));
+            ChartCompileResult compiled = ChartCompiler.Compile(document);
+            Assert.That(compiled.Succeeded, Is.True);
+
+            var results = new List<ChartJudgementResolution>();
+            PlayableJudgementSession session = null;
+            session = new PlayableJudgementSession(compiled.Snapshot,
+                (_, _, _) => ChartJudgementGrade.Perfect,
+                (_, _) => 100d,
+                result =>
+                {
+                    results.Add(result);
+                    if (result.Grade == ChartJudgementGrade.Miss)
+                        session.Halt();
+                });
+            session.Input((int)ChartLane.GroundRight, 0d, true);
+
+            session.ProcessAutomatic(1000d, false);
+
+            Assert.That(results.Count, Is.EqualTo(1));
+            Assert.That(results[0].Note.Id, Is.EqualTo("a-miss"));
+            Assert.That(results[0].Grade, Is.EqualTo(ChartJudgementGrade.Miss));
+            session.ProcessAutomatic(1000d, false);
+            Assert.That(results.Count, Is.EqualTo(1));
         }
 
         private static PlayableJudgementSession Create(

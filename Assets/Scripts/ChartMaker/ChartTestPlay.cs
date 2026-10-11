@@ -27,6 +27,7 @@ public sealed class ChartTestPlay : MonoBehaviour
 
     [Header("Editor Guidance")]
     [SerializeField] private ChartNoteSelectionController selectionController;
+    [SerializeField] private ChartPlacementController placementController;
 
     private ChartCore chartCore;
     private PlayableChartSnapshot snapshot;
@@ -58,6 +59,7 @@ public sealed class ChartTestPlay : MonoBehaviour
     private void Start()
     {
         chartCore = ChartCore.Instance;
+        if (!placementController) placementController = GetComponent<ChartPlacementController>();
 
         if (chartCore == null)
         {
@@ -640,6 +642,7 @@ public sealed class ChartTestPlay : MonoBehaviour
             return;
         }
         ApplyCameraMotion(chartTimeMs);
+        placementController?.SetKnobPreviewTime(chartTimeMs);
         ChartPositionY = (float)snapshot.ScrollMap.FloorPositionAtTime(
             chartTimeMs);
         chartScroll.SetExternalChartY(ChartPositionY);
@@ -761,6 +764,7 @@ public sealed class ChartTestPlay : MonoBehaviour
 
         FindFirstObjectByType<ChartPreviewFloorRenderer>()
             ?.SetSessionSnapshot(snapshot);
+        placementController?.RefreshKnobPaths(snapshot);
     }
 
     private void RestoreSnapshotViewGeometry()
@@ -783,6 +787,7 @@ public sealed class ChartTestPlay : MonoBehaviour
 
         ChartManager.RefreshLongNoteLengths(-1);
         ChartManager.RefreshLongNoteLengths(-2);
+        placementController?.RefreshKnobPaths();
     }
 
     /// <summary>
@@ -797,13 +802,26 @@ public sealed class ChartTestPlay : MonoBehaviour
         {
             JudgementTarget target = snapshot.JudgementTargets[i];
             GameObject[] noteObjects = Array.Empty<GameObject>();
+            bool lastKnobTarget = false;
+            if (target.NoteKind == ChartNoteKind.Knob)
+            {
+                foreach (PlayableNoteSnapshot note in snapshot.Notes)
+                    if (note.Id == target.NoteId)
+                    {
+                        lastKnobTarget = note.KnobTargets.Count > 0 &&
+                            note.KnobTargets[note.KnobTargets.Count - 1].Id == target.Id;
+                        break;
+                    }
+            }
 
             if (viewBindings != null &&
                 viewBindings.TryGetValue(
                     target.NoteId,
                     out ChartNoteViewBinding binding))
             {
-                if (target.Kind == JudgementTargetKind.HoldEnd)
+                if (target.NoteKind == ChartNoteKind.Knob)
+                    noteObjects = lastKnobTarget ? binding.AllObjects : Array.Empty<GameObject>();
+                else if (target.Kind == JudgementTargetKind.HoldEnd)
                     noteObjects = binding.AllObjects;
                 else if (target.Kind == JudgementTargetKind.HoldMid)
                 {
@@ -827,7 +845,7 @@ public sealed class ChartTestPlay : MonoBehaviour
                 target.TargetTimeMs,
                 noteObjects,
                 target.Lane,
-                target.Kind == JudgementTargetKind.Tap ||
+                lastKnobTarget || target.Kind == JudgementTargetKind.Tap ||
                 target.Kind == JudgementTargetKind.HoldEnd));
         }
 
@@ -964,13 +982,16 @@ public sealed class ChartTestPlay : MonoBehaviour
         {
             if ((laneMask & (1 << lane)) != 0)
             {
-                laneHitEffectPlayer.Play(GetPresentationEffectLane(lane));
+                int effectLane = GetPresentationEffectLane(lane);
+                if (effectLane >= 0) laneHitEffectPlayer.Play(effectLane);
             }
         }
     }
 
     private static int GetPresentationEffectLane(int inputLane)
     {
+        // Central note art has no hit-effect Animator slot yet.
+        if (inputLane == (int)ChartLane.Center) return -1;
         if (inputLane >= (int)ChartLane.AirMain1 &&
             inputLane <= (int)ChartLane.AirMain4)
         {

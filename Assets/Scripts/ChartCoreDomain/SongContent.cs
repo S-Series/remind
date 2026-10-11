@@ -1,6 +1,4 @@
 using System;
-using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.IO;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
@@ -8,9 +6,17 @@ using System.Text;
 
 namespace REmind.Charting
 {
+    public enum SongHiddenType
+    {
+        NotHidden = 0,
+        Masked = 1,
+        Puzzle = 2,
+        Invisible = 3
+    }
+
     public sealed class SongContent
     {
-        internal SongContent(SongContentFile source, IReadOnlyList<SongChartEntry> charts)
+        internal SongContent(SongContentFile source, SongHiddenType hiddenType)
         {
             MusicId = source.MusicId;
             MetadataStatus = source.MetadataStatus;
@@ -23,9 +29,9 @@ namespace REmind.Charting
             JacketIllustrator = source.JacketIllustrator ?? string.Empty;
             PreviewStartMs = source.PreviewStartMs;
             PreviewDurationMs = source.PreviewDurationMs;
-            HiddenType = source.HiddenType ?? string.Empty;
+            HiddenType = hiddenType;
+            UnlockHint = source.UnlockHint ?? string.Empty;
             RequiresPurchase = source.RequiresPurchase;
-            Charts = charts;
         }
 
         public string MusicId { get; }
@@ -40,37 +46,58 @@ namespace REmind.Charting
         public string JacketIllustrator { get; }
         public double PreviewStartMs { get; }
         public double PreviewDurationMs { get; }
-        public string HiddenType { get; }
+        public SongHiddenType HiddenType { get; }
+        public string UnlockHint { get; }
         public bool RequiresPurchase { get; }
-        public IReadOnlyList<SongChartEntry> Charts { get; }
+    }
 
-        public SongChartEntry FindChart(string difficultyId)
+    /// <summary>Canonical song chart filenames; the filename owns the difficulty ID.</summary>
+    public static class SongChartFiles
+    {
+        private static readonly string[] Ids = { "easy", "normal", "hard", "chaos", "extra" };
+        private static readonly string[] Names = { "Easy.rd", "Normal.rd", "Hard.rd", "Chaos.rd", "Extra.rd" };
+        public const int Count = 5;
+
+        public static string GetDifficultyId(int index) =>
+            index >= 0 && index < Count ? Ids[index] : null;
+
+        public static string GetFileName(string difficultyId)
         {
-            foreach (SongChartEntry chart in Charts)
-                if (string.Equals(chart.DifficultyId, difficultyId, StringComparison.Ordinal))
-                    return chart;
+            for (int index = 0; index < Count; index++)
+                if (string.Equals(Ids[index], difficultyId, StringComparison.Ordinal))
+                    return Names[index];
             return null;
         }
-    }
 
-    public sealed class SongChartEntry
-    {
-        internal SongChartEntry(string difficultyId, int level, string chartAuthor, string chartFile)
+        public static string GetDifficultyIdFromFileName(string fileName)
         {
-            DifficultyId = difficultyId;
-            Level = level;
-            ChartAuthor = chartAuthor;
-            ChartFile = chartFile;
+            for (int index = 0; index < Count; index++)
+                if (string.Equals(Names[index], fileName, StringComparison.Ordinal))
+                    return Ids[index];
+            return null;
         }
 
-        public string DifficultyId { get; }
-        /// <summary>Zero means a test chart has no assigned display level.</summary>
-        public int Level { get; }
-        public string ChartAuthor { get; }
-        public string ChartFile { get; }
+        public static void Validate(string fileName, int level,
+            string author, string extraName)
+        {
+            string difficultyId = GetDifficultyIdFromFileName(fileName);
+            if (difficultyId == null)
+                throw new FormatException("Chart filename must be a fixed difficulty: " + fileName);
+            if (level < 0)
+                throw new FormatException("Chart level cannot be negative.");
+            if (string.IsNullOrWhiteSpace(author))
+                throw new FormatException("Chart author is required.");
+            if (difficultyId == "extra")
+            {
+                if (string.IsNullOrWhiteSpace(extraName))
+                    throw new FormatException("Extra.rd requires extraName.");
+            }
+            else if (!string.IsNullOrEmpty(extraName))
+                throw new FormatException("extraName is only valid in Extra.rd.");
+        }
     }
 
-    /// <summary>Unity-independent song metadata and chart-reference contract.</summary>
+    /// <summary>Unity-independent common song metadata contract.</summary>
     public static class SongContentCodec
     {
         public const int CurrentFormatVersion = 1;
@@ -110,31 +137,24 @@ namespace REmind.Charting
             if (!IsFinite(source.PreviewStartMs) || source.PreviewStartMs < 0 ||
                 !IsFinite(source.PreviewDurationMs) || source.PreviewDurationMs <= 0)
                 throw new FormatException("Preview start and duration must be valid milliseconds.");
-            if (source.Charts == null || source.Charts.Length == 0)
-                throw new FormatException("A song needs at least one chart entry.");
+            if (source.Charts != null)
+                throw new FormatException("charts belongs in the fixed .rd files, not data.json.");
+            return new SongContent(source, ParseHiddenType(source.HiddenType));
+        }
 
-            var ids = new HashSet<string>(StringComparer.Ordinal);
-            var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var charts = new List<SongChartEntry>(source.Charts.Length);
-            foreach (SongChartFile chart in source.Charts)
+        private static SongHiddenType ParseHiddenType(string value)
+        {
+            switch (value)
             {
-                if (chart == null) throw new FormatException("Chart entry cannot be null.");
-                ValidateId(chart.DifficultyId, "difficultyId");
-                if (!ids.Add(chart.DifficultyId))
-                    throw new FormatException("Duplicate difficultyId: " + chart.DifficultyId);
-                if (chart.Level < 0)
-                    throw new FormatException("level cannot be negative.");
-                RequireText(chart.ChartAuthor, "chartAuthor");
-                string chartFile = chart.ChartFile ?? chart.DifficultyId + ".rd";
-                ValidateFileName(chartFile, "chartFile");
-                if (!chartFile.EndsWith(".rd", StringComparison.OrdinalIgnoreCase))
-                    throw new FormatException("chartFile must point to a .rd file.");
-                if (!paths.Add(chartFile))
-                    throw new FormatException("Duplicate chartFile: " + chartFile);
-                charts.Add(new SongChartEntry(chart.DifficultyId, chart.Level,
-                    chart.ChartAuthor, chartFile));
+                case null:
+                case "NotHidden": return SongHiddenType.NotHidden;
+                case "Masked": return SongHiddenType.Masked;
+                case "Puzzle": return SongHiddenType.Puzzle;
+                case "Invisible": return SongHiddenType.Invisible;
+                default:
+                    throw new FormatException(
+                        "hiddenType must be NotHidden, Masked, Puzzle or Invisible.");
             }
-            return new SongContent(source, new ReadOnlyCollection<SongChartEntry>(charts));
         }
 
         public static string ResolveReference(string songDataPath, string relativePath)
@@ -199,16 +219,8 @@ namespace REmind.Charting
         [DataMember(Name = "previewStartMs")] public double PreviewStartMs { get; set; }
         [DataMember(Name = "previewDurationMs")] public double PreviewDurationMs { get; set; }
         [DataMember(Name = "hiddenType")] public string HiddenType { get; set; }
+        [DataMember(Name = "unlockHint")] public string UnlockHint { get; set; }
         [DataMember(Name = "requiresPurchase")] public bool RequiresPurchase { get; set; }
-        [DataMember(Name = "charts")] public SongChartFile[] Charts { get; set; }
-    }
-
-    [DataContract]
-    internal sealed class SongChartFile
-    {
-        [DataMember(Name = "difficultyId")] public string DifficultyId { get; set; }
-        [DataMember(Name = "level")] public int Level { get; set; }
-        [DataMember(Name = "chartAuthor")] public string ChartAuthor { get; set; }
-        [DataMember(Name = "chartFile")] public string ChartFile { get; set; }
+        [DataMember(Name = "charts", EmitDefaultValue = false)] public object[] Charts { get; set; }
     }
 }

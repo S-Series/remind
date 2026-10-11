@@ -1,22 +1,29 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
-using System.Reflection.Emit;
 using NUnit.Framework;
+using UnityEditor;
+using UnityEditor.SceneManagement;
+using UnityEngine;
+using UnityEngine.SceneManagement;
+using UnityEngine.TestTools;
+using UnityEngine.UIElements;
 
 namespace REmind.Effects.Tests
 {
     /// <summary>
-    /// Stage 5 guardrails for the real ChartMaker asset graph. The tests use
-    /// reflection so this no-engine test assembly can inspect Unity assets and
-    /// compiled scene behaviours without opening file dialogs or PlayerPrefs.
+    /// Stage 5 guardrails for the real ChartMaker asset graph. Reflection keeps
+    /// these editor tests independent of ChartMaker's runtime assembly.
     /// </summary>
     public sealed class ChartMakerSceneFlowTests
     {
         private const string ScenePath = "Assets/Scenes/ChartMaker.unity";
         private const string TopMenuPath =
             "Assets/UI/ChartMaker/ChartMakerTopMenu.uxml";
+        private static bool playFixtureSceneLoaded;
+        private static bool playFixtureNeedsCleanup;
 
         [Test]
         [Category("Architecture")]
@@ -161,7 +168,7 @@ namespace REmind.Effects.Tests
         [Test]
         [Category("EffectAcceptance")]
         [Category("ChartMakerFlow")]
-        public void EditorUi_ContainsTopMenuStatusAndCompleteEffectPanel()
+        public void EditorUi_ContainsEffectControlsAndUsesDocumentDifficulty()
         {
             object topMenuAsset = LoadAsset(TopMenuPath,
                 FindType("UnityEngine.UIElements.VisualTreeAsset"));
@@ -206,7 +213,6 @@ namespace REmind.Effects.Tests
             AssertContainsAll(effectNames,
                 "effect-note-edit-panel",
                 "effect-music-id-field",
-                "effect-difficulty-id-field",
                 "effect-gimmick-field",
                 "effect-type-field",
                 "effect-command-field",
@@ -217,65 +223,280 @@ namespace REmind.Effects.Tests
                 "effect-validate-json-button",
                 "effect-copy-button",
                 "effect-reload-json-button");
+
+            PropertyInfo difficulty = FindType("ChartEffectDocumentState")
+                .GetProperty("DifficultyId", BindingFlags.Public |
+                    BindingFlags.Static);
+            Assert.That(difficulty, Is.Not.Null);
+            string previousDifficulty = (string)difficulty.GetValue(null);
+            try
+            {
+                difficulty.SetValue(null, "hard");
+                Assert.That(panelType.GetProperty("DifficultyId")
+                    ?.GetValue(panel), Is.EqualTo("hard"),
+                    "Effect difficulty must follow the open chart document.");
+                difficulty.SetValue(null, "chaos");
+                Assert.That(panelType.GetProperty("DifficultyId")
+                    ?.GetValue(panel), Is.EqualTo("chaos"));
+            }
+            finally
+            {
+                difficulty.SetValue(null, previousDifficulty);
+            }
         }
 
-        [Test]
+        [UnityTest]
         [Category("EffectAcceptance")]
         [Category("ChartMakerFlow")]
-        public void CompiledFlow_AutoOpensEffectEditorAndLocksPreviewEditing()
+        public IEnumerator EffectPlacementOpensEditorAndPreviewBlocksFurtherPlacement()
         {
-            Type placementType = FindType("ChartPlacementController");
-            MethodInfo place = RequiredMethod(
-                placementType, "TryPlaceCurrentNote");
-            List<CalledMethod> placementCalls = ReadCalledMethods(place);
-            int addEffect = FindCall(
-                placementCalls, "ChartHolder", "AddEffectNote");
-            int leaveTool = FindCall(
-                placementCalls, "ChartPlacementController", "SetCurrentTool",
-                addEffect + 1);
-            int selectEffect = FindCall(
-                placementCalls, "ChartNoteSelectionController",
-                "SelectNoteObject", leaveTool + 1);
+            Assert.That(EditorApplication.isPlaying, Is.False);
+            Scene openChartMaker = SceneManager.GetSceneByPath(ScenePath);
+            Assert.That(openChartMaker.IsValid() && openChartMaker.isLoaded,
+                Is.False, "Close the live ChartMaker scene before this check.");
+            for (int index = 0; index < SceneManager.sceneCount; index++)
+                Assert.That(SceneManager.GetSceneAt(index).isDirty, Is.False,
+                    "Save modified editor scenes before entering PlayMode.");
+            Type chartManager = FindType("ChartManager");
+            PropertyInfo holders = chartManager.GetProperty("ChartHolders");
+            Assert.That(((IList)holders.GetValue(null)).Count, Is.Zero,
+                "Do not run the placement check with a live ChartMaker document.");
+            Type history = FindType("ChartEditHistory");
+            Assert.That((bool)history.GetProperty("CanUndo")
+                .GetValue(null), Is.False,
+                "Do not replace a live ChartMaker edit history.");
+            Assert.That((bool)history.GetProperty("CanRedo")
+                .GetValue(null), Is.False,
+                "Do not replace a live ChartMaker edit history.");
 
-            Assert.That(addEffect, Is.GreaterThanOrEqualTo(0),
-                "Effect placement must add the note to its ChartHolder.");
-            Assert.That(leaveTool, Is.GreaterThan(addEffect),
-                "Successful Effect placement must leave the placement tool.");
-            Assert.That(selectEffect, Is.GreaterThan(leaveTool),
-                "The newly placed Effect must be selected so its editor opens immediately.");
+            // The EditMode runner restores the user's scene setup after its
+            // empty bootstrap scene; load ChartMaker only inside PlayMode.
+            Scene bootstrap = SceneManager.GetActiveScene();
+            Assert.That(bootstrap.path, Is.Empty,
+                "Run this fixture from the Test Runner bootstrap scene.");
+            foreach (GameObject root in bootstrap.GetRootGameObjects())
+            foreach (Camera camera in root.GetComponentsInChildren<Camera>(true))
+                camera.enabled = false;
+            yield return new EnterPlayMode();
+            Scene scene = default;
+            AsyncOperation sceneUnload = null;
+            AudioClip clip = null;
+            object core = null;
+            object audio = null;
+            playFixtureSceneLoaded = false;
+            playFixtureNeedsCleanup = true;
+            SceneManager.sceneLoaded += PreparePlayFixtureScene;
+            try
+            {
+                chartManager = FindType("ChartManager");
+                holders = chartManager.GetProperty("ChartHolders");
+                scene = EditorSceneManager.LoadSceneInPlayMode(
+                    ScenePath, new LoadSceneParameters(LoadSceneMode.Additive));
+                for (int frame = 0; frame < 120; frame++)
+                {
+                    Scene loaded = SceneManager.GetSceneByPath(ScenePath);
+                    if (playFixtureSceneLoaded && loaded.IsValid() && loaded.isLoaded)
+                    {
+                        scene = loaded;
+                        break;
+                    }
+                    yield return null;
+                }
+                Assert.That(playFixtureSceneLoaded, Is.True,
+                    "ChartMaker sceneLoaded did not arrive within 120 frames.");
+                Assert.That(scene.IsValid() && scene.isLoaded, Is.True);
+                List<object> components = new List<object>();
+                foreach (GameObject root in scene.GetRootGameObjects())
+                    components.AddRange(GetComponentsInChildren(root));
+                Assert.That((bool)GetField(FindSingleComponent(
+                    components, "FileToChart"), "restoreRecentFilesOnStart"),
+                    Is.False, "Recent-file startup must be disabled in this fixture.");
+                yield return null;
+                Assert.That(((IList)holders.GetValue(null)).Count, Is.Zero,
+                    "The isolated ChartMaker scene must start with an empty chart.");
+                object placement = FindSingleComponent(
+                    components, "ChartPlacementController");
+                object selection = FindSingleComponent(
+                    components, "ChartNoteSelectionController");
+                object popup = FindSingleComponent(
+                    components, "ChartNoteEditPopupController");
+                core = FindSingleComponent(components, "ChartCore");
+                object testPlay = FindSingleComponent(
+                    components, "ChartTestPlay");
+                object topMenu = FindSingleComponent(
+                    components, "ChartMakerTopMenuController");
+                object router = FindSingleComponent(
+                    components, "ChartMakerInputRouter");
+                audio = RequiredField(core, "audioSource");
+                Assert.That((bool)GetField(topMenu, "isMenuBound"), Is.True,
+                        "The actual menu must subscribe to Preview state changes.");
+                Assert.That((bool)GetField(popup, "isInitialized"), Is.True);
+                Assert.That((bool)GetField(testPlay, "eventsBound"), Is.True,
+                    "The Preview presenter must subscribe during PlayMode startup.");
 
-            Type popupType = FindType("ChartNoteEditPopupController");
-            List<CalledMethod> initializeCalls = ReadCalledMethods(
-                RequiredMethod(popupType, "Initialize"));
-            Assert.That(
-                FindCall(initializeCalls, "ChartEffectNoteEditorPanel", ".ctor"),
-                Is.GreaterThanOrEqualTo(0),
-                "The note popup must build the Effect-specific editor panel.");
+                RequiredMethod(placement.GetType(), "SelectEffectNote")
+                    .Invoke(placement, null);
+                object position = Activator.CreateInstance(
+                    FindType("UnityEngine.Vector2"), 0f, 0f);
+                RequiredMethod(placement.GetType(), "HandlePositionClicked")
+                    .Invoke(placement, new[] { null, position, null });
 
-            Type testPlayType = FindType("ChartTestPlay");
-            List<CalledMethod> bindCalls = ReadCalledMethods(
-                RequiredMethod(testPlayType, "BindEvents"));
-            AssertHasCall(bindCalls, "ChartCore", "add_TestPlaybackStarting");
-            AssertHasCall(bindCalls, "ChartCore", "add_TestPlaybackStartAborted");
-            AssertHasCall(bindCalls, "ChartCore", "add_TestMsChanged");
-            AssertHasCall(bindCalls, "ChartCore", "add_TestPlaybackChanged");
+                IList placed = (IList)holders.GetValue(null);
+                Assert.That(placed.Count, Is.EqualTo(1),
+                    "Clicking the Effect preview must place one chart event.");
+                Assert.That((bool)GetField(placed[0], "isEffect"), Is.True);
+                Assert.That(GetField(placed[0], "effectId"),
+                    Is.Not.Empty);
+                Assert.That(placement.GetType().GetProperty("CurrentTool")
+                    .GetValue(placement).ToString(), Is.EqualTo("None"));
 
-            List<CalledMethod> startCalls = ReadCalledMethods(
-                RequiredMethod(testPlayType, "HandleTestPlaybackStarting"));
-            AssertHasCall(startCalls, "ChartTestPlay", "TryCompileSnapshot");
-            AssertHasCall(startCalls, "ChartTestPlay", "PrepareEffects");
+                IList selected = (IList)selection.GetType()
+                    .GetProperty("SelectedNoteObjects").GetValue(selection);
+                Assert.That(selected.Count, Is.EqualTo(1));
+                Assert.That(GetField(popup, "selectedNoteObject"),
+                    Is.SameAs(selected[0]));
+                Assert.That(GetField(popup, "selectedNoteType").ToString(),
+                    Is.EqualTo("Effect"));
+                Assert.That(GetField(popup, "effectPanel"), Is.Not.Null);
+                Assert.That(IsDisplayed(GetField(popup, "editWindow")), Is.True,
+                    "Selecting the placed Effect must open its editor.");
 
-            Type topMenuType = FindType("ChartMakerTopMenuController");
-            List<CalledMethod> playbackChangedCalls = ReadCalledMethods(
-                RequiredMethod(topMenuType, "HandlePlaybackChanged"));
-            AssertHasCall(
-                playbackChangedCalls,
-                "ChartMakerTopMenuController",
-                "SetEditingEnabled");
-            AssertHasCall(
-                playbackChangedCalls,
-                "ChartMakerTopMenuController",
-                "RefreshDocumentCommandState");
+                placed[0].GetType().GetField("effectTypeId")
+                    .SetValue(placed[0], "camera.offset");
+                placed[0].GetType().GetField("effectParametersJson")
+                    .SetValue(placed[0],
+                        "{\"durationMs\":1000,\"offsetX\":1," +
+                        "\"offsetY\":0,\"rollDegrees\":0}");
+                RequiredMethod(placement.GetType(), "SelectEffectNote")
+                    .Invoke(placement, null);
+                Assert.That((bool)placement.GetType()
+                    .GetProperty("IsPreviewing").GetValue(placement), Is.True);
+                Assert.That(GetField(placement, "currentNoteType").ToString(),
+                    Is.EqualTo("Effect"));
+                Assert.That((bool)GetField(placement,
+                    "canPlaceCurrentPreview"), Is.True,
+                    "Effect placement must be ready before testing the Preview lock.");
+                Assert.That(IsDisplayed(GetField(popup, "editWindow")), Is.False,
+                    "Selecting the next Effect must close the previous editor.");
+
+                clip = AudioClip.Create("Effect placement preview", 4410,
+                    1, 44100, false);
+                ((AudioSource)audio).clip = clip;
+                core.GetType().GetMethod("StartTestPlay", new[] { typeof(double) })
+                    .Invoke(core, new object[] { 0d });
+                Assert.That((bool)core.GetType().GetProperty("IsTestPlaying")
+                    .GetValue(core), Is.True);
+                object snapshot = testPlay.GetType()
+                    .GetProperty("CurrentSnapshot").GetValue(testPlay);
+                Assert.That(snapshot, Is.Not.Null,
+                    "Preview must compile the placed Effect.");
+                Assert.That(((ICollection)snapshot.GetType()
+                    .GetProperty("EffectEvents").GetValue(snapshot)).Count,
+                    Is.EqualTo(1));
+                Assert.That((long)GetField(testPlay, "effectSessionId"),
+                    Is.GreaterThan(0),
+                    "Preview must prepare an Effect session.");
+                Assert.That((string)testPlay.GetType()
+                    .GetProperty("LastEffectMessage").GetValue(testPlay),
+                    Is.Null.Or.Empty);
+                Assert.That((bool)placement.GetType().GetProperty("CanEditChart")
+                    .GetValue(placement), Is.False);
+                Assert.That((bool)router.GetType().GetProperty("EditingEnabled")
+                    .GetValue(router), Is.False,
+                    "Preview must disable the input router through the menu callback.");
+                object saveButton = GetField(topMenu, "saveChartButton");
+                PropertyInfo saveEnabled = saveButton.GetType()
+                    .GetProperty("enabledSelf");
+                Assert.That(saveEnabled.GetValue(saveButton), Is.False,
+                    "Preview must disable the Save command.");
+                Assert.That(topMenu.GetType()
+                    .GetProperty("CurrentStatusMessage").GetValue(topMenu),
+                    Does.Contain("Editing is locked"));
+                RequiredMethod(placement.GetType(), "HandlePositionClicked")
+                    .Invoke(placement, new[] { null, position, null });
+                Assert.That(((IList)holders.GetValue(null)).Count, Is.EqualTo(1),
+                    "Preview must reject a placement click.");
+                RequiredMethod(core.GetType(), "EndTestPlay")
+                    .Invoke(core, null);
+                Assert.That((bool)router.GetType()
+                    .GetProperty("EditingEnabled").GetValue(router), Is.True,
+                    "Stopping Preview must restore editor input.");
+                Assert.That(saveEnabled.GetValue(saveButton), Is.True,
+                    "Stopping Preview must restore the Save command.");
+            }
+            finally
+            {
+                SceneManager.sceneLoaded -= PreparePlayFixtureScene;
+                playFixtureSceneLoaded = false;
+                if (core is Component component && component &&
+                    (bool)core.GetType().GetProperty("IsTestPlaying")
+                        .GetValue(core))
+                    RequiredMethod(core.GetType(), "EndTestPlay")
+                        .Invoke(core, null);
+                if (audio is AudioSource source && source)
+                    source.clip = null;
+                if (clip)
+                    UnityEngine.Object.Destroy(clip);
+                ClearPlayFixtureState();
+                if (scene.IsValid() && scene.isLoaded)
+                    sceneUnload = SceneManager.UnloadSceneAsync(scene);
+            }
+            if (sceneUnload != null)
+                yield return sceneUnload;
+            yield return new ExitPlayMode();
+            if (playFixtureNeedsCleanup)
+            {
+                ClearPlayFixtureState();
+                playFixtureNeedsCleanup = false;
+            }
+        }
+
+        [UnityTearDown]
+        public IEnumerator ExitPlayModeAfterPlacementCheck()
+        {
+            if (playFixtureNeedsCleanup && EditorApplication.isPlaying)
+                ClearPlayFixtureState();
+            if (EditorApplication.isPlayingOrWillChangePlaymode)
+                yield return new ExitPlayMode();
+            if (playFixtureNeedsCleanup)
+            {
+                ClearPlayFixtureState();
+                playFixtureNeedsCleanup = false;
+            }
+        }
+
+        private static void ClearPlayFixtureState()
+        {
+            FindType("ChartManager").GetMethod("ClearChart",
+                new[] { typeof(bool) }).Invoke(null, new object[] { false });
+            RequiredMethod(FindType("ChartEditHistory"), "Clear")
+                .Invoke(null, null);
+        }
+
+        private static void PreparePlayFixtureScene(Scene loaded, LoadSceneMode _)
+        {
+            if (loaded.path != ScenePath) return;
+            playFixtureSceneLoaded = true;
+            foreach (GameObject root in loaded.GetRootGameObjects())
+            {
+                foreach (Camera camera in root.GetComponentsInChildren<Camera>(true))
+                    camera.enabled = false;
+                foreach (AudioListener listener in root.GetComponentsInChildren<AudioListener>(true))
+                    listener.enabled = false;
+                foreach (object component in GetComponentsInChildren(root))
+                {
+                    if (component.GetType().Name != "FileToChart") continue;
+                    component.GetType().GetField("restoreRecentFilesOnStart",
+                        BindingFlags.Instance | BindingFlags.NonPublic)
+                        .SetValue(component, false);
+                }
+            }
+        }
+
+        private static bool IsDisplayed(object element)
+        {
+            return ((VisualElement)element).style.display.value ==
+                DisplayStyle.Flex;
         }
 
         private static object LoadAsset(string path, Type assetType)
@@ -479,142 +700,6 @@ namespace REmind.Effects.Tests
             return method;
         }
 
-        private static void AssertHasCall(
-            List<CalledMethod> calls, string declaringType, string methodName)
-        {
-            Assert.That(
-                FindCall(calls, declaringType, methodName),
-                Is.GreaterThanOrEqualTo(0),
-                $"Expected call to {declaringType}.{methodName} was not found.");
-        }
-
-        private static int FindCall(
-            List<CalledMethod> calls,
-            string declaringType,
-            string methodName,
-            int startIndex = 0)
-        {
-            for (int index = Math.Max(0, startIndex);
-                 index < calls.Count;
-                 index++)
-            {
-                MethodBase method = calls[index].Method;
-                if (method.DeclaringType?.Name == declaringType &&
-                    method.Name == methodName)
-                {
-                    return index;
-                }
-            }
-            return -1;
-        }
-
-        private static List<CalledMethod> ReadCalledMethods(MethodInfo method)
-        {
-            MethodBody body = method.GetMethodBody();
-            byte[] bytes = body?.GetILAsByteArray();
-            Assert.That(bytes, Is.Not.Null,
-                $"{method.DeclaringType?.Name}.{method.Name} has no readable IL body.");
-
-            Dictionary<int, OpCode> opCodes = BuildOpCodeMap();
-            var calls = new List<CalledMethod>();
-            int position = 0;
-            while (position < bytes.Length)
-            {
-                int offset = position;
-                int code = bytes[position++];
-                if (code == 0xfe)
-                {
-                    code = 0xfe00 | bytes[position++];
-                }
-
-                if (!opCodes.TryGetValue(code, out OpCode opCode))
-                {
-                    throw new InvalidOperationException(
-                        $"Unknown IL opcode 0x{code:x} at {offset}.");
-                }
-
-                if (opCode.OperandType == OperandType.InlineMethod)
-                {
-                    int token = BitConverter.ToInt32(bytes, position);
-                    try
-                    {
-                        MethodBase called = method.Module.ResolveMethod(
-                            token,
-                            method.DeclaringType?.GetGenericArguments(),
-                            method.GetGenericArguments());
-                        calls.Add(new CalledMethod(offset, called));
-                    }
-                    catch (ArgumentException)
-                    {
-                        // A method spec from an unrelated generic context is
-                        // irrelevant to the concrete workflow calls asserted here.
-                    }
-                }
-
-                position += OperandSize(opCode.OperandType, bytes, position);
-            }
-            return calls;
-        }
-
-        private static Dictionary<int, OpCode> BuildOpCodeMap()
-        {
-            var result = new Dictionary<int, OpCode>();
-            FieldInfo[] fields = typeof(OpCodes).GetFields(
-                BindingFlags.Public | BindingFlags.Static);
-            for (int index = 0; index < fields.Length; index++)
-            {
-                var opCode = (OpCode)fields[index].GetValue(null);
-                result[(ushort)opCode.Value] = opCode;
-            }
-            return result;
-        }
-
-        private static int OperandSize(
-            OperandType operandType, byte[] bytes, int position)
-        {
-            switch (operandType)
-            {
-                case OperandType.InlineNone:
-                    return 0;
-                case OperandType.ShortInlineBrTarget:
-                case OperandType.ShortInlineI:
-                case OperandType.ShortInlineVar:
-                    return 1;
-                case OperandType.InlineVar:
-                    return 2;
-                case OperandType.InlineBrTarget:
-                case OperandType.InlineField:
-                case OperandType.InlineI:
-                case OperandType.InlineMethod:
-                case OperandType.InlineSig:
-                case OperandType.InlineString:
-                case OperandType.InlineTok:
-                case OperandType.InlineType:
-                case OperandType.ShortInlineR:
-                    return 4;
-                case OperandType.InlineI8:
-                case OperandType.InlineR:
-                    return 8;
-                case OperandType.InlineSwitch:
-                    return 4 + BitConverter.ToInt32(bytes, position) * 4;
-                default:
-                    throw new NotSupportedException(
-                        $"Unsupported IL operand type: {operandType}.");
-            }
-        }
-
-        private readonly struct CalledMethod
-        {
-            public CalledMethod(int offset, MethodBase method)
-            {
-                Offset = offset;
-                Method = method;
-            }
-
-            public int Offset { get; }
-            public MethodBase Method { get; }
-        }
-
         private sealed class AdditiveSceneScope : IDisposable
         {
             private readonly Type sceneType;
@@ -623,6 +708,8 @@ namespace REmind.Effects.Tests
             private readonly object originalActiveScene;
             private readonly bool openedByTest;
             private object scene;
+
+            public bool OpenedByTest => openedByTest;
 
             public AdditiveSceneScope(string path)
             {

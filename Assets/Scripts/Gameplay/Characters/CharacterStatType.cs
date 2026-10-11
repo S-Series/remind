@@ -2,10 +2,10 @@ namespace REmind.Gameplay.Characters
 {
     public enum CharacterStatType
     {
-        WorldProgress = 0,
-        Reward = 1,
-        // These slots have no gameplay or settlement meaning yet.
-        ReservedExtension1 = 2,
-        ReservedExtension2 = 3,
+        WorldUnlock = 0,
+        RegularCurrency = 1,
+        HiddenUnlock = 2,
+        // This slot has no value or gameplay meaning yet.
+        Reserved = 3,
     }
 }

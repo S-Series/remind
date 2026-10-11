@@ -13,15 +13,52 @@ MonoBehaviour:
   m_Name: MusicCatalog
   m_EditorClassIdentifier: REmind.Gameplay::REmind.Gameplay.Demo.MusicCatalog
   songs:
+  - musicId: deinos_phainein
+    songData: {fileID: 4900000, guid: b635c8bd43c60e046bf4ce8b465c55fe, type: 3}
+    jacket: {fileID: 21300000, guid: 562e2c4565f0aab4ea78021c6e8c16a2, type: 3}
+    audioClip: {fileID: 8300000, guid: 00aa26fcfdc44214687d3975d731c1e6, type: 3}
+    difficulties:
+    - difficultyId: hard
+      level: 0
+      author: Unknown
+      extraName: 
+      jacket: {fileID: 21300000, guid: 562e2c4565f0aab4ea78021c6e8c16a2, type: 3}
+      runtimePackage: {fileID: 4900000, guid: f51eb829ad2d3a44b925e58929ab17e9, type: 3}
   - musicId: designant
     songData: {fileID: 4900000, guid: c62a02aa3a5fb5a4482e5e0b125310da, type: 3}
     jacket: {fileID: 21300000, guid: fd82148dbfdc3d748808e2d939ed91cb, type: 3}
     audioClip: {fileID: 8300000, guid: 1ba2c0e17d00c664083f42e44cf9d6aa, type: 3}
     difficulties:
+    - difficultyId: easy
+      level: 8
+      author: Unknown
+      extraName: 
+      jacket: {fileID: 21300000, guid: fd82148dbfdc3d748808e2d939ed91cb, type: 3}
+      runtimePackage: {fileID: 4900000, guid: 44a805156884d85459c67527b617d100, type: 3}
+    - difficultyId: normal
+      level: 11
+      author: Unknown
+      extraName: 
+      jacket: {fileID: 21300000, guid: fd82148dbfdc3d748808e2d939ed91cb, type: 3}
+      runtimePackage: {fileID: 4900000, guid: 1504faaec6a1f1042a84d86c23c71e42, type: 3}
     - difficultyId: hard
-      level: 0
+      level: 13
+      author: Unknown
+      extraName: 
       jacket: {fileID: 21300000, guid: fd82148dbfdc3d748808e2d939ed91cb, type: 3}
       runtimePackage: {fileID: 4900000, guid: 60fbe34fbf7092543a71a911fa83313e, type: 3}
+    - difficultyId: chaos
+      level: 16
+      author: Unknown
+      extraName: 
+      jacket: {fileID: 21300000, guid: fd82148dbfdc3d748808e2d939ed91cb, type: 3}
+      runtimePackage: {fileID: 4900000, guid: 0bd7ed546fb6be746bc196e661f05cc5, type: 3}
+    - difficultyId: extra
+      level: 20
+      author: Unknown
+      extraName: DREAM
+      jacket: {fileID: 21300000, guid: fd82148dbfdc3d748808e2d939ed91cb, type: 3}
+      runtimePackage: {fileID: 4900000, guid: 1a2c8eac713dd4445859af5d6b8e7193, type: 3}
   - musicId: i
     songData: {fileID: 4900000, guid: acb9417978524aa5a2339ce0c8371270, type: 3}
     jacket: {fileID: 21300000, guid: d795dff1441aa58479d92485ec0c970e, type: 3}
@@ -29,5 +66,42 @@ MonoBehaviour:
     difficulties:
     - difficultyId: hard
       level: 0
+      author: Unknown
+      extraName: 
       jacket: {fileID: 21300000, guid: d795dff1441aa58479d92485ec0c970e, type: 3}
       runtimePackage: {fileID: 4900000, guid: ec47c90a520b0004d8fdeb3957d2ea19, type: 3}
+  - musicId: lament_rain
+    songData: {fileID: 4900000, guid: 61911f5236ca5ac4cbff909b03bf4aa6, type: 3}
+    jacket: {fileID: 21300000, guid: f37d3274835c8b34ca06bc6cb7ed3d3f, type: 3}
+    audioClip: {fileID: 8300000, guid: 2d0b93158e046f14bb83389ccd1cf91d, type: 3}
+    difficulties:
+    - difficultyId: easy
+      level: 8
+      author: Unknown
+      extraName: 
+      jacket: {fileID: 21300000, guid: f37d3274835c8b34ca06bc6cb7ed3d3f, type: 3}
+      runtimePackage: {fileID: 4900000, guid: 5d7ca1adb73e34b4ca31d1f8f3dfe759, type: 3}
+    - difficultyId: normal
+      level: 11
+      author: Unknown
+      extraName: 
+      jacket: {fileID: 21300000, guid: f37d3274835c8b34ca06bc6cb7ed3d3f, type: 3}
+      runtimePackage: {fileID: 4900000, guid: a8fdd7afd1212734fbe8980825754535, type: 3}
+    - difficultyId: hard
+      level: 13
+      author: Unknown
+      extraName: 
+      jacket: {fileID: 21300000, guid: f37d3274835c8b34ca06bc6cb7ed3d3f, type: 3}
+      runtimePackage: {fileID: 4900000, guid: 8af97bcbec9cee14dad639f2396e49a9, type: 3}
+    - difficultyId: chaos
+      level: 16
+      author: Unknown
+      extraName: 
+      jacket: {fileID: 21300000, guid: f37d3274835c8b34ca06bc6cb7ed3d3f, type: 3}
+      runtimePackage: {fileID: 4900000, guid: 0ace276b6a8d50e4cb284ee6d470c65d, type: 3}
+    - difficultyId: extra
+      level: 20
+      author: Unknown
+      extraName: DREAM
+      jacket: {fileID: 21300000, guid: f37d3274835c8b34ca06bc6cb7ed3d3f, type: 3}
+      runtimePackage: {fileID: 4900000, guid: 9c8261a4f6d50114e902fdef5b2cdd61, type: 3}

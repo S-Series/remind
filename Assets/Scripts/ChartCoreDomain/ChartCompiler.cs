@@ -790,6 +790,8 @@ namespace REmind.Charting
                 new HashSet<string>(StringComparer.Ordinal);
             HashSet<(double TimeMs, int Lane)> occupiedStarts =
                 new HashSet<(double TimeMs, int Lane)>();
+            var occupiedCenterStarts = new HashSet<(double, ChartNoteKind)>();
+            var knobs = new List<ChartDocumentNote>();
 
             for (int i = 0; i < document.Notes.Count; i++)
             {
@@ -802,7 +804,9 @@ namespace REmind.Charting
 
                 double startTimeMs =
                     timingMap.TimeAtPosition(note.StartPosition);
-                if (!occupiedStarts.Add((startTimeMs, note.Lane)))
+                if (!(note.Lane == (int)ChartLane.Center
+                    ? occupiedCenterStarts.Add((startTimeMs, note.Kind))
+                    : occupiedStarts.Add((startTimeMs, note.Lane))))
                 {
                     issues.Add(new CompileIssue("NOTE_LANE_TIME_COLLISION",
                         $"Notes collide in lane {note.Lane + 1} at " +
@@ -810,6 +814,15 @@ namespace REmind.Charting
                     continue;
                 }
                 bool isLong = IsLong(note.Kind);
+                if (note.Kind == ChartNoteKind.Knob)
+                {
+                    foreach (ChartDocumentNote other in knobs)
+                        if (note.StartPosition < other.EndPosition.Value &&
+                            other.StartPosition < note.EndPosition.Value)
+                            issues.Add(new CompileIssue("KNOB_OVERLAP",
+                                $"Knobs '{other.Id}' and '{note.Id}' overlap."));
+                    knobs.Add(note);
+                }
                 double? endTimeMs = isLong
                     ? timingMap.TimeAtPosition(note.EndPosition.Value)
                     : (double?)null;
@@ -819,13 +832,21 @@ namespace REmind.Charting
                     ? scrollMap.FloorPositionAtTime(endTimeMs.Value)
                     : (double?)null;
                 var points = new PlayableNotePoint[note.Points.Count];
+                ChartKnobDirection direction = ChartKnobDirection.None;
                 for (int pointIndex = 0; pointIndex < points.Length; pointIndex++)
                 {
                     ChartNotePoint point = note.Points[pointIndex];
                     double pointTimeMs = timingMap.TimeAtPosition(point.Position);
+                    if (note.Kind == ChartNoteKind.Knob)
+                        direction = ResolveKnobDirection(note, pointIndex, direction);
                     points[pointIndex] = new PlayableNotePoint(point,
-                        pointTimeMs, scrollMap.FloorPositionAtTime(pointTimeMs));
+                        pointTimeMs, scrollMap.FloorPositionAtTime(pointTimeMs),
+                        note.Kind == ChartNoteKind.Knob ? direction :
+                            (ChartKnobDirection?)null);
                 }
+                JudgementTarget[] knobTargets = note.Kind == ChartNoteKind.Knob
+                    ? CompileKnobTargets(note, points, timingMap, scrollMap)
+                    : null;
                 var playableNote = new PlayableNoteSnapshot(
                     note.Id,
                     note.Kind,
@@ -836,8 +857,15 @@ namespace REmind.Charting
                     endTimeMs,
                     startFloorPosition,
                     endFloorPosition,
-                    points);
+                    points,
+                    knobTargets);
                 playableNotes.Add(playableNote);
+
+                if (knobTargets != null)
+                {
+                    judgementTargets.AddRange(knobTargets);
+                    continue;
+                }
 
                 if (!isLong)
                 {
@@ -882,6 +910,55 @@ namespace REmind.Charting
             }
         }
 
+        private static ChartKnobDirection ResolveKnobDirection(ChartDocumentNote note,
+            int index, ChartKnobDirection previous)
+        {
+            if (index == note.Points.Count - 1) return ChartKnobDirection.None;
+            double delta = note.Points[index + 1].KnobX - note.Points[index].KnobX;
+            if (delta < 0d) return ChartKnobDirection.Left;
+            if (delta > 0d) return ChartKnobDirection.Right;
+            return ChartKnobDirection.None;
+        }
+
+        private static JudgementTarget[] CompileKnobTargets(ChartDocumentNote note,
+            PlayableNotePoint[] points, TimingMap timing, ScrollMap scroll)
+        {
+            var targets = new List<JudgementTarget>();
+            for (int index = 0; index < points.Length; index++)
+            {
+                if (index > 0 && points[index].KnobInterpolation != ChartKnobInterpolation.Step) continue;
+                double delta = index > 0 ? points[index].KnobX - points[index - 1].KnobX : 0d;
+                targets.Add(new JudgementTarget(note.Id + "@knob:" + index,
+                    note.Id, note.Kind, index == 0 ? JudgementTargetKind.KnobStart :
+                        JudgementTargetKind.KnobTurn, note.Lane, points[index].Position,
+                    points[index].TimeMs, points[index].FloorPosition, index,
+                    delta < 0 ? ChartKnobDirection.Left : delta > 0
+                        ? ChartKnobDirection.Right : ChartKnobDirection.None));
+            }
+            double end = points[points.Length - 1].TimeMs;
+            int segment = 0;
+            for (int tick = 1; ; tick++)
+            {
+                double time = Math.Min(end, points[0].TimeMs +
+                    tick * KnobJudgementRules.HoldTickIntervalMs);
+                while (segment + 1 < points.Length - 1 &&
+                    points[segment + 1].TimeMs <= time) segment++;
+                bool turn = false;
+                for (int index = 1; index < points.Length; index++)
+                    turn |= points[index].TimeMs == time &&
+                        points[index].KnobInterpolation == ChartKnobInterpolation.Step;
+                if (!turn)
+                    targets.Add(new JudgementTarget(note.Id + "@tick:" + tick,
+                        note.Id, note.Kind, JudgementTargetKind.KnobTick, note.Lane,
+                        (int)Math.Round(timing.PositionAtTime(time)), time,
+                        scroll.FloorPositionAtTime(time), segment,
+                        points[segment].KnobDirection));
+                if (time >= end) break;
+            }
+            targets.Sort(CompareTargets);
+            return targets.ToArray();
+        }
+
         private static bool ValidateNote(
             ChartDocumentNote note,
             int index,
@@ -923,6 +1000,14 @@ namespace REmind.Charting
                     $"{ChartLaneLayout.LaneCount - 1}."));
                 valid = false;
             }
+            bool central = note.Kind == ChartNoteKind.CenterTap ||
+                note.Kind == ChartNoteKind.Knob;
+            if (central != (note.Lane == (int)ChartLane.Center))
+            {
+                issues.Add(new CompileIssue("NOTE_CENTER_LANE",
+                    $"Note '{note.Id}' must use the lane belonging to its kind."));
+                valid = false;
+            }
 
             if (note.StartPosition < 0)
             {
@@ -936,7 +1021,8 @@ namespace REmind.Charting
 
             if (isLong &&
                 (!note.EndPosition.HasValue ||
-                 note.EndPosition.Value <= note.StartPosition))
+                 (note.EndPosition.Value < note.StartPosition ||
+                  (note.Kind != ChartNoteKind.Knob && note.EndPosition.Value == note.StartPosition))))
             {
                 issues.Add(new CompileIssue(
                     "NOTE_END_POSITION",
@@ -970,8 +1056,12 @@ namespace REmind.Charting
                     bool isLast = pointIndex == note.Points.Count - 1;
                     if (point == null ||
                         point.Position < note.StartPosition ||
-                        (pointIndex > 0 && point.Position <=
-                            note.Points[pointIndex - 1].Position) ||
+                        (pointIndex > 0 && (point.Position < note.Points[pointIndex - 1].Position ||
+                            (point.Position == note.Points[pointIndex - 1].Position &&
+                             (note.Kind != ChartNoteKind.Knob ||
+                              point.KnobInterpolation != ChartKnobInterpolation.Step ||
+                              point.KnobX == note.Points[pointIndex - 1].KnobX ||
+                              (pointIndex > 1 && point.Position == note.Points[pointIndex - 2].Position))))) ||
                         (isLong && (isLast
                             ? point.Kind != ChartNotePointKind.End ||
                               point.Position != note.EndPosition
@@ -982,7 +1072,15 @@ namespace REmind.Charting
                         (note.Kind != ChartNoteKind.Scratch &&
                          note.Kind != ChartNoteKind.LongScratch &&
                          (point.Motion != ChartScratchMotionKind.None ||
-                          point.MoveAmount != 0)))
+                          point.MoveAmount != 0)) ||
+                        double.IsNaN(point.KnobX) || double.IsInfinity(point.KnobX) ||
+                        point.KnobX < -1d || point.KnobX > 1d ||
+                        !Enum.IsDefined(typeof(ChartKnobDirection), point.KnobDirection) ||
+                        !Enum.IsDefined(typeof(ChartKnobInterpolation), point.KnobInterpolation) ||
+                        (pointIndex == 0 && point.KnobInterpolation != ChartKnobInterpolation.Linear) ||
+                        (note.Kind != ChartNoteKind.Knob &&
+                         (point.KnobX != 0d || point.KnobDirection != ChartKnobDirection.None ||
+                          point.KnobInterpolation != ChartKnobInterpolation.Linear)))
                     {
                         issues.Add(new CompileIssue("NOTE_POINTS",
                             $"Note '{note.Id}' has an invalid point at index {pointIndex}."));
@@ -992,13 +1090,35 @@ namespace REmind.Charting
                 }
             }
 
+            if (valid && note.Kind == ChartNoteKind.Knob)
+            {
+                ChartKnobDirection previous = ChartKnobDirection.None;
+                for (int pointIndex = 0; pointIndex < note.Points.Count; pointIndex++)
+                {
+                    ChartNotePoint point = note.Points[pointIndex];
+                    ChartKnobDirection expected = ResolveKnobDirection(note, pointIndex, previous);
+                    // Old v2 flat spans may retain the preceding direction as metadata.
+                    if (point.KnobDirection != ChartKnobDirection.None &&
+                        point.KnobDirection != expected &&
+                        !(pointIndex < note.Points.Count - 1 && expected == ChartKnobDirection.None &&
+                          point.KnobDirection == previous))
+                    {
+                        issues.Add(new CompileIssue("KNOB_DIRECTION",
+                            $"Knob '{note.Id}' direction contradicts its path at point {pointIndex}."));
+                        valid = false;
+                        break;
+                    }
+                    previous = expected;
+                }
+            }
+
             return valid;
         }
 
         private static bool IsLong(ChartNoteKind kind)
         {
             return kind == ChartNoteKind.Hold ||
-                kind == ChartNoteKind.LongScratch;
+                kind == ChartNoteKind.LongScratch || kind == ChartNoteKind.Knob;
         }
 
         private static int CompareNotes(

@@ -20,7 +20,7 @@ namespace REmind.Gameplay.Demo
 
         public void OpenReMind() => AppRoot.NavigateToScene("ReMind");
 
-        public void OpenOption() => AppRoot.NavigateToScene("Option");
+        public void OpenOption() => OpenSettings();
 
         public void OpenSettings()
         {

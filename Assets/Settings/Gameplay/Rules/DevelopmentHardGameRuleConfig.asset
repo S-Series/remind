@@ -13,24 +13,24 @@ MonoBehaviour:
   m_Name: DevelopmentHardGameRuleConfig
   m_EditorClassIdentifier: Assembly-CSharp::GameRuleConfig
   baseJudgeWindows:
-    perfectWindowMs: 50
-    greatWindowMs: 50
-    goodWindowMs: 100
-    missWindowMs: 100
+    perfectPlusWindowMs: 40
+    perfectWindowMs: 80
+    greatWindowMs: 130
+    missWindowMs: 175
   gaugeType: 2
   maxHealth: 100
   initialHealth: 100
   clearHealth: 1
   healthDelta:
+    perfectPlus: 1
     perfect: 1
     great: 1
-    good: -5
     miss: -20
   maxScore: 1000000
   scoreWeight:
+    perfectPlus: 1
     perfect: 1
     great: 0.7
-    good: 0.3
     miss: 0
   rankThresholds:
     rankS: 0.95
@@ -38,9 +38,9 @@ MonoBehaviour:
     rankB: 0.8
     rankC: 0.7
   comboBehavior:
+    perfectPlus: 0
     perfect: 0
     great: 0
-    good: 0
     miss: 2
   failImmediately: 1
   continueAfterFail: 0

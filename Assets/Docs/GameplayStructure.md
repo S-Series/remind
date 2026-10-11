@@ -40,16 +40,15 @@ Game: MusicCatalog → 선택한 난이도의 RuntimePackage
 가진다. Game은 `.rd`/ChartHolder를 읽지 않는다. 준비 실패와 live 세션 게시 경계를
 구분하고 구성요소가 준비·활성화되지 않으면 재생을 시작하지 않는다.
 
-`ChartLoader`·`ChartLoadService`·`NoteData`는 구형 경로에 남아 있다.
-실제 Game 판정은 Snapshot을 직접 소비한다. 구형 파일끼리의 참조와 씬·프리팹의
-직렬화 사용을 조사하기 전에는 “파일이 존재한다” 또는 “Game이 안 쓴다”만으로 삭제하지 않는다.
+구형 `ChartLoader`·`ChartLoadService`·`NoteData` 파일은 호출·직렬화 참조를
+확인한 뒤 제거했다. 실제 Game 판정은 Snapshot을 직접 소비한다.
 
 ## 3. 씬과 수명
 
 | 씬/화면 | 구성과 소유권 |
 | --- | --- |
 | Bootstrap | `AppRoot` 초기화, `BootstrapLoadingController` 표시 완료 후 새 입력 대기 |
-| Home | 주 메뉴, `SettingsOverlay.prefab` 모달과 선택 복원 |
+| Home | 주 메뉴, `CharacterOverlay.prefab`·`SettingsOverlay.prefab` 모달과 선택 복원 |
 | MusicSelect | 카탈로그·곡/난이도 선택·미리듣기·즐겨찾기 |
 | Game | 채보 준비·오디오·입력·판정·점수/체력·표시·Pause/Result 전환 |
 | Result | 1회 전달된 `GameResultSnapshot`과 카탈로그·로컬 진행 표시 |
@@ -61,7 +60,10 @@ Game: MusicCatalog → 선택한 난이도의 RuntimePackage
 씬 종료 때 정리한다. Result는 `TryTakeResult`로 결과를 한 번 소비한다.
 
 일반 씬 이동은 `SceneTransitionController`의 투명 Intro/Loop/Outro와 어두운 덮개를,
-MusicSelect→Game은 추가 흰 결정 연출을 사용한다. 설정 모달은 씬 이동이 아니다.
+MusicSelect→Game은 투명 오버레이 없이 흰 결정 연출만 사용한다. Home의 Character와
+Settings/Option은 씬 이동 없이 영속 Canvas의 모달을 연다. 두 모달은
+`OverlayPresentation`으로 비축척 시간 Intro·Outro를 표시하고, 닫힘 완료 뒤
+Home 선택을 복원한다.
 전환 편집은 [CrystalTransition.md](CrystalTransition.md)에 설명한다.
 
 ## 4. 실제 플레이 구성요소

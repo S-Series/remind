@@ -29,6 +29,9 @@ public sealed class ChartDataPopup : PopupContext
 
     private TMP_InputField bpmInput;
     private TMP_InputField musicStartCorrectionInput;
+    private TMP_InputField levelInput;
+    private TMP_InputField authorInput;
+    private TMP_InputField extraNameInput;
     private TMP_Text errorText;
     private RawImage spectrumImage;
     private Button backdropButton;
@@ -91,6 +94,7 @@ public sealed class ChartDataPopup : PopupContext
 
         bpmInput = view.BpmInput;
         musicStartCorrectionInput = view.MusicStartCorrectionInput;
+        BuildDisplayMetadataInputs(view);
         errorText = view.ErrorText;
         spectrumImage = view.SpectrumImage;
         backdropButton = view.BackdropButton;
@@ -110,6 +114,9 @@ public sealed class ChartDataPopup : PopupContext
         applyButton.onClick.AddListener(ApplyValuesAndClose);
         bpmInput.onSubmit.AddListener(HandleSubmit);
         musicStartCorrectionInput.onSubmit.AddListener(HandleSubmit);
+        levelInput.onSubmit.AddListener(HandleSubmit);
+        authorInput.onSubmit.AddListener(HandleSubmit);
+        extraNameInput.onSubmit.AddListener(HandleSubmit);
         chartCore.BpmChanged += HandleBpmChanged;
         chartCore.StartCorrectionMsChanged += HandleStartCorrectionChanged;
         chartCore.AudioClipChanged += HandleAudioClipChanged;
@@ -171,6 +178,9 @@ public sealed class ChartDataPopup : PopupContext
             chartCore.Bpm.ToString("R", Invariant));
         musicStartCorrectionInput.SetTextWithoutNotify(
             FormatDisplayCorrection(chartCore.StartCorrectionMs));
+        levelInput.SetTextWithoutNotify(ChartEffectDocumentState.Level.ToString(Invariant));
+        authorInput.SetTextWithoutNotify(ChartEffectDocumentState.Author ?? string.Empty);
+        extraNameInput.SetTextWithoutNotify(ChartEffectDocumentState.ExtraName ?? string.Empty);
         SetError(null);
     }
 
@@ -249,8 +259,28 @@ public sealed class ChartDataPopup : PopupContext
             return false;
         }
 
+        if (!int.TryParse(levelInput.text, NumberStyles.Integer, Invariant,
+                out int level) || level < 0)
+        {
+            SetError("Level must be a non-negative whole number.");
+            SelectInput(levelInput);
+            return false;
+        }
+        string author = authorInput.text?.Trim();
+        if (string.IsNullOrWhiteSpace(author))
+        {
+            SetError("Chart author is required.");
+            SelectInput(authorInput);
+            return false;
+        }
+        string extraName = extraNameInput.text?.Trim() ?? string.Empty;
+
         chartCore.SetBpm(bpm);
         chartCore.SetStartCorrectionMs(-correctionMs);
+        ChartEffectDocumentState.Level = level;
+        ChartEffectDocumentState.Author = author;
+        ChartEffectDocumentState.ExtraName = extraName;
+        ChartManager.NotifyChartChanged();
         SetError(null);
 
         if (closeAfterApply)
@@ -416,6 +446,55 @@ public sealed class ChartDataPopup : PopupContext
         return (-internalCorrectionMs).ToString(
             "+0.###;-0.###;0",
             Invariant);
+    }
+
+    private void BuildDisplayMetadataInputs(ChartDataPopupView view)
+    {
+        Transform window = view.transform.Find("Window");
+        RectTransform windowRect = (RectTransform)window;
+        windowRect.sizeDelta = new Vector2(windowRect.sizeDelta.x, 640f);
+        Move("Title", 292f);
+        Move("Close", 292f);
+        Move("BPM Label", 233f);
+        Move("BPM Input", 233f);
+        Move("Music Start Correction (ms) Label", 180f);
+        Move("Music Start Correction Input", 180f);
+        Move("Open Chart", 131f);
+        Move("Open Music", 131f);
+        Move("Auto Correction", 131f);
+        Move("Spectrum Preview", -110f);
+        Move("Error", -173f);
+        Move("Cancel", -278f);
+        Move("Apply", -278f);
+
+        TMP_Text labelTemplate = window.Find("BPM Label").GetComponent<TMP_Text>();
+        levelInput = AddInput("Level", 78f, TMP_InputField.ContentType.IntegerNumber);
+        authorInput = AddInput("Author", 25f, TMP_InputField.ContentType.Standard);
+        extraNameInput = AddInput("Extra Name", -28f, TMP_InputField.ContentType.Standard);
+
+        void Move(string name, float y)
+        {
+            RectTransform item = (RectTransform)window.Find(name);
+            Vector2 position = item.anchoredPosition;
+            position.y = y;
+            item.anchoredPosition = position;
+        }
+
+        TMP_InputField AddInput(string name, float y,
+            TMP_InputField.ContentType contentType)
+        {
+            TMP_Text label = Instantiate(labelTemplate, window);
+            label.gameObject.name = name + " Label";
+            label.text = name;
+            ((RectTransform)label.transform).anchoredPosition = new Vector2(-135f, y);
+            TMP_InputField input = Instantiate(bpmInput, window);
+            input.gameObject.name = name + " Input";
+            input.contentType = contentType;
+            input.characterLimit = 0;
+            input.SetTextWithoutNotify(string.Empty);
+            ((RectTransform)input.transform).anchoredPosition = new Vector2(105f, y);
+            return input;
+        }
     }
 
 }

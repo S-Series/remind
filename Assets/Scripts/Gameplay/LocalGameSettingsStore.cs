@@ -23,7 +23,7 @@ namespace REmind.Gameplay
         [Serializable]
         private sealed class SaveDocument
         {
-            public int version = 2;
+            public int version = 3;
             public float musicVolume = 1f;
             public float masterVolume = 1f;
             public float sfxVolume = 1f;
@@ -34,6 +34,7 @@ namespace REmind.Gameplay
             public bool reduceBgmDuringVoice = true;
             public bool keepAudioInBackground = true;
             public double judgementOffsetMs;
+            public bool spaceTapEnabled;
             public string[] laneBindings = (string[])DefaultBindings.Clone();
         }
 
@@ -56,6 +57,17 @@ namespace REmind.Gameplay
         public bool ReduceBgmDuringVoice => document.reduceBgmDuringVoice;
         public bool KeepAudioInBackground => document.keepAudioInBackground;
         public double JudgementOffsetMs => document.judgementOffsetMs;
+        public bool SpaceTapEnabled => document.spaceTapEnabled;
+
+        public void SetSpaceTapEnabled(bool value)
+        {
+            if (value)
+                for (int lane = 0; lane < LaneCount; lane++)
+                    if (IsSpaceBinding(document.laneBindings[lane]))
+                        throw new InvalidOperationException(
+                            "Space is assigned to a lane. Change that key before enabling Space Tap.");
+            document.spaceTapEnabled = value;
+        }
 
         public void SetMasterVolume(float value) =>
             document.masterVolume = ValidateVolume(value);
@@ -127,6 +139,9 @@ namespace REmind.Gameplay
             if (!IsValidBinding(path))
                 throw new ArgumentException("A valid gameplay key is required.",
                     nameof(path));
+            if (document.spaceTapEnabled && IsSpaceBinding(path))
+                throw new ArgumentException("Space is reserved for Central Tap. Disable Space Tap first.",
+                    nameof(path));
             for (int i = 0; i < LaneCount; i++)
                 if (i != lane && string.Equals(document.laneBindings[i], path,
                         StringComparison.OrdinalIgnoreCase))
@@ -181,7 +196,7 @@ namespace REmind.Gameplay
             {
                 SaveDocument result = JsonUtility.FromJson<SaveDocument>(
                     File.ReadAllText(path));
-                if (result == null || (result.version != 1 && result.version != 2) ||
+                if (result == null || (result.version < 1 || result.version > 3) ||
                     float.IsNaN(result.musicVolume) ||
                     float.IsInfinity(result.musicVolume) ||
                     result.musicVolume < 0f || result.musicVolume > 1f ||
@@ -204,6 +219,11 @@ namespace REmind.Gameplay
                     result.keepAudioInBackground = true;
                     result.version = 2;
                 }
+                if (result.version == 2)
+                {
+                    result.spaceTapEnabled = false;
+                    result.version = 3;
+                }
                 if (!IsValidVolume(result.masterVolume) ||
                     !IsValidVolume(result.sfxVolume) ||
                     !IsValidVolume(result.voiceVolume) ||
@@ -214,6 +234,8 @@ namespace REmind.Gameplay
                 {
                     if (!IsValidBinding(result.laneBindings[i]))
                         throw new FormatException("Invalid lane binding.");
+                    if (result.spaceTapEnabled && IsSpaceBinding(result.laneBindings[i]))
+                        throw new FormatException("Space cannot be a lane key while Space Tap is enabled.");
                     for (int j = 0; j < i; j++)
                         if (string.Equals(result.laneBindings[i],
                                 result.laneBindings[j],
@@ -233,5 +255,8 @@ namespace REmind.Gameplay
         private static bool IsValidVolume(float value) =>
             !float.IsNaN(value) && !float.IsInfinity(value) &&
             value >= 0f && value <= 1f;
+
+        private static bool IsSpaceBinding(string binding) =>
+            string.Equals(binding, "<Keyboard>/space", StringComparison.OrdinalIgnoreCase);
     }
 }

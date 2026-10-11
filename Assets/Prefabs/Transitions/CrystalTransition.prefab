@@ -5193,7 +5193,7 @@ RectTransform:
   m_GameObject: {fileID: 3612436959552988590}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 6121247821200505840}
@@ -5286,6 +5286,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: REmind.Gameplay::REmind.Gameplay.Presentation.CrystalTransitionPlayer
   clip: {fileID: 7400000, guid: e926d5fed6f517c4fa5fe7186ffbdb6d, type: 2}
+  loopClip: {fileID: 0}
+  outroClip: {fileID: 0}
   visibility: {fileID: 4285831411477854407}
   whiteCover: {fileID: 6087496862246778198}
   starSizeRoot: {fileID: 3266007202840819057}

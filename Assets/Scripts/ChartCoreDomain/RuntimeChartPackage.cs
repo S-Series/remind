@@ -47,7 +47,7 @@ namespace REmind.Charting
     /// </summary>
     public static class RuntimeChartPackageCodec
     {
-        private const int CurrentVersion = 1;
+        private const int CurrentVersion = 2;
 
         public static string Export(ChartDocument document, string musicId,
             string difficultyId, string gimmickId, string revision,
@@ -62,7 +62,7 @@ namespace REmind.Charting
 
             var dto = new PackageDto
             {
-                Version = CurrentVersion,
+                Version = 1,
                 MusicId = musicId,
                 DifficultyId = difficultyId,
                 GimmickId = gimmickId ?? string.Empty,
@@ -92,13 +92,21 @@ namespace REmind.Charting
                     Command = item.CommandId, Order = item.Order });
             foreach (ChartDocumentNote item in document.Notes)
             {
+                if (item.Kind == ChartNoteKind.CenterTap || item.Kind == ChartNoteKind.Knob)
+                    dto.Version = CurrentVersion;
                 var note = new NoteDto { Id = item.Id,
                     Kind = (int)item.Kind, Lane = item.Lane,
                     Start = item.StartPosition, End = item.EndPosition };
                 foreach (ChartNotePoint point in item.Points)
                     note.Points.Add(new PointDto { Position = point.Position,
                         Kind = (int)point.Kind, Motion = (int)point.Motion,
-                        Move = point.MoveAmount });
+                        Move = point.MoveAmount,
+                        KnobX = item.Kind == ChartNoteKind.Knob ? point.KnobX : (double?)null,
+                        KnobDirection = item.Kind == ChartNoteKind.Knob
+                            ? (int)point.KnobDirection : (int?)null,
+                        KnobInterpolation = item.Kind == ChartNoteKind.Knob &&
+                            point.KnobInterpolation != ChartKnobInterpolation.Linear
+                                ? (int?)point.KnobInterpolation : null });
                 dto.Notes.Add(note);
             }
 
@@ -142,7 +150,7 @@ namespace REmind.Charting
                 throw new FormatException("Invalid runtime chart package.",
                     exception);
             }
-            if (dto == null || dto.Version != CurrentVersion)
+            if (dto == null || (dto.Version != 1 && dto.Version != CurrentVersion))
                 throw new FormatException("Unsupported runtime chart package version.");
             ValidateMetadata(dto.MusicId, dto.DifficultyId,
                 dto.ChartOffsetMs);
@@ -175,13 +183,27 @@ namespace REmind.Charting
             {
                 if (item == null || item.Points == null)
                     throw new FormatException("Runtime note points are missing.");
+                if (dto.Version == 1 && (item.Lane >= 10 || item.Kind > 4))
+                    throw new FormatException("Version 1 cannot contain central notes.");
                 var note = new ChartDocumentNote(item.Id,
                     (ChartNoteKind)item.Kind, item.Lane, item.Start, item.End);
                 note.Points.Clear();
                 foreach (PointDto point in item.Points)
+                {
+                    if (point == null || (dto.Version == 1 &&
+                        (point.KnobX.HasValue || point.KnobDirection.HasValue || point.KnobInterpolation.HasValue)) ||
+                        (item.Kind == (int)ChartNoteKind.Knob &&
+                         (!point.KnobX.HasValue || !point.KnobDirection.HasValue)))
+                        throw new FormatException("Runtime knob point data is invalid or missing.");
                     note.Points.Add(new ChartNotePoint(point.Position,
                         (ChartNotePointKind)point.Kind,
-                        (ChartScratchMotionKind)point.Motion, point.Move));
+                        (ChartScratchMotionKind)point.Motion, point.Move)
+                    {
+                        KnobX = point.KnobX ?? 0d,
+                        KnobDirection = (ChartKnobDirection)(point.KnobDirection ?? 0),
+                        KnobInterpolation = (ChartKnobInterpolation)(point.KnobInterpolation ?? 0)
+                    });
+                }
                 document.Notes.Add(note);
             }
             ChartCompileResult compiled = ChartCompiler.Compile(document,
@@ -292,6 +314,9 @@ namespace REmind.Charting
             [DataMember] public int Kind;
             [DataMember] public int Motion;
             [DataMember] public int Move;
+            [DataMember(EmitDefaultValue = false)] public double? KnobX;
+            [DataMember(EmitDefaultValue = false)] public int? KnobDirection;
+            [DataMember(EmitDefaultValue = false)] public int? KnobInterpolation;
         }
         [DataContract] private sealed class ParameterDto
         {

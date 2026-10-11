@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using REmind.Charting;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -32,6 +33,7 @@ namespace REmind.Gameplay.Input.Routing
         private InputActionMap rhythmActionMap;
         private InputActionAsset runtimeActions;
         private bool isBound;
+        private InputAction spaceTapAction;
 
         public event Action<RhythmInputEvent> InputPerformed;
         public event Action<RhythmInputEvent> InputReleased;
@@ -50,6 +52,7 @@ namespace REmind.Gameplay.Input.Routing
             if (TryBindActions())
             {
                 rhythmActionMap.Enable();
+                RefreshSpaceTap();
             }
         }
 
@@ -78,6 +81,7 @@ namespace REmind.Gameplay.Input.Routing
             if (value)
             {
                 rhythmActionMap.Enable();
+                RefreshSpaceTap();
             }
             else
             {
@@ -91,6 +95,15 @@ namespace REmind.Gameplay.Input.Routing
                 bindingByAction)
                 if (pair.Value.Lane == lane) return pair.Key.IsPressed();
             return false;
+        }
+
+        public void RefreshSpaceTap()
+        {
+            if (spaceTapAction == null) return;
+            if (rhythmActionMap.enabled && AppRoot.Current &&
+                AppRoot.Current.Settings != null && AppRoot.Current.Settings.SpaceTapEnabled)
+                spaceTapAction.Enable();
+            else spaceTapAction.Disable();
         }
 
         private bool TryBindActions()
@@ -141,6 +154,14 @@ namespace REmind.Gameplay.Input.Routing
                 action.canceled += HandleActionCanceled;
             }
 
+            spaceTapAction = rhythmActionMap.FindAction("CentralTapSpace", false);
+            if (spaceTapAction != null)
+            {
+                bindingByAction.Add(spaceTapAction,
+                    new ActionBinding("CentralTapSpace", (int)ChartLane.Center));
+                spaceTapAction.performed += HandleActionPerformed;
+                spaceTapAction.canceled += HandleActionCanceled;
+            }
             isBound = true;
             return true;
         }
@@ -155,6 +176,7 @@ namespace REmind.Gameplay.Input.Routing
 
             bindingByAction.Clear();
             rhythmActionMap = null;
+            spaceTapAction = null;
             isBound = false;
         }
 

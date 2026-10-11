@@ -6,7 +6,63 @@
 
 ## 1. Current State
 
+### Knob Start/Middle 및 outgoing 곡선으로 편집 계약 변경 (2026-10-09)
+
+ChartMaker와 `.rd`는 Start/Middle만 다루고 `curve: linear/sin/cos`를 노드의 다음 구간에
+저장한다. End는 adapter가 마지막 Middle에서 생성하는 실행 데이터다. Start 없는 Middle과
+단독 Start는 저장·Preview 아이콘을 유지하되 선과 Gameplay 판정 대상을 만들지 않는다.
+Tab은 곡선 종류, Shift+Tab은 Start/Middle을 선택된 노드 또는 현재 배치 모드에서 전환한다. ¼주기 곡선의 64개 고정
+구간 계산을 표시와 판정이 공유하며, 같은 줄의 Second Point는 실행용 Step으로 유지한다.
+기존 v2의 Mid/End 및 incoming Step은 읽기 호환을 유지한다. 세부 계약은
+[ChartFormat.md](ChartFormat.md) 18.3절을 따른다.
+
+공용 Knob/Long Scratch .NET 검증은 65/65 통과했다. 관련 Unity 어셈블리와 Maker 검증
+코드는 C# 컴파일을 확인했다. 이번 변경의 Unity EditMode 실행 및 화면·단축키 검수는
+미실행이며, 아래 이전 검증 횟수는 이번 변경의 실행 검증으로 승계하지 않는다.
+
 ReMind는 현재 구조 개편 중이다.
+
+### 중앙 Tap / Knob v2 시작 전 Step 포함 구현·고정 검증본 검사 완료 (2026-10-08)
+
+기존 v1 좌우 채보와 레인 `0`~`9`는 무변환 보존한다. 새 중앙 레인 `10`의
+`CenterTap`/`Knob`을 포함한 경우에만 `.rd`와 Runtime Package가 각각 v2를 사용한다.
+`.rd`는 기존 9열을 유지하고 `centerNotes`를 추가한다. 상세 계약은
+[ChartFormat.md](ChartFormat.md)의 18.3절을 따른다.
+
+- ChartMaker의 holder·파일 codec·adapter·배치 도구와 Edit 메뉴에 새 타입 연결을 추가했다.
+  Edit 메뉴의 `Draw Knob Path`→`Finish Knob Path`, 지점 삽입·Vertical/Linear/Step·X 스냅을
+  제공하고 `Place Center Tap`, `Place Knob Start/Mid/End` 개별 배치도 유지한다.
+- Knob 방향 Hold를 위치 추적으로 교체했다. 목적지 incoming `KnobInterpolation`
+  (Linear/Step), `KnobPathEvaluator.TargetX`, 실제 위치 `PlayerKnobX`를 공용 계약으로 쓴다.
+  첫 동일 X 구간을 허용하며 시작 위치 지정·정상 Perfect+/실패 Miss·Step ±80ms와
+  원래 timestamp의 예약 확정을 적용한다. 세부 수치는 ChartFormat 18.3절에 둔다.
+  기존 Tap 창과 Long Scratch의 End release 의미는 유지한다.
+- Game은 좌/우 독립 입력을 재사용하고 선택적 Space Tap을 중앙 Tap에만 추가한다.
+  설정 내부 v3은 기존 v1/v2를 Space Tap OFF로 읽는다. Space의 레인 중복 할당은 거부한다.
+- Game/ChartMaker의 공유 RibbonMesh·실제 cursor 및 한 경로 지점 편집을 연결했다.
+  후속 사용자 아트 교체와 수동 화면·물리 입력·청음·밸런스 검수는 남아 있다.
+
+새 위치 추적 모델의 시작 전 Step 수정 후 집중 EditMode 87/87, 전체 316/316와
+Game/ChartMaker 빌드·DLL 분리를 고정 검증본에서 확인했다. 전체에는 시작 전 독립
+probe 1개·Maker 경로 probe 1개·Game 표시 probe 2개가 포함되며 중복 합산하지 않는다.
+기존 76/304 통과 및 추가 시작 전 probe 0/1은 수정 전 기록이다. 시작 100ms·Step 150ms의
+Down 70ms 즉시 이동·시작 시 위치 유지와 미확정 Start/tick의 원래 시각 예약 확정을
+검증했다. 유효한 조기 입력이 없는 일반 시작은 초기값을 지정한다. `PlayerKnobNoteId`는
+조기 입력부터 실제 cursor의 소유 경로를 지정하고 Reset 시 null이 된다.
+예약은 해당 Knob의 직전 구간에만 적용하며 이동으로 벗어난 다른 Knob은 Miss가 될 수 있다.
+사용자 후속 Game 씬 편집이 계속돼 현재 원본 씬 전체의 빌드는 미검증이다.
+자세한 증거·고정 snapshot 범위와 수동 검수는 [TASKS.md](TASKS.md)를 따른다.
+
+아래는 **이전 방향 Hold 모델**의 기록이며 새 위치 추적 규칙의 통과로 승계하지 않는다.
+당시 집중 EditMode 64/64와 이를 포함한 전체 EditMode 299/299, 두 제품 독립 빌드와
+상대 제품 DLL 부재를 확인했다. Maker의 저장·출력·Preview 자동 큐와 Game 입력·상태는
+각 검사 경계에서 검증했다. 실제 Game 씬 probe 1/1은 v2 준비 후 중앙 Tap·Knob 경로와
+cursor 생성을 확인했지만, 격리된 빈 noteField를 사용해 런타임 Cleanup/Retry를 증명하지 않는다.
+단일 PlayMode Maker→Game 전체 세션, 실제 화면·물리 입력·청음·Pause/Retry 실플레이,
+개발값 밸런스와 새 아트는 후속 검수다. 원본 동기화 목록과 XML·빌드 로그는
+[TASKS.md](TASKS.md)의 중앙 Tap·노브 항목에 기록한다.
+
+### 기존 제작·플레이 연결
 
 `Assets/Data/Music/i/data.json`은 형식 버전 1 곡 목록과 `hard` 채보 참조를 가진다.
 ChartMaker의 파일 경계는 목록의 곡·난이도 ID와 경로를 검사한다. `i`와
@@ -18,9 +74,11 @@ Game 빌드의 첫 씬은 `Bootstrap`이다. 씬 전용 `BootstrapLoadingControl
 곡/난이도 ID를 보유한다. Game 씬은 카탈로그에서 해당
 실행 패키지와 음원을 찾아 ID·곡 데이터를 확인한 뒤 세션을 준비한다.
 Bootstrap→Home을 포함한 Game 씬 이동은 AppRoot 자식의
-`SceneTransitionController`를 통한다. 투명 `CrystalOverlayTransition`은
-로드 전후로 이어 재생하며, 일반 이동은 어두운 덮개로 로드 순간을 가린다.
-Music Select→Game에만 `CrystalTransition`의 흰 화면 연출을 추가한다.
+`SceneTransitionController`를 통한다. 일반 이동에서는 투명
+`CrystalOverlayTransition`을 로드 전후로 이어 재생하고 어두운 덮개로 로드 순간을
+가린다. Music Select→Game은 `CrystalTransition`의 흰 화면 연출만 재생한다.
+흰 화면이 덮인 뒤 씬을 로드·활성화하고 새 씬에서 화면을 드러내며, 이 경로에서
+투명 오버레이의 Intro/Loop/Outro와 어두운 덮개는 실행하지 않는다.
 기존 `MusicSelected` Animator/스프라이트는 실행 시 비활성화한다.
 전환 표시와 씬 로드는 Game 전용이며 판정·재생 세션은 Game 씬에 남는다.
 
@@ -110,17 +168,17 @@ ChartDocument → ChartCompiler → Snapshot → Preview
   assembly define을 지정한다. 두 Windows 빌드는 컴파일에 성공했으며 각
   산출물의 Managed 폴더에 상대 제품 assembly가 없음을 확인했다.
 - `NoteType`과 Scratch motion/rules/path를 `REmind.NoteRules` 순수 C# assembly로
-  이동했다. 기존 `NoteData` 파서와 자료형은 `ChartLoadService` 등 구형 경로 내부에서
-  참조되고 있지만,
-  `GameplayChartPreparation`의 변환과 `NoteJudgementSystem`의 입력에서는 제거했다.
+  이동했다. `GameplayChartPreparation`과 `NoteJudgementSystem`은 Snapshot을
+  사용한다. 호출·직렬화 참조가 없던 구형 `ChartLoadService`/`NoteData` 경로는 제거했다.
 - 입력 라우터가 press와 release를 발행한다. 공용 판정 세션은 단일 노트 입력,
   Long의 Start→Mid→End 유지/해제, Mid의 재합류와 구간별 결과를 처리한다.
 - Long Scratch 입력 규칙은 Start=양입력, Mid=유지 중인지 확인, End=음입력으로
   정했다. 앞 구간을 놓치면 그 구간은 Miss로 확정하며 각 Mid의 양입력으로 이후
   구간에 다시 합류할 수 있다. 구간마다 점수·콤보·체력을 개별 집계한다.
   노트 종류별 `NoteJudgeWindowProfile` 파일을 사용한다. 일반 노트와 Long
-  Scratch Start는 같은 레인 입력 ±50ms Perfect, ±100ms Good이다. 간접 판정은
-  같은 레인의 50ms 밖~100ms 입력을 뜻한다. Long Scratch Mid는 ±100ms,
+  Scratch Start는 같은 레인 입력에서 ±40ms Perfect+, ±80ms Perfect,
+  ±130ms Great, ±175ms Miss를 적용한다. 조기 입력 -175ms도 Miss다.
+  Long Scratch Mid는 ±100ms,
   End는 ±75ms에서 Perfect 입력만 받는다. End 미입력은 +75ms를 넘으면 Miss다.
   공용 판정 세션은 지점 인덱스를 Game 규칙에 전달해 구간별 창을 적용한다.
 - `Game.unity`는 선택한 곡/난이도의 카탈로그 패키지와 음원을 준비한다. 직접
@@ -135,7 +193,8 @@ ChartDocument → ChartCompiler → Snapshot → Preview
   사용자 음악 음량은 곡별 볼륨에 곱하고, 판정 보정은 차트 준비 전에 판정
   세션에, 레인 키 경로는 Game 입력 액션의 런타임 복제본에 적용한다.
   ChartMaker의 입력 액션과 데이터는 이 설정을 읽지 않는다.
-  파일 내부 형식은 버전 2이며 기존 버전 1의 음량·보정·키 설정을 보존해 읽는다.
+  파일 내부 형식은 버전 3이며 기존 버전 1/2의 음량·보정·키 설정을 보존하고
+  Space Tap은 OFF로 읽는다. 중앙 입력 확장의 검증 상태는 이 문서 첫 절을 따른다.
   설정 UI는 `AppRoot`의 영속 Canvas 아래 `SettingsOverlay.prefab` 모달로
   이동했다. Home은 AppRoot를 통해 열고 씬 이동 시 모달 탐색 참조를 정리한다.
   Character도 같은 영속 Canvas 아래 `CharacterOverlay.prefab`으로 배치했다.
@@ -161,7 +220,6 @@ ChartDocument → ChartCompiler → Snapshot → Preview
 - 같은 규칙이 서로 다른 폴더에 중복되는 문제
 - 임시 Adapter가 영구 구조로 굳어지는 문제
 - 곡별 서사·정식 콘텐츠와 최종 UI 시각 검수가 남은 문제
-- 사용하지 않는 구형 `ChartLoader`/`NoteData` 파일의 정리 여부
 
 ### 현재 남은 동작 경계
 
@@ -205,7 +263,7 @@ ChartDocument → ChartCompiler → Snapshot → Preview
 
 ### LEGACY
 - 테스트 fixture의 DemoPlay 하네스 구성. 해당 Presenter/Controller 전체가 폐기 대상은 아님
-- `TempLoader` 및 구형 ChartLoader/NoteData 경로. DemoPlay fixture의 TempLoader는 제거됨
+- 남은 `TempLoader` 경로. DemoPlay fixture의 TempLoader는 제거됨
 
 ### UNKNOWN / Mixed
 - 실제 키 입력·청음에서 확정 판정 창의 체감 검증
@@ -240,8 +298,7 @@ Game과 ChartMaker가 서로 직접 의존하지 않고,
 
 ### 과도기 adapter 제거 조건
 
-- 구형 `ChartLoader`/`NoteData`: 실행·편집 호출부가 없음을 재확인하고 별도
-  정리 작업에서 삭제 여부를 결정한다. 실제 Game 판정 경로의 변환은 제거했다.
+- `TempLoader`: 남은 호출·직렬화 사용과 제거 조건을 별도로 확인한다.
 - `SampleMusicGimmick`: 실제 곡 registry가 준비되면 개발 전용 등록을 테스트/샘플 범위로
   격리하거나 Player 등록에서 제외한다.
 

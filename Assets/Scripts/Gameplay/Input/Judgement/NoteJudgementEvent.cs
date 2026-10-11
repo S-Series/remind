@@ -18,11 +18,14 @@ namespace REmind.Gameplay.Input.Judgement
         /// </summary>
         public double EvaluationTimeMs { get; }
         public bool IsAutomaticMiss { get; }
+        public bool IsNoteComplete { get; }
+        public JudgementTargetKind? TargetKind { get; }
 
         public NoteJudgementEvent(PlayableNoteSnapshot note, int segmentIndex,
             JudgeResult result, TimingSide timingSide, double offsetMs,
             double effectiveHitTimeMs, double evaluationTimeMs,
-            bool isAutomaticMiss)
+            bool isAutomaticMiss, bool? isNoteComplete = null,
+            JudgementTargetKind? targetKind = null)
         {
             ChartNote = note;
             SegmentIndex = segmentIndex;
@@ -32,6 +35,9 @@ namespace REmind.Gameplay.Input.Judgement
             EffectiveHitTimeMs = effectiveHitTimeMs;
             EvaluationTimeMs = evaluationTimeMs;
             IsAutomaticMiss = isAutomaticMiss;
+            IsNoteComplete = isNoteComplete ?? (segmentIndex < 0 ||
+                (note != null && segmentIndex == note.Points.Count - 2));
+            TargetKind = targetKind;
         }
     }
 }

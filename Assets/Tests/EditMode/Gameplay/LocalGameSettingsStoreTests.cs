@@ -27,6 +27,8 @@ namespace REmind.Gameplay.Tests
             Assert.AreEqual(1f, settings.MusicVolume);
             Assert.AreEqual(0d, settings.JudgementOffsetMs);
             Assert.AreEqual("<Keyboard>/z", settings.GetLaneBinding(0));
+            Assert.IsFalse(settings.SpaceTapEnabled);
+            settings.SetSpaceTapEnabled(true);
             settings.SetMusicVolume(0.35f);
             settings.SetMasterVolume(0.8f);
             settings.SetSfxVolume(0.6f);
@@ -43,6 +45,7 @@ namespace REmind.Gameplay.Tests
 
             LocalGameSettingsStore reloaded = LocalGameSettingsStore.Load(path);
             Assert.AreEqual(0.35f, reloaded.MusicVolume);
+            Assert.IsTrue(reloaded.SpaceTapEnabled);
             Assert.AreEqual(0.8f, reloaded.MasterVolume);
             Assert.AreEqual(0.6f, reloaded.SfxVolume);
             Assert.AreEqual(0.7f, reloaded.VoiceVolume);
@@ -102,7 +105,64 @@ namespace REmind.Gameplay.Tests
             Assert.AreEqual(1f, migrated.VoiceVolume);
             Assert.AreEqual("<Keyboard>/a", migrated.GetLaneBinding(0));
             migrated.Save();
-            StringAssert.Contains("\"version\": 2", File.ReadAllText(path));
+            Assert.IsFalse(migrated.SpaceTapEnabled);
+            StringAssert.Contains("\"version\": 3", File.ReadAllText(path));
+        }
+
+        [Test]
+        public void LegacyVersionTwo_DefaultsSpaceTapOffAndPreservesOtherSettings()
+        {
+            LocalGameSettingsStore original = LocalGameSettingsStore.Load(path);
+            original.SetLaneBinding(0, "<Keyboard>/space");
+            original.SetMusicVolume(0.45f);
+            original.SetMasterVolume(0.65f);
+            original.SetJudgementOffsetMs(35d);
+            original.SetSpatialAudio(true);
+            original.Save();
+            string legacy = File.ReadAllText(path).Replace("\"version\": 3", "\"version\": 2")
+                .Replace("\"spaceTapEnabled\": false", "\"spaceTapEnabled\": true");
+            File.WriteAllText(path, legacy);
+
+            LocalGameSettingsStore migrated = LocalGameSettingsStore.Load(path);
+            Assert.IsFalse(migrated.SpaceTapEnabled);
+            Assert.AreEqual("<Keyboard>/space", migrated.GetLaneBinding(0));
+            Assert.AreEqual(0.45f, migrated.MusicVolume);
+            Assert.AreEqual(0.65f, migrated.MasterVolume);
+            Assert.AreEqual(35d, migrated.JudgementOffsetMs);
+            Assert.IsTrue(migrated.SpatialAudio);
+            migrated.Save();
+            Assert.IsFalse(LocalGameSettingsStore.Load(path).SpaceTapEnabled);
+            StringAssert.Contains("\"version\": 3", File.ReadAllText(path));
+        }
+
+        [Test]
+        public void SpaceTap_RejectsConflictingBindingWithoutChangingPreferences()
+        {
+            LocalGameSettingsStore settings = LocalGameSettingsStore.Load(path);
+            settings.SetLaneBinding(0, "<Keyboard>/space");
+            Assert.Throws<InvalidOperationException>(() => settings.SetSpaceTapEnabled(true));
+            Assert.IsFalse(settings.SpaceTapEnabled);
+            Assert.AreEqual("<Keyboard>/space", settings.GetLaneBinding(0));
+
+            settings.SetLaneBinding(0, "<Keyboard>/a");
+            settings.SetSpaceTapEnabled(true);
+            Assert.Throws<ArgumentException>(() => settings.SetLaneBinding(1, "<Keyboard>/Space"));
+            Assert.IsTrue(settings.SpaceTapEnabled);
+            Assert.AreEqual("<Keyboard>/x", settings.GetLaneBinding(1));
+            settings.SetMusicVolume(0.3f);
+            settings.SetJudgementOffsetMs(-15d);
+            settings.ResetBindings();
+            settings.Save();
+            Assert.IsTrue(LocalGameSettingsStore.Load(path).SpaceTapEnabled);
+
+            settings.SetSpaceTapEnabled(false);
+            settings.SetLaneBinding(0, "<Keyboard>/space");
+            settings.Save();
+            LocalGameSettingsStore reloaded = LocalGameSettingsStore.Load(path);
+            Assert.IsFalse(reloaded.SpaceTapEnabled);
+            Assert.AreEqual("<Keyboard>/space", reloaded.GetLaneBinding(0));
+            Assert.AreEqual(0.3f, reloaded.MusicVolume);
+            Assert.AreEqual(-15d, reloaded.JudgementOffsetMs);
         }
 
         [Test]

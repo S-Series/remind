@@ -1,6 +1,7 @@
 using System;
 using System.Reflection;
 using NUnit.Framework;
+using REmind.Charting;
 using REmind.Gameplay.Characters;
 using UnityEditor;
 using UnityEngine;
@@ -9,6 +10,35 @@ namespace REmind.Gameplay.Tests
 {
     public sealed class GameRuleSessionConfigTests
     {
+        [Test]
+        public void FourGradeWindowsIncludeEarlyMissBoundary()
+        {
+            var windows = new JudgeWindows(40, 80, 130, 175);
+
+            Assert.AreEqual(JudgeResult.PerfectPlus, windows.Evaluate(40d));
+            Assert.AreEqual(JudgeResult.Perfect, windows.Evaluate(40.001d));
+            Assert.AreEqual(JudgeResult.Perfect, windows.Evaluate(-80d));
+            Assert.AreEqual(JudgeResult.Great, windows.Evaluate(-80.001d));
+            Assert.AreEqual(JudgeResult.Great, windows.Evaluate(130d));
+            Assert.AreEqual(JudgeResult.Miss, windows.Evaluate(130.001d));
+            Assert.AreEqual(JudgeResult.Miss, windows.Evaluate(-175d));
+            Assert.AreEqual(JudgeResult.None, windows.Evaluate(-175.001d));
+            Assert.AreEqual(JudgeResult.None, windows.Evaluate(175.001d));
+        }
+
+        [Test]
+        public void SharedAndGameplayGradesKeepTheSameBestToWorstOrdering()
+        {
+            Assert.AreEqual((int)JudgeResult.PerfectPlus,
+                (int)ChartJudgementGrade.PerfectPlus);
+            Assert.AreEqual((int)JudgeResult.Perfect,
+                (int)ChartJudgementGrade.Perfect);
+            Assert.AreEqual((int)JudgeResult.Great,
+                (int)ChartJudgementGrade.Great);
+            Assert.AreEqual((int)JudgeResult.Miss,
+                (int)ChartJudgementGrade.Miss);
+        }
+
         [Test]
         public void SessionCopyKeepsRuleValuesWhenSourceChangesAndRestoresDefault()
         {
@@ -221,6 +251,25 @@ namespace REmind.Gameplay.Tests
         }
 
         [Test]
+        public void DefaultGaugeAssetStartsAtZeroWithExistingProvisionalRules()
+        {
+            GameRuleConfig normal = AssetDatabase.LoadAssetAtPath<GameRuleConfig>(
+                "Assets/Settings/Gameplay/Rules/DefaultGameRuleConfig.asset");
+
+            Assert.IsNotNull(normal);
+            Assert.AreEqual(HealthGaugeType.Normal, normal.GaugeType);
+            Assert.AreEqual(100, normal.MaxHealth);
+            Assert.AreEqual(0, normal.InitialHealth);
+            Assert.AreEqual(70, normal.ClearHealth);
+            Assert.AreEqual(1, normal.HealthDelta.GetValue(JudgeResult.PerfectPlus));
+            Assert.AreEqual(1, normal.HealthDelta.GetValue(JudgeResult.Perfect));
+            Assert.AreEqual(1, normal.HealthDelta.GetValue(JudgeResult.Great));
+            Assert.AreEqual(-10, normal.HealthDelta.GetValue(JudgeResult.Miss));
+            Assert.IsFalse(normal.FailImmediately);
+            Assert.IsTrue(normal.ContinueAfterFail);
+        }
+
+        [Test]
         public void DevelopmentHardAssetHasExplicitGaugeRulesWithoutChangingNormal()
         {
             const string folder = "Assets/Settings/Gameplay/Rules/";
@@ -238,9 +287,9 @@ namespace REmind.Gameplay.Tests
             Assert.AreEqual(100, snapshot.MaxHealth);
             Assert.AreEqual(100, snapshot.InitialHealth);
             Assert.AreEqual(1, snapshot.ClearHealth);
+            Assert.AreEqual(1, snapshot.PerfectPlusHealthDelta);
             Assert.AreEqual(1, snapshot.PerfectHealthDelta);
             Assert.AreEqual(1, snapshot.GreatHealthDelta);
-            Assert.AreEqual(-5, snapshot.GoodHealthDelta);
             Assert.AreEqual(-20, snapshot.MissHealthDelta);
             Assert.IsTrue(snapshot.FailImmediately);
             Assert.IsFalse(snapshot.ContinueAfterFail);

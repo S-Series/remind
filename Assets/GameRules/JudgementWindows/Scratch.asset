@@ -14,7 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: REmind.Gameplay::REmind.Gameplay.Input.Judgement.NoteJudgeWindowProfile
   noteKind: 2
   windows:
-    perfectWindowMs: 50
-    greatWindowMs: 50
-    goodWindowMs: 100
-    missWindowMs: 100
+    perfectPlusWindowMs: 40
+    perfectWindowMs: 80
+    greatWindowMs: 130
+    missWindowMs: 175

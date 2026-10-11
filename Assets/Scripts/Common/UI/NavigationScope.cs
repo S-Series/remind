@@ -63,9 +63,13 @@ namespace REmind.Common.UI
 
         public void SetNavigationActive(bool active)
         {
-            if (!canvasGroup) return;
-            canvasGroup.interactable = active;
-            canvasGroup.blocksRaycasts = active;
+            if (canvasGroup)
+            {
+                canvasGroup.interactable = active;
+                canvasGroup.blocksRaycasts = active;
+            }
+            // Awake can run before the child selectables become available.
+            if (active) RebuildNavigation();
         }
 
         public void InvokeCancel() => onCancel.Invoke();

@@ -12,10 +12,11 @@ namespace REmind.Gameplay.Characters
         public int MaxHealth { get; }
         public int InitialHealth { get; }
         public int ClearHealth { get; }
+        public int PerfectPlusHealthDelta { get; }
         public int PerfectHealthDelta { get; }
         public int GreatHealthDelta { get; }
-        public int GoodHealthDelta { get; }
         public int MissHealthDelta { get; }
+        public bool HasSpecialHardGauge { get; }
         public bool FailImmediately { get; }
         public bool ContinueAfterFail { get; }
 
@@ -25,10 +26,11 @@ namespace REmind.Gameplay.Characters
             MaxHealth = source.MaxHealth;
             InitialHealth = source.InitialHealth;
             ClearHealth = source.ClearHealth;
+            PerfectPlusHealthDelta = source.HealthDelta.GetValue(JudgeResult.PerfectPlus);
             PerfectHealthDelta = source.HealthDelta.GetValue(JudgeResult.Perfect);
             GreatHealthDelta = source.HealthDelta.GetValue(JudgeResult.Great);
-            GoodHealthDelta = source.HealthDelta.GetValue(JudgeResult.Good);
             MissHealthDelta = source.HealthDelta.GetValue(JudgeResult.Miss);
+            HasSpecialHardGauge = source.SpecialHardGauge != null;
             FailImmediately = source.FailImmediately;
             ContinueAfterFail = source.ContinueAfterFail;
         }
@@ -46,9 +48,9 @@ namespace REmind.Gameplay.Characters
         {
             switch (result)
             {
+                case JudgeResult.PerfectPlus: return PerfectPlusHealthDelta;
                 case JudgeResult.Perfect: return PerfectHealthDelta;
                 case JudgeResult.Great: return GreatHealthDelta;
-                case JudgeResult.Good: return GoodHealthDelta;
                 case JudgeResult.Miss: return MissHealthDelta;
                 default: return 0;
             }

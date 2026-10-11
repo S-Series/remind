@@ -5,8 +5,8 @@
 
 `Assets/Prefabs/Transitions/CrystalTransition.prefab`는
 uGUI 이미지, 앞뒤 궤도 mesh, 부드러운 halo shader와 Animation Clip으로 구성한
-단독 기본 길이 1.5초의 화면 전환 에셋이다. Game 전체 씬 전환 시간은 투명
-오버레이·비동기 로드·화면 드러내기 단계를 더하므로 이 값과 같지 않다.
+단독 기본 길이 1.5초의 화면 전환 에셋이다. Music Select→Game의 전체 전환 시간은
+흰 결정의 화면 덮기·비동기 로드·화면 드러내기 단계를 더하므로 이 값과 같지 않다.
 별 4개 부품과 모든 파편/광선을 하이어라키에서 수정할 수 있다.
 
 - 미리보기: **REmind → Crystal Transition → Preview**
@@ -21,12 +21,14 @@ uGUI 이미지, 앞뒤 궤도 mesh, 부드러운 halo shader와 Animation Clip�
 
 Game 전용 표시기는 `REmind.Gameplay.Presentation.CrystalTransitionPlayer`다.
 씬 로드, 선택 상태, 중복 전환 방지는 담당하지 않는다. Bootstrap의
-`SceneTransitionController`가 두 표시기를 호출한다. 투명 오버레이는 모든 Game 씬
-이동에서 로드 전후로 이어 재생하며, 흰 결정 연출은 Music Select→Game에서만
-화면을 덮는다. 일반 씬 이동은 별도 어두운 덮개로 로드 순간을 가린다.
-덮개는 전환 시작과 함께 약 0.15초 동안 어두워지고, 새 씬 로드 중 유지되다가
+`SceneTransitionController`가 이동 경로에 맞는 표시기를 호출한다. 일반 Game 씬
+이동은 투명 오버레이를 로드 전후로 이어 재생하고 어두운 덮개로 로드 순간을 가린다.
+Music Select→Game은 흰 결정 연출만 사용하며 투명 오버레이의 Intro/Loop/Outro와
+어두운 덮개를 재생하지 않는다. 흰 결정이 화면을 덮은 뒤 Game을 로드·활성화하고,
+새 씬 위에서 흰 화면을 걷은 다음 전환을 완료한다.
+일반 이동의 어두운 덮개는 시작과 함께 약 0.15초 동안 어두워지고, 새 씬 로드 중 유지되다가
 투명 오버레이가 끝나기 직전 약 0.15초 동안 밝아진다.
-투명 오버레이는 `Intro → Loop → Outro`로 재생한다. Intro와 Outro는 각각 원본
+일반 이동의 투명 오버레이는 `Intro → Loop → Outro`로 재생한다. Intro와 Outro는 각각 원본
 1.2초 구간을 Game 씬 전환에서 1초로 재생한다. 일반 전환은 Intro 시작 0.25초 뒤
 씬 로드를 요청하며, 빠르게 준비되면
 Loop를 생략해 기본 길이는 2초다. 오래 걸리면 0.8초 Loop를 반복하고, 현재 반복이
@@ -66,7 +68,8 @@ Game 씬 전환에서는 별도 덮개와 호출부의 전환 가드가 입력�
 
 두 프리팹은 최초 대기 상태에서 보이지 않으며 자동 재생하지 않는다.
 프리팹을 씬에 배치하고 흰색 전환은 `CrystalTransitionPlayer.Play()`로 재생한다.
-투명 전환의 세 단계는 `SceneTransitionController`가 씬 로드 상태에 맞춰 재생한다. 데모 씬에서는
+투명 전환의 세 단계는 일반 씬 이동에서만 `SceneTransitionController`가 씬 로드
+상태에 맞춰 재생한다. 데모 씬에서는
 루트를 선택하고 Animation 창의 **Preview → Play**로 편집 중인 클립을 확인하거나,
 Play 모드 진입 후 Inspector의 **Play / Restart**로 재생한다. 데모 씬 인스턴스의 루트 CanvasGroup은
 Animation 창에서 보이도록 설정되어 있고, 런타임 시작 시에는 Player가 숨김 상태로 초기화한다.

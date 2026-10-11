@@ -36,6 +36,10 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
     private IntegerField scratchMoveAmountField;
     private Label scratchLongPairLabel;
     private VisualElement airPanel;
+    private VisualElement knobPanel;
+    private DropdownField knobPointField;
+    private DropdownField knobInterpolationField;
+    private DoubleField knobXField;
     private DropdownField airLineField;
     private IntegerField airValueField;
     private VisualElement cameraPanel;
@@ -114,6 +118,16 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
         effectPanel = new ChartEffectNoteEditorPanel(
             SetMessage, HandleCopyEffectRequested, HandleReloadEffectRequested);
         cameraPanel.parent.Add(effectPanel.Element);
+        knobPanel = new VisualElement { name = "knob-note-edit-panel" };
+        knobPointField = new DropdownField("Point", new List<string> { "Start", "Middle" }, 0);
+        knobXField = new DoubleField("X [-2.5, 2.5]");
+        knobInterpolationField = new DropdownField("Next segment",
+            new List<string> { "Linear", "Sin", "Cos" }, 0);
+        knobPanel.Add(knobPointField);
+        knobPanel.Add(knobXField);
+        knobPanel.Add(knobInterpolationField);
+        knobPanel.Add(new Label("Tab: Linear/Sin/Cos for the next segment. Shift+Tab: Start/Middle."));
+        cameraPanel.parent.Add(knobPanel);
 
         tapLineField.choices = CreateMainLineChoices();
         airLineField.choices = CreateMainLineChoices();
@@ -220,7 +234,7 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
             scratchMotionField.SetValueWithoutNotify(
                 scratchMotion.MotionType.ToString());
             scratchPointField.choices = noteType == NoteType.LongScratch
-                ? new List<string> { "Start", "Mid", "End" }
+                ? new List<string> { "Start", "Middle" }
                 : new List<string> { "Tap" };
             scratchPointField.SetValueWithoutNotify(
                 holder.GetScratchPointType(line).ToString());
@@ -232,6 +246,15 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
                 noteType == NoteType.LongScratch
                     ? DisplayStyle.Flex
                     : DisplayStyle.None;
+        }
+        else if (noteType == NoteType.Knob)
+        {
+            bool second = ChartManager.GetHolder(holder.AbsoluteChartPosition)?.secondKnobPoint == holder;
+            knobPointField.label = second ? "Second Point" : "Point";
+            knobPointField.SetValueWithoutNotify(holder.knobPointKind == ChartNotePointKind.Start ? "Start" : "Middle");
+            knobXField.SetValueWithoutNotify(KnobJudgementRules.ToPlayerX(holder.knobX));
+            knobInterpolationField.SetValueWithoutNotify(holder.knobCurve.ToString());
+            knobInterpolationField.SetEnabled(true);
         }
         else if (noteType == NoteType.Air)
         {
@@ -518,6 +541,7 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
 
     private void ShowTypePanel(NoteType noteType)
     {
+        knobPanel.style.display = noteType == NoteType.Knob ? DisplayStyle.Flex : DisplayStyle.None;
         tapPanel.style.display =
             noteType is NoteType.Tap or NoteType.LongTap
                 ? DisplayStyle.Flex
@@ -568,6 +592,10 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
 
         switch (selectedNoteType)
         {
+            case NoteType.CenterTap:
+            case NoteType.Knob:
+                succeeded = TryApplyCenterEdit(out error);
+                break;
             case NoteType.Tap:
             case NoteType.LongTap:
                 succeeded = TryApplyTapEdit(out error);
@@ -601,6 +629,24 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
         }
 
         SetError(succeeded ? null : error);
+    }
+
+    private bool TryApplyCenterEdit(out string error)
+    {
+        if (measureField.value < 0 || measureField.value > ChartHolder.MaximumMeasureNumber ||
+            positionField.value < 0 || positionField.value >= ChartHolder.PositionUnitsPerMeasure)
+        { error = "Use measure 0..999 and position 0..4799."; return false; }
+        ChartNotePointKind kind = knobPointField.value == "Middle" ? ChartNotePointKind.Mid : ChartNotePointKind.Start;
+        if (knobPointField.value != "Start" && knobPointField.value != "Middle")
+        { error = "Select a Knob point type."; return false; }
+        double x = selectedNoteType == NoteType.Knob ? knobXField.value / KnobJudgementRules.MaximumPlayerX : 0;
+        if (double.IsNaN(x) || double.IsInfinity(x) || x < -1 || x > 1)
+        { error = "Knob X must be within [-2.5, 2.5]."; return false; }
+        if (!System.Enum.TryParse(knobInterpolationField.value, out ChartKnobInterpolation curve))
+        { error = "Choose Linear, Sin or Cos."; return false; }
+        return placementController.TryEditCenterNote(selectedNoteObject,
+            measureField.value * ChartHolder.PositionUnitsPerMeasure + positionField.value,
+            kind, x, out error, curve: curve);
     }
 
     private bool TryApplyTapEdit(out string error)

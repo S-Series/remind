@@ -11,8 +11,10 @@ namespace REmind.Gameplay.Characters
                 "example-hard-world-reward",
                 HealthGaugeType.Hard,
                 new CharacterAbilityStats(
-                    worldProgressBonusPercent: 20,
-                    rewardBonusPercent: 50));
+                    worldUnlock: 60,
+                    regularCurrency: 75,
+                    hiddenUnlock: 0,
+                    basisForOneHundredPercent: 50));
         }
     }
 }

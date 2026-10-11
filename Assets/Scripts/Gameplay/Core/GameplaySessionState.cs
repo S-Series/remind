@@ -20,6 +20,7 @@ namespace REmind.Gameplay
         private Func<PlayableNoteSnapshot, RuleContext> contextFactory;
         private bool bound;
         private int totalNoteCount;
+        private int attemptGeneration;
 
         public event Action StateChanged;
 
@@ -100,6 +101,7 @@ namespace REmind.Gameplay
 
         public void ClearPreparedChart()
         {
+            unchecked { attemptGeneration++; }
             HasPreparedChart = false;
             totalNoteCount = 0;
             CurrentHealth = 0d;
@@ -199,16 +201,19 @@ namespace REmind.Gameplay
                     case ChartNoteKind.LongScratch:
                         type = NoteType.LongScratch; break;
                     case ChartNoteKind.Air: type = NoteType.Air; break;
+                    case ChartNoteKind.CenterTap: type = NoteType.CenterTap; break;
+                    case ChartNoteKind.Knob: type = NoteType.Knob; break;
                 }
             }
-            return new RuleContext(ToRuleHealth(CurrentHealth), CurrentCombo,
+            return new RuleContext(CurrentHealth, CurrentCombo,
                 type, false, false, HasPreparedChart &&
                 totalNoteCount > 0 && JudgedNoteCount >= totalNoteCount);
         }
 
         private void HandleNoteJudged(NoteJudgementEvent judgementEvent)
         {
-            if (!HasPreparedChart || judgementEvent.ChartNote == null)
+            if (!HasPreparedChart || judgementEvent.ChartNote == null ||
+                (IsFailed && !gameRule.ContinueAfterFail))
             {
                 return;
             }
@@ -216,7 +221,7 @@ namespace REmind.Gameplay
             bool completesChart = totalNoteCount > 0 &&
                 JudgedNoteCount + 1 >= totalNoteCount;
             RuleContext before = new RuleContext(
-                ToRuleHealth(CurrentHealth),
+                CurrentHealth,
                 CurrentCombo,
                 CreateRuleContext(judgementEvent.ChartNote).NoteType,
                 false,
@@ -224,10 +229,11 @@ namespace REmind.Gameplay
                 completesChart,
                 judgementEvent.EvaluationTimeMs);
 
-            int nextHealth = gameRule.ApplyHealthDelta(
-                ToRuleHealth(CurrentHealth),
+            double nextHealth = gameRule.ApplyHealthDelta(
+                CurrentHealth,
                 judgementEvent.Result,
-                before);
+                before,
+                totalNoteCount);
             double nextScore = gameRule.ClampScore(
                 CurrentScore + gameRule.CalculateScoreDelta(
                     judgementEvent.Result,
@@ -254,11 +260,14 @@ namespace REmind.Gameplay
                 false,
                 totalNoteCount > 0 && JudgedNoteCount >= totalNoteCount,
                 judgementEvent.EvaluationTimeMs);
-            IsFailed = gameRule.ShouldFail(after);
-            IsCleared = gameRule.IsCleared(after);
+            bool failedNow = gameRule.ShouldFail(after);
+            bool terminalFailure = failedNow && !gameRule.ContinueAfterFail;
+            IsFailed = failedNow;
+            IsCleared = !terminalFailure && gameRule.IsCleared(after);
+            int currentGeneration = attemptGeneration;
             NotifyStateChanged();
 
-            if (gameRule.ShouldStopAfterFail(after))
+            if (terminalFailure && currentGeneration == attemptGeneration)
             {
                 gameManager.StopGame();
             }
@@ -277,6 +286,7 @@ namespace REmind.Gameplay
 
         private void ResetForFreshSession()
         {
+            unchecked { attemptGeneration++; }
             RuleContext initial = new RuleContext(
                 0,
                 0,
@@ -314,24 +324,5 @@ namespace REmind.Gameplay
             }
         }
 
-        private static int ToRuleHealth(double value)
-        {
-            if (double.IsNaN(value) || double.IsInfinity(value))
-            {
-                return 0;
-            }
-
-            if (value <= int.MinValue)
-            {
-                return int.MinValue;
-            }
-            if (value >= int.MaxValue)
-            {
-                return int.MaxValue;
-            }
-            return (int)Math.Round(
-                value,
-                MidpointRounding.AwayFromZero);
-        }
     }
 }

@@ -13,11 +13,13 @@ namespace REmind.Gameplay
         public bool IsAutoPlay { get; }
         public CharacterGaugeRuleSnapshot GaugeRule { get; }
         public CharacterAbilityStartSnapshot CharacterAbility { get; }
+        public string UnlockTargetMusicId { get; }
 
         public GameAttemptStartSnapshot(Guid attemptId, string musicId,
             string difficultyId, bool isAutoPlay,
             CharacterGaugeRuleSnapshot gaugeRule,
-            CharacterAbilityStartSnapshot characterAbility)
+            CharacterAbilityStartSnapshot characterAbility,
+            string unlockTargetMusicId = null)
         {
             if (attemptId == Guid.Empty)
                 throw new ArgumentException("An attempt needs an ID.", nameof(attemptId));
@@ -30,6 +32,16 @@ namespace REmind.Gameplay
                 throw new ArgumentException(
                     "Character and attempt gauge rules do not match.",
                     nameof(characterAbility));
+            if (unlockTargetMusicId != null &&
+                (string.IsNullOrWhiteSpace(unlockTargetMusicId) ||
+                 string.Equals(musicId, unlockTargetMusicId,
+                     StringComparison.Ordinal) ||
+                 gaugeRule.GaugeType != HealthGaugeType.Hard ||
+                 !gaugeRule.HasSpecialHardGauge ||
+                 characterAbility != null))
+                throw new ArgumentException(
+                    "A song unlock attempt needs a distinct target, Special Hard gauge and no character ability.",
+                    nameof(unlockTargetMusicId));
 
             AttemptId = attemptId;
             MusicId = musicId;
@@ -37,6 +49,7 @@ namespace REmind.Gameplay
             IsAutoPlay = isAutoPlay;
             GaugeRule = gaugeRule;
             CharacterAbility = characterAbility;
+            UnlockTargetMusicId = unlockTargetMusicId;
         }
     }
 
@@ -48,9 +61,9 @@ namespace REmind.Gameplay
         public double Score { get; }
         public int MaxScore { get; }
         public RankGrade Rank { get; }
+        public int PerfectPlus { get; }
         public int Perfect { get; }
         public int Great { get; }
-        public int Good { get; }
         public int Miss { get; }
         public int MaxCombo { get; }
         public int TotalNoteCount { get; }
@@ -63,11 +76,11 @@ namespace REmind.Gameplay
         public double ScoreRatio => MaxScore > 0
             ? Math.Max(0d, Math.Min(1d, Score / MaxScore)) : 0d;
         public bool IsAllPerfect => TotalNoteCount > 0 &&
-            Perfect == TotalNoteCount && Great == 0 && Good == 0 && Miss == 0;
+            PerfectPlus + Perfect == TotalNoteCount && Great == 0 && Miss == 0;
 
         public GameResultSnapshot(string musicId, string difficultyId,
             double score, int maxScore, RankGrade rank,
-            int perfect, int great, int good, int miss,
+            int perfectPlus, int perfect, int great, int miss,
             int maxCombo, int totalNoteCount, bool isCleared, bool isFailed,
             bool isAutoPlay = false,
             GameAttemptStartSnapshot attemptStart = null)
@@ -77,7 +90,8 @@ namespace REmind.Gameplay
             if (string.IsNullOrWhiteSpace(difficultyId))
                 throw new ArgumentException("Result needs a difficulty ID.", nameof(difficultyId));
             if (double.IsNaN(score) || double.IsInfinity(score) || score < 0d ||
-                maxScore < 0 || perfect < 0 || great < 0 || good < 0 || miss < 0 ||
+                maxScore < 0 || perfectPlus < 0 || perfect < 0 ||
+                great < 0 || miss < 0 ||
                 maxCombo < 0 || totalNoteCount < 0)
                 throw new ArgumentOutOfRangeException(nameof(score), "Result values cannot be negative or non-finite.");
             if (attemptStart != null &&
@@ -93,9 +107,9 @@ namespace REmind.Gameplay
             Score = score;
             MaxScore = maxScore;
             Rank = rank;
-            Perfect = perfect;
+            PerfectPlus = perfectPlus;
             Great = great;
-            Good = good;
+            Perfect = perfect;
             Miss = miss;
             MaxCombo = maxCombo;
             TotalNoteCount = totalNoteCount;

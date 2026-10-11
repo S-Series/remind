@@ -10,8 +10,6 @@ namespace REmind.Gameplay.Demo
     /// <summary>Displays a finished Game session without retaining its live systems.</summary>
     public sealed class ResultScenePresenter : MonoBehaviour
     {
-        private static readonly string[] DifficultyIds = { "easy", "normal", "hard", "chaos" };
-
         [SerializeField] private MusicCatalog catalog;
         [SerializeField] private TMP_Text songTitle;
         [SerializeField] private TMP_Text songArtist;
@@ -97,7 +95,8 @@ namespace REmind.Gameplay.Demo
                 result.IsAllPerfect ? "ALL PERFECT" :
                 result.IsFailed ? "FAILED" : result.IsCleared ? "CLEAR" : "FINISHED");
 
-            int[] counts = { result.Perfect, result.Great, result.Good, 0, result.Miss };
+            int[] counts = { result.PerfectPlus, result.Perfect,
+                result.Great, result.Miss };
             for (int index = 0; index < counts.Length; index++)
             {
                 SetAt(judgementCounts, index, counts[index].ToString("N0", CultureInfo.InvariantCulture));
@@ -153,19 +152,23 @@ namespace REmind.Gameplay.Demo
         private void UpdateDifficulty(MusicCatalogEntry entry, string selectedId)
         {
             if (selectedDifficulty) selectedDifficulty.gameObject.SetActive(false);
-            for (int index = 0; index < DifficultyIds.Length &&
-                 index < difficultyLabels.Length; index++)
+            for (int index = 0; index < difficultyLabels.Length &&
+                 index < MusicDifficultySlots.Count; index++)
             {
                 TMP_Text label = difficultyLabels[index];
                 if (!label) continue;
-                string id = DifficultyIds[index];
-                MusicDifficultyEntry difficulty = entry?.FindDifficulty(id);
-                bool available = difficulty != null || id == selectedId;
+                string id = MusicDifficultySlots.GetId(entry?.Difficulties, index);
+                if (index == difficultyLabels.Length - 1 &&
+                    difficultyLabels.Length < MusicDifficultySlots.Count &&
+                    selectedId == MusicDifficultySlots.GetId(entry?.Difficulties, 4))
+                    id = selectedId;
+                MusicDifficultyEntry difficulty = id == null ? null : entry?.FindDifficulty(id);
+                bool available = id != null && (difficulty != null || id == selectedId);
                 label.gameObject.SetActive(available);
                 if (!available) continue;
                 string level = difficulty != null && difficulty.Level > 0
                     ? difficulty.Level.ToString(CultureInfo.InvariantCulture) : "—";
-                label.text = id.ToUpperInvariant() + "   " + level;
+                label.text = (difficulty?.DisplayName ?? id.ToUpperInvariant()) + "   " + level;
                 bool selected = id == selectedId;
                 label.color = selected ? new Color(.91f, .93f, 1f) :
                     new Color(.65f, .71f, .87f);

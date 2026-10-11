@@ -1,8 +1,8 @@
 public enum JudgeResult
 {
     None = 0,
-    Perfect = 1,
-    Great = 2,
-    Good = 3,
+    PerfectPlus = 1,
+    Perfect = 2,
+    Great = 3,
     Miss = 4,
 }

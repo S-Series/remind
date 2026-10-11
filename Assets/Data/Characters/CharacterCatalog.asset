@@ -1,0 +1,18 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 73052235403843819e0833a39ef398c7, type: 3}
+  m_Name: CharacterCatalog
+  m_EditorClassIdentifier: REmind.Gameplay::REmind.Gameplay.Characters.CharacterCatalog
+  defaultCharacterId: non
+  statBasis: 50
+  entries:
+  - {fileID: 11400000, guid: 7ec99357a4dd443e80958eff9ad2c367, type: 2}

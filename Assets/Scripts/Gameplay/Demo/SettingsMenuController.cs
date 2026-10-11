@@ -1,6 +1,8 @@
 using System;
+using System.Collections;
 using System.IO;
 using REmind.Common.UI;
+using REmind.Gameplay.Presentation;
 using TMPro;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -17,6 +19,7 @@ namespace REmind.Gameplay.Demo
     {
         [SerializeField] private MenuNavigationController navigation;
         [SerializeField] private NavigationScope scope;
+        [SerializeField] private OverlayPresentation presentation;
         [SerializeField] private TMP_Text volumeValue;
         [SerializeField] private TMP_Text offsetValue;
         [SerializeField] private TMP_Text[] laneValues;
@@ -31,14 +34,18 @@ namespace REmind.Gameplay.Demo
         [SerializeField] private Toggle muteUnfocusedToggle;
         [SerializeField] private Toggle reduceBgmToggle;
         [SerializeField] private Toggle keepBackgroundToggle;
+        [SerializeField] private Toggle spaceTapToggle;
         [SerializeField] private GameObject[] categoryPages;
         [SerializeField] private TMP_Text[] categoryLabels;
 
         private LocalGameSettingsStore settings;
         private bool overlayMode;
+        private bool preparingOverlay;
         private bool refreshing;
         private int pendingLane = -1;
         private int rebindStartFrame;
+        private int rebindEndFrame = -1;
+        private Coroutine restoreNavigation;
 
         private void Start()
         {
@@ -52,7 +59,13 @@ namespace REmind.Gameplay.Demo
         private void OnDisable()
         {
             SceneManager.activeSceneChanged -= OnActiveSceneChanged;
-            if (overlayMode) ReleaseNavigation();
+            CancelNavigationRestore();
+            pendingLane = -1;
+            if (overlayMode)
+            {
+                presentation?.ForceHide();
+                ReleaseNavigation();
+            }
         }
 
         public bool IsOverlayOpen => overlayMode && gameObject.activeInHierarchy;
@@ -60,14 +73,23 @@ namespace REmind.Gameplay.Demo
         public void OpenOverlay(MenuNavigationController hostNavigation)
         {
             if (!hostNavigation || !scope || IsOverlayOpen) return;
+            if (!presentation) presentation = GetComponent<OverlayPresentation>();
+            if (!presentation) return;
             navigation = hostNavigation;
             overlayMode = true;
+            rebindEndFrame = -1;
             scope.BindController(hostNavigation);
             gameObject.SetActive(true);
             EnsureSettings();
-            SelectCategory(2);
-            Refresh();
             hostNavigation.Push(scope);
+            preparingOverlay = true;
+            try
+            {
+                SelectCategory(2);
+                Refresh();
+            }
+            finally { preparingOverlay = false; }
+            presentation.PlayOpen();
         }
 
         private void EnsureSettings()
@@ -108,7 +130,7 @@ namespace REmind.Gameplay.Demo
 
         public void ChangeMusicVolume(int steps)
         {
-            if (settings == null) return;
+            if (settings == null || !CanEdit) return;
             try
             {
                 float value = Mathf.Clamp01(Mathf.Round(
@@ -140,8 +162,26 @@ namespace REmind.Gameplay.Demo
         public void SetKeepAudioInBackground(bool value) => SaveAudio(
             () => settings.SetKeepAudioInBackground(value));
 
+        public void SetSpaceTapEnabled(bool value)
+        {
+            if (refreshing || settings == null || !CanEdit) return;
+            try
+            {
+                settings.SetSpaceTapEnabled(value);
+                settings.Save();
+                Refresh();
+                if (status) status.text = "Space Tap saved. Applies from the next play.";
+            }
+            catch (Exception exception)
+            {
+                Refresh();
+                ShowError(exception);
+            }
+        }
+
         public void OpenSystemSoundSettings()
         {
+            if (!CanEdit) return;
 #if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
             Application.OpenURL("ms-settings:sound");
 #else
@@ -152,6 +192,7 @@ namespace REmind.Gameplay.Demo
 
         public void SelectCategory(int category)
         {
+            if (overlayMode && !preparingOverlay && !CanEdit) return;
             if (categoryPages == null || category < 0 ||
                 category >= categoryPages.Length) return;
             for (int i = 0; i < categoryPages.Length; i++)
@@ -171,7 +212,7 @@ namespace REmind.Gameplay.Demo
 
         private void SaveAudio(Action change)
         {
-            if (refreshing || settings == null) return;
+            if (refreshing || settings == null || !CanEdit) return;
             try
             {
                 change();
@@ -184,7 +225,7 @@ namespace REmind.Gameplay.Demo
 
         public void ChangeJudgementOffset(int steps)
         {
-            if (settings == null) return;
+            if (settings == null || !CanEdit) return;
             try
             {
                 double value = Math.Max(
@@ -200,11 +241,13 @@ namespace REmind.Gameplay.Demo
 
         public void BeginRebind(int lane)
         {
-            if (settings == null || lane < 0 ||
+            if (settings == null || !CanEdit || restoreNavigation != null ||
+                lane < 0 ||
                 lane >= LocalGameSettingsStore.LaneCount) return;
             pendingLane = lane;
             rebindStartFrame = Time.frameCount;
             scope?.SetNavigationActive(false);
+            presentation?.BlockInteraction();
             if (EventSystem.current)
                 EventSystem.current.SetSelectedGameObject(null);
             if (status)
@@ -214,7 +257,7 @@ namespace REmind.Gameplay.Demo
 
         public void ResetBindings()
         {
-            if (settings == null) return;
+            if (settings == null || !CanEdit) return;
             try
             {
                 settings.ResetBindings();
@@ -232,6 +275,7 @@ namespace REmind.Gameplay.Demo
                 EndRebind("Key change cancelled.");
                 return;
             }
+            if (Time.frameCount == rebindEndFrame) return;
             if (overlayMode)
             {
                 CloseOverlay();
@@ -241,18 +285,33 @@ namespace REmind.Gameplay.Demo
 
         public void CloseOverlay()
         {
-            if (!overlayMode) return;
-            ReleaseNavigation();
-            gameObject.SetActive(false);
+            if (!overlayMode || !presentation ||
+                presentation.IsClosing) return;
+            CancelNavigationRestore();
+            pendingLane = -1;
+            scope.SetNavigationActive(false);
+            presentation.PlayClose(CompleteClose);
         }
 
         private void OnActiveSceneChanged(Scene previous, Scene next)
         {
-            CloseOverlay();
+            if (!overlayMode) return;
+            presentation?.ForceHide();
+            CompleteClose();
+        }
+
+        private bool CanEdit => !overlayMode || presentation &&
+            presentation.IsInteractive;
+
+        private void CompleteClose()
+        {
+            ReleaseNavigation();
+            gameObject.SetActive(false);
         }
 
         private void ReleaseNavigation()
         {
+            CancelNavigationRestore();
             pendingLane = -1;
             if (navigation && navigation.ActiveScope == scope)
                 navigation.Pop();
@@ -264,10 +323,32 @@ namespace REmind.Gameplay.Demo
         private void EndRebind(string message)
         {
             pendingLane = -1;
+            rebindEndFrame = Time.frameCount;
             Refresh();
             if (status) status.text = message;
+            CancelNavigationRestore();
+            restoreNavigation = StartCoroutine(RestoreNavigationAfterInput());
+        }
+
+        private IEnumerator RestoreNavigationAfterInput()
+        {
+            // InputSystemUIInputModule may process Cancel/Submit after this
+            // component's Update. Keep selection empty until the original
+            // input frame and the following frame have both passed.
+            int restoreFrame = rebindEndFrame + 2;
+            while (Time.frameCount < restoreFrame)
+                yield return null;
+            restoreNavigation = null;
+            if (!isActiveAndEnabled || pendingLane >= 0) yield break;
             scope?.SetNavigationActive(true);
             navigation?.FocusActive();
+        }
+
+        private void CancelNavigationRestore()
+        {
+            if (restoreNavigation != null)
+                StopCoroutine(restoreNavigation);
+            restoreNavigation = null;
         }
 
         private void Refresh()
@@ -313,6 +394,8 @@ namespace REmind.Gameplay.Demo
             if (keepBackgroundToggle)
                 keepBackgroundToggle.SetIsOnWithoutNotify(
                     settings.KeepAudioInBackground);
+            if (spaceTapToggle)
+                spaceTapToggle.SetIsOnWithoutNotify(settings.SpaceTapEnabled);
             refreshing = false;
         }
 

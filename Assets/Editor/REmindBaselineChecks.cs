@@ -73,7 +73,9 @@ public static class REmindBaselineChecks
             "song", "hard", "", "");
         string standard = ChartFileCodec.Serialize(
             Array.Empty<ChartHolder>(), 120, 0, metadata);
-        ChartFile standardChart = ChartFileCodec.Parse(standard);
+        Require(!standard.Contains("\"difficultyId\""),
+            "Chart JSON must derive difficulty from the filename.");
+        ChartFile standardChart = ChartFileCodec.Parse(standard, "hard");
         Require(standardChart.FormatVersion == 1,
             "New chart saves must use format version 1.");
         Require(standardChart.EffectiveJacketFile == "hard.jpg",
@@ -81,10 +83,18 @@ public static class REmindBaselineChecks
 
         string custom = ChartFileCodec.Serialize(
             Array.Empty<ChartHolder>(), 120, 0, metadata, "custom.png");
-        ChartFile reopened = ChartFileCodec.Parse(custom);
+        ChartFile reopened = ChartFileCodec.Parse(custom, "hard");
         Require(reopened.JacketFile == "custom.png" &&
                 reopened.EffectiveJacketFile == "custom.png",
             "Chart jacket override did not survive serialization.");
+
+        var extraMetadata = new ChartEffectDocumentState.Metadata(
+            "song", "extra", "", "", 20, "Chart Maker", "DREAM");
+        ChartFile extra = ChartFileCodec.Parse(ChartFileCodec.Serialize(
+            Array.Empty<ChartHolder>(), 120, 0, extraMetadata));
+        Require(extra.Level == 20 && extra.Author == "Chart Maker" &&
+                extra.ExtraName == "DREAM",
+            "Chart display metadata did not survive serialization.");
 
         bool rejected = false;
         try
@@ -568,7 +578,7 @@ public static class REmindBaselineChecks
             system.NoteJudged += results.Add;
             Enqueue(system, 0, 100, 0);
             system.ProcessFrame(400);
-            Require(results.Count == 1 && results[0].Result == JudgeResult.Perfect && !results[0].IsAutomaticMiss,
+            Require(results.Count == 1 && results[0].Result == JudgeResult.PerfectPlus && !results[0].IsAutomaticMiss,
                 "An on-time queued input became an automatic Miss when its frame was late.");
         });
     }
@@ -596,7 +606,7 @@ public static class REmindBaselineChecks
             Require(system.LastTimelineError == null &&
                     system.DiscardedLateInputCount == 0 &&
                     results.Count == 1 &&
-                    results[0].Result == JudgeResult.Perfect,
+                    results[0].Result == JudgeResult.PerfectPlus,
                 "A device input delivered after the previous frame " +
                 "incorrectly stopped playback or lost its original time.");
         });
@@ -637,16 +647,16 @@ public static class REmindBaselineChecks
         {
             InitializeJudgement(system, new[] { Note("tap", 0, 100) }, 100);
             system.SetUserOffsetMs(25);
-            system.ProcessFrame(325); // 100 note + 100 chart offset + 25 input offset + 100 miss window.
+            system.ProcessFrame(400); // 100 note + 100 chart offset + 25 input offset + 175 miss window.
             Require(system.PendingNoteCount == 1, "Automatic Miss must be strictly outside its window.");
-            system.ProcessFrame(325.01);
+            system.ProcessFrame(400.01);
             Require(system.PendingNoteCount == 0, "Automatic Miss did not advance beyond its boundary.");
             system.ResetJudgements(false);
             JudgeResult received = JudgeResult.None;
             system.NoteJudged += value => received = value.Result;
             Enqueue(system, 0, 125, 0); // queued chart time = input song time 225 - chart offset 100.
             system.ProcessFrame(300);
-            Require(received == JudgeResult.Perfect, "Chart/input offsets were double-applied or reversed.");
+            Require(received == JudgeResult.PerfectPlus, "Chart/input offsets were double-applied or reversed.");
         });
     }
 
@@ -661,13 +671,22 @@ public static class REmindBaselineChecks
             system.NoteJudged += value => received = value.Result;
             foreach (var sample in new[]
             {
-                (Time: 50d, Expected: JudgeResult.Perfect),
-                (Time: 49d, Expected: JudgeResult.Good),
-                (Time: 0d, Expected: JudgeResult.Good),
-                (Time: 150d, Expected: JudgeResult.Perfect),
-                (Time: 151d, Expected: JudgeResult.Good),
-                (Time: 200d, Expected: JudgeResult.Good),
-                (Time: 201d, Expected: JudgeResult.Miss)
+                (Time: -75.001d, Expected: JudgeResult.None),
+                (Time: -75d, Expected: JudgeResult.Miss),
+                (Time: 60d, Expected: JudgeResult.PerfectPlus),
+                (Time: 59.999d, Expected: JudgeResult.Perfect),
+                (Time: 20d, Expected: JudgeResult.Perfect),
+                (Time: 19.999d, Expected: JudgeResult.Great),
+                (Time: -30d, Expected: JudgeResult.Great),
+                (Time: -30.001d, Expected: JudgeResult.Miss),
+                (Time: 100d, Expected: JudgeResult.PerfectPlus),
+                (Time: 140d, Expected: JudgeResult.PerfectPlus),
+                (Time: 140.001d, Expected: JudgeResult.Perfect),
+                (Time: 180d, Expected: JudgeResult.Perfect),
+                (Time: 180.001d, Expected: JudgeResult.Great),
+                (Time: 230d, Expected: JudgeResult.Great),
+                (Time: 230.001d, Expected: JudgeResult.Miss),
+                (Time: 275d, Expected: JudgeResult.Miss)
             })
             {
                 system.ResetJudgements(false);
@@ -675,7 +694,7 @@ public static class REmindBaselineChecks
                 Enqueue(system, 0, sample.Time, 0);
                 system.ProcessFrame(Math.Max(sample.Time, 201d));
                 Require(received == sample.Expected,
-                    "Direct/indirect judgement boundary changed at " +
+                    "Four-grade judgement boundary changed at " +
                     sample.Time + "ms.");
             }
         });
@@ -710,7 +729,7 @@ public static class REmindBaselineChecks
             {
                 Note("input-second", 0, 250),
                 Note("input-first", 1, 250),
-                Note("automatic", 2, 150)
+                Note("automatic", 2, 75)
             }), "Initialization failed.");
             var order = new List<string>();
             var times = new List<string>();
@@ -1370,8 +1389,8 @@ public static class REmindBaselineChecks
         {
             InitializeJudgement(system, new[] { Note("a", 0, 0), Note("b", 1, 100), Note("c", 2, 200) });
             var document = new ChartDocument(4800, 4, 120);
-            document.EffectEvents.Add(new ChartEffectEvent(240, "begin", "music.call", "begin-section", 0));
-            document.EffectEvents.Add(new ChartEffectEvent(480, "end", "music.call", "end-section", 0));
+            document.EffectEvents.Add(new ChartEffectEvent(480, "begin", "music.call", "begin-section", 0));
+            document.EffectEvents.Add(new ChartEffectEvent(720, "end", "music.call", "end-section", 0));
             var values = new Dictionary<string, object> { ["begin"] = new SampleSectionParameters(30, 1.5) };
             var plan = EffectPreparation.Prepare(ChartCompiler.Compile(document).Snapshot.EffectEvents, values, EffectRegistry.CreateDefault(), "sample").Plan;
             using var rules = new EffectRuleService(rule);
@@ -1381,11 +1400,11 @@ public static class REmindBaselineChecks
             var deltas = new List<int>();
             system.NoteJudged += result => deltas.Add(rule.GetHealthDelta(result.Result,
                 new RuleContext(100, 0, NoteType.Tap, false, false, false, result.EffectiveHitTimeMs + result.OffsetMs)));
-            Enqueue(system, 0, 80, 0);
-            Enqueue(system, 1, 180, 1);
-            Enqueue(system, 2, 280, 2);
-            system.ProcessFrame(300);
-            Require(string.Join(",", deltas) == "-2,-3,-2", "Damage multiplier leaked before or after its effective interval.");
+            Enqueue(system, 0, 150, 0);
+            Enqueue(system, 1, 250, 1);
+            Enqueue(system, 2, 350, 2);
+            system.ProcessFrame(400);
+            Require(string.Join(",", deltas) == "-10,-15,-10", "Damage multiplier leaked before or after its effective interval.");
         });
     }
 
@@ -1550,7 +1569,7 @@ public static class REmindBaselineChecks
                 ChartFile reopened = loader.LoadFromPath(chartPath);
                 Require(reopened.EffectRevision == savedRevision &&
                         ChartEffectDocumentState.MusicId == "stage5_flow" &&
-                        ChartEffectDocumentState.DifficultyId == "manual" &&
+                        ChartEffectDocumentState.DifficultyId == "stage5-flow" &&
                         saver.CurrentFilePath == Path.GetFullPath(chartPath) &&
                         !saver.HasUnsavedChanges,
                     "Reopen did not restore the same clean ChartMaker document.");
@@ -2511,7 +2530,7 @@ public static class REmindBaselineChecks
                     Require(prepared.Metadata.MusicId == songEntry.MusicId &&
                         prepared.Metadata.DifficultyId == difficulty.DifficultyId &&
                         prepared.Snapshot.Notes.Count > 0 &&
-                        song.FindChart(difficulty.DifficultyId) != null,
+                        SongChartFiles.GetFileName(difficulty.DifficultyId) != null,
                         "Catalog selection does not match a playable chart.");
                 }
             }
@@ -2576,6 +2595,8 @@ public static class REmindBaselineChecks
         var metadata = new ChartEffectDocumentState.Metadata(music, "default", "", revision);
         XElement legacy = ChartEffectParameterCodec.ReadObject(
             ChartFileCodec.Serialize(holders, 120, 0, metadata));
+        legacy.Add(ChartEffectParameterCodec.ReadObject(
+            "{\"difficultyId\":\"default\"}").Element("difficultyId"));
         legacy.Element("formatVersion").Value = "8";
         legacy.Element("notes").Name = "events";
         XElement dictionary = legacy.Element("eventDictionary");

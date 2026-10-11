@@ -1,0 +1,55 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e7fb283b8bf2617836fb5d842b40c8e9, type: 3}
+  m_Name: Rule
+  m_EditorClassIdentifier: Assembly-CSharp::GameRuleConfig
+  baseJudgeWindows:
+    perfectPlusWindowMs: 40
+    perfectWindowMs: 80
+    greatWindowMs: 130
+    missWindowMs: 175
+  gaugeType: 2
+  maxHealth: 100
+  initialHealth: 100
+  clearHealth: 1
+  healthDelta:
+    perfectPlus: 0
+    perfect: 0
+    great: 0
+    miss: 0
+  useSpecialHardGauge: 1
+  specialHardGauge:
+    rfReferenceCount: 1000
+    perfect: 0.25
+    great: -0.5
+    miss: -7.5
+    damageReductionThresholdPercent: 30
+    damageMultiplierBelowThreshold: 0.5
+  maxScore: 1000000
+  scoreWeight:
+    perfectPlus: 1
+    perfect: 1
+    great: 0.7
+    miss: 0
+  rankThresholds:
+    rankS: 0.95
+    rankA: 0.9
+    rankB: 0.8
+    rankC: 0.7
+  comboBehavior:
+    perfectPlus: 0
+    perfect: 0
+    great: 0
+    miss: 2
+  failImmediately: 1
+  continueAfterFail: 0
+  longNoteJudgeMode: 0

@@ -9,12 +9,10 @@ namespace REmind.Charting.Tests
         private const string Valid =
             "{\"format\":\"REmindSong\",\"formatVersion\":1," +
             "\"musicId\":\"i\",\"title\":\"I\",\"artist\":\"Unknown\"," +
-            "\"previewStartMs\":0,\"previewDurationMs\":15000," +
-            "\"charts\":[{\"difficultyId\":\"hard\",\"level\":0," +
-            "\"chartAuthor\":\"Unknown\"}]}";
+            "\"previewStartMs\":0,\"previewDurationMs\":15000}";
 
         [Test]
-        public void Parse_KeepsSongAndDifficultyOwnership()
+        public void Parse_KeepsCommonSongMetadata()
         {
             SongContent song = SongContentCodec.Parse(Valid);
             Assert.That(song.MusicId, Is.EqualTo("i"));
@@ -23,9 +21,45 @@ namespace REmind.Charting.Tests
             Assert.That(song.PlaybackVolume, Is.EqualTo(0.5f));
             Assert.That(song.AudioFile, Is.EqualTo("audio.mp3"));
             Assert.That(song.JacketFile, Is.EqualTo("art.jpg"));
-            Assert.That(song.FindChart("hard").ChartFile,
-                Is.EqualTo("hard.rd"));
-            Assert.That(song.FindChart("normal"), Is.Null);
+            Assert.That(song.HiddenType, Is.EqualTo(SongHiddenType.NotHidden));
+            Assert.That(song.UnlockHint, Is.Empty);
+        }
+
+        [Test]
+        public void Parse_KeepsOptionalUnlockHint()
+        {
+            SongContent song = SongContentCodec.Parse(Valid.Replace("}",
+                ",\"unlockHint\":\"Look for the clue.\"}"));
+            Assert.That(song.UnlockHint, Is.EqualTo("Look for the clue."));
+        }
+
+        [TestCase("NotHidden", SongHiddenType.NotHidden)]
+        [TestCase("Masked", SongHiddenType.Masked)]
+        [TestCase("Puzzle", SongHiddenType.Puzzle)]
+        [TestCase("Invisible", SongHiddenType.Invisible)]
+        public void Parse_MapsHiddenTypeNames(string name, SongHiddenType expected)
+        {
+            string json = Valid.Replace("}", ",\"hiddenType\":\"" + name + "\"}");
+            Assert.That(SongContentCodec.Parse(json).HiddenType, Is.EqualTo(expected));
+        }
+
+        [Test]
+        public void Parse_DefaultsNullHiddenTypeToNotHidden()
+        {
+            string json = Valid.Replace("}", ",\"hiddenType\":null}");
+            Assert.That(SongContentCodec.Parse(json).HiddenType,
+                Is.EqualTo(SongHiddenType.NotHidden));
+        }
+
+        [TestCase("\"\"")]
+        [TestCase("\"masked\"")]
+        [TestCase("\"Unknown\"")]
+        [TestCase("\"1\"")]
+        [TestCase("1")]
+        public void Parse_RejectsUnsupportedHiddenType(string jsonValue)
+        {
+            string json = Valid.Replace("}", ",\"hiddenType\":" + jsonValue + "}");
+            Assert.Throws<FormatException>(() => SongContentCodec.Parse(json));
         }
 
         [TestCase(0d, 0f)]
@@ -53,32 +87,48 @@ namespace REmind.Charting.Tests
         }
 
         [Test]
-        public void Parse_RejectsDuplicateDifficultyAndEscapingPaths()
+        public void Parse_RejectsLegacyChartListAndEscapingPaths()
         {
-            string duplicate = Valid.Replace("]}", "," +
-                "{\"difficultyId\":\"hard\",\"chartAuthor\":\"Other\"," +
-                "\"chartFile\":\"other.rd\"}]}");
-            Assert.Throws<FormatException>(() => SongContentCodec.Parse(duplicate));
             Assert.Throws<FormatException>(() => SongContentCodec.Parse(
-                Valid.Replace("\"chartAuthor\":\"Unknown\"",
-                    "\"chartAuthor\":\"Unknown\",\"chartFile\":\"../outside.rd\"")));
+                Valid.Replace("}", ",\"charts\":[]}")));
             Assert.Throws<FormatException>(() => SongContentCodec.Parse(
                 Valid.Replace("\"artist\":\"Unknown\"",
                     "\"artist\":\"Unknown\",\"audioFile\":\"audio/audio.mp3\"")));
         }
 
         [Test]
-        public void Parse_AllowsFlatFilenameOverrides()
+        public void Parse_AllowsFlatCommonFilenameOverrides()
         {
             string custom = Valid.Replace("\"artist\":\"Unknown\"",
                 "\"artist\":\"Unknown\",\"audioFile\":\"song.ogg\"," +
-                "\"jacketFile\":\"cover.png\"").Replace(
-                "\"chartAuthor\":\"Unknown\"",
-                "\"chartAuthor\":\"Unknown\",\"chartFile\":\"expert.rd\"");
+                "\"jacketFile\":\"cover.png\"");
             SongContent song = SongContentCodec.Parse(custom);
             Assert.That(song.AudioFile, Is.EqualTo("song.ogg"));
             Assert.That(song.JacketFile, Is.EqualTo("cover.png"));
-            Assert.That(song.FindChart("hard").ChartFile, Is.EqualTo("expert.rd"));
+        }
+
+        [Test]
+        public void FixedChartFileNames_DetermineIdentity()
+        {
+            string[] names = { "Easy.rd", "Normal.rd", "Hard.rd", "Chaos.rd", "Extra.rd" };
+            for (int index = 0; index < names.Length; index++)
+            {
+                string id = SongChartFiles.GetDifficultyId(index);
+                Assert.That(SongChartFiles.GetFileName(id), Is.EqualTo(names[index]));
+                Assert.That(SongChartFiles.GetDifficultyIdFromFileName(names[index]), Is.EqualTo(id));
+                SongChartFiles.Validate(names[index], 0, "Unknown",
+                    id == "extra" ? "DREAM" : null);
+            }
+            Assert.Throws<FormatException>(() => SongChartFiles.Validate(
+                "Expert.rd", 10, "A", null));
+            Assert.Throws<FormatException>(() => SongChartFiles.Validate(
+                "Extra.rd", 10, "A", null));
+            Assert.Throws<FormatException>(() => SongChartFiles.Validate(
+                "Hard.rd", -1, "A", null));
+            Assert.Throws<FormatException>(() => SongChartFiles.Validate(
+                "Hard.rd", 10, "", null));
+            Assert.Throws<FormatException>(() => SongChartFiles.Validate(
+                "Hard.rd", 10, "A", "DREAM"));
         }
 
         [Test]

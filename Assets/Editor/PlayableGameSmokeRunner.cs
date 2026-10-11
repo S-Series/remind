@@ -8,6 +8,8 @@ using REmind.Gameplay.Demo;
 using REmind.Gameplay.Input.Judgement;
 using REmind.Gameplay.Input.Routing;
 using REmind.Gameplay.Characters;
+using REmind.Gameplay.Effects;
+using REmind.Gameplay.Presentation;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -26,13 +28,24 @@ public static class PlayableGameSmokeRunner
     private const string DataPathKey = "REmind.GamePlaySmoke.DataPath";
     private const string SettingsPathKey = "REmind.GamePlaySmoke.SettingsPath";
     private const string HardKey = "REmind.GamePlaySmoke.WithHard";
+    private const string RuntimeFailureKey = "REmind.GamePlaySmoke.WithRuntimeFailure";
+    private const string ComponentDisableKey =
+        "REmind.GamePlaySmoke.WithComponentDisable";
     private const string HardRulePath =
         "Assets/Settings/Gameplay/Rules/DevelopmentHardGameRuleConfig.asset";
-    private enum HardPhase { None, Select, Start, Resume, Retry, Result }
+    private const string CharacterCatalogPath =
+        "Assets/Data/Characters/CharacterCatalog.asset";
+    private const string NonCharacterId = "non";
+    private enum HardPhase
+    {
+        None, Select, Start, Resume, Retry, Result,
+        EffectSelect, EffectStart, EffectError, EffectReturned,
+        ComponentSelect, ComponentStart, ComponentError, ComponentReturned
+    }
     private static readonly string[] SongIds = { "designant", "i" };
     private static readonly string[] SongTitles = { "Designant", "I" };
     private static readonly string[] TemporaryScreens =
-        { "Story", "Character", "ReMind", "Option", "Music" };
+        { "ReMind" };
     private static readonly bool[] checkedPauseResume = new bool[SongIds.Length];
     private static int frames;
     private static int bootstrapReadyFrames;
@@ -45,10 +58,14 @@ public static class PlayableGameSmokeRunner
     private static bool checkingSettingsMenu;
     private static bool checkedSettingsSceneChange;
     private static bool checkingTemporaryScreen;
+    private static bool checkedCharacterOverlay;
+    private static int characterOverlayStage;
+    private static string characterPreviewSnapshot;
+    private static int settingsOverlayStage;
+    private static int settingsRebindCancelledFrame;
     private static int temporaryScreenIndex;
     private static bool startedSelection;
     private static float transitionFirstElapsed;
-    private static float transitionStartedAt;
     private static bool transitionAdvanced;
     private static bool assignedTestData;
     private static bool checkingResult;
@@ -59,6 +76,12 @@ public static class PlayableGameSmokeRunner
     private static int pauseOpenedFrame;
     private static bool checkingFailedResult;
     private static bool checkedNormalIsolation;
+    private static bool expectGameEntry;
+    private static bool expectWhiteGameEntry;
+    private static bool sawGameTransitionHold;
+    private static bool startedDuringGameTransition;
+    private static int gameEntryStartCount;
+    private static GamePlay gameEntryPlayback;
     private static double expectedScore;
     private static HardPhase hardPhase;
     private static GameRuleConfig hardRuleSource;
@@ -75,16 +98,33 @@ public static class PlayableGameSmokeRunner
     private static double hardHealthAtStart;
     private static int hardStartCaptureCount;
     private static double hardHealthBeforePause;
+    private static string saveBeforeEffectFailure;
+    private static string effectFailureDiagnostic;
+    private static int componentDisableIndex;
+    private static GameAttemptStartSnapshot nonFirstAttempt;
+
+    private sealed class ThrowingSmokeGimmick : MusicGimmick
+    {
+        public override void Update(double chartTimeMs) =>
+            throw new InvalidOperationException("Injected runtime gimmick failure");
+    }
 
     static PlayableGameSmokeRunner()
     {
         if (SessionState.GetBool(ActiveKey, false))
+        {
+            SceneManager.sceneLoaded -= CaptureGameEntry;
+            SceneManager.sceneLoaded += CaptureGameEntry;
+            EditorApplication.update -= Tick;
             EditorApplication.update += Tick;
+        }
     }
 
     public static void Run()
     {
         SessionState.SetBool(HardKey, false);
+        SessionState.SetBool(RuntimeFailureKey, false);
+        SessionState.SetBool(ComponentDisableKey, false);
         frames = 0;
         bootstrapReadyFrames = 0;
         bootstrapContinueRequested = false;
@@ -97,10 +137,14 @@ public static class PlayableGameSmokeRunner
         checkingSettingsMenu = false;
         checkedSettingsSceneChange = false;
         checkingTemporaryScreen = false;
+        checkedCharacterOverlay = false;
+        characterOverlayStage = 0;
+        characterPreviewSnapshot = null;
+        settingsOverlayStage = 0;
+        settingsRebindCancelledFrame = -1;
         temporaryScreenIndex = 0;
         startedSelection = false;
         transitionFirstElapsed = 0f;
-        transitionStartedAt = 0f;
         transitionAdvanced = false;
         assignedTestData = false;
         checkingResult = false;
@@ -111,6 +155,12 @@ public static class PlayableGameSmokeRunner
         pauseOpenedFrame = -1;
         checkingFailedResult = false;
         checkedNormalIsolation = false;
+        expectGameEntry = false;
+        expectWhiteGameEntry = false;
+        sawGameTransitionHold = false;
+        startedDuringGameTransition = false;
+        gameEntryStartCount = 0;
+        gameEntryPlayback = null;
         expectedScore = 0d;
         hardPhase = HardPhase.None;
         hardRuleSource = null;
@@ -127,13 +177,20 @@ public static class PlayableGameSmokeRunner
         hardHealthAtStart = double.NaN;
         hardStartCaptureCount = 0;
         hardHealthBeforePause = double.NaN;
+        saveBeforeEffectFailure = null;
+        effectFailureDiagnostic = null;
+        componentDisableIndex = 0;
+        nonFirstAttempt = null;
         SessionState.SetString(DataPathKey, Path.Combine(Path.GetTempPath(),
             "remind-flow-smoke-" + Guid.NewGuid().ToString("N") + ".json"));
         SessionState.SetString(SettingsPathKey, Path.Combine(Path.GetTempPath(),
             "remind-settings-smoke-" + Guid.NewGuid().ToString("N") +
             ".json"));
         SessionState.SetBool(ActiveKey, true);
+        SceneManager.sceneLoaded -= CaptureGameEntry;
+        SceneManager.sceneLoaded += CaptureGameEntry;
         EditorSceneManager.OpenScene("Assets/Scenes/Bootstrap.unity");
+        EditorApplication.update -= Tick;
         EditorApplication.update += Tick;
         Debug.Log("GAME_PLAYMODE_SMOKE_STARTED");
         EditorApplication.isPlaying = true;
@@ -146,15 +203,33 @@ public static class PlayableGameSmokeRunner
         SessionState.SetBool(HardKey, true);
     }
 
+    /// <summary>Also exercises a live Effect failure and the error UI return.</summary>
+    public static void RunWithRuntimeFailure()
+    {
+        RunWithHard();
+        SessionState.SetBool(RuntimeFailureKey, true);
+    }
+
+    /// <summary>Also disables each live frame owner during PlayMode.</summary>
+    public static void RunWithComponentDisable()
+    {
+        RunWithRuntimeFailure();
+        SessionState.SetBool(ComponentDisableKey, true);
+    }
+
     private static void Tick()
     {
         if (!EditorApplication.isPlaying) return;
         try
         {
             frames++;
-            if (EditorApplication.timeSinceStartup - smokeStartedAt > 240d)
+            double timeoutSeconds = SessionState.GetBool(RuntimeFailureKey,
+                false) ? 360d : 240d;
+            if (EditorApplication.timeSinceStartup - smokeStartedAt >
+                timeoutSeconds)
                 throw new TimeoutException(
-                    "Full play flow was not ready after 240 seconds.");
+                    "Full play flow was not ready after " +
+                    timeoutSeconds + " seconds.");
             if (SceneManager.GetActiveScene().name == "Bootstrap")
             {
                 BootstrapLoadingController bootstrap = UnityEngine.Object
@@ -173,22 +248,59 @@ public static class PlayableGameSmokeRunner
                 if (!bootstrap.TryContinue())
                     throw new InvalidOperationException(
                         "Bootstrap did not accept interaction after loading.");
+                SceneTransitionController generalTransition = AppRoot.Current
+                    .GetComponentInChildren<SceneTransitionController>(true);
+                CrystalTransitionPlayer generalOverlay =
+                    GetTransitionPlayer(generalTransition,
+                        "crystalOverlayTransition");
+                CrystalTransitionPlayer generalWhite =
+                    GetTransitionPlayer(generalTransition,
+                        "crystalTransition");
+                Canvas generalDark = generalTransition
+                    ? (Canvas)typeof(SceneTransitionController)
+                        .GetField("fadeCanvas", BindingFlags.Instance |
+                            BindingFlags.NonPublic)
+                        .GetValue(generalTransition) : null;
+                if (!generalTransition || !generalTransition.IsTransitioning ||
+                    !generalOverlay || !generalOverlay.IsPlaying ||
+                    generalWhite && generalWhite.IsPlaying ||
+                    !generalDark || !generalDark.enabled)
+                    throw new InvalidOperationException(
+                        "Bootstrap did not start the general overlay and dark cover transition.");
                 bootstrapContinueRequested = true;
                 return;
             }
             if (AppRoot.Current && AppRoot.Current.IsTransitioning)
             {
-                if (startedSelection && !transitionAdvanced &&
-                    SceneManager.GetActiveScene().name == "MusicSelect" &&
-                    Time.unscaledTime - transitionStartedAt > 0.5f)
+                if (expectGameEntry &&
+                    SceneManager.GetActiveScene().name == "Game")
+                {
+                    SceneTransitionController enteringTransition =
+                        AppRoot.Current.GetComponentInChildren<
+                            SceneTransitionController>(true);
+                    if (expectWhiteGameEntry)
+                        AssertWhiteOnlyTransition(enteringTransition);
+                    GameManager enteringManager = UnityEngine.Object
+                        .FindFirstObjectByType<GameManager>();
+                    GameFlowController enteringFlow = UnityEngine.Object
+                        .FindFirstObjectByType<GameFlowController>();
+                    if (enteringManager &&
+                        enteringManager.PlaybackState == PlaybackState.Playing ||
+                        enteringFlow && enteringFlow.CurrentAttempt != null ||
+                        gameEntryStartCount != 0)
+                        throw new InvalidOperationException(
+                            "Game playback started before the scene transition completed.");
+                    sawGameTransitionHold = true;
+                }
+                if (startedSelection && expectWhiteGameEntry &&
+                    SceneManager.GetActiveScene().name == "MusicSelect")
                 {
                     SceneTransitionController current = AppRoot.Current
                         .GetComponentInChildren<SceneTransitionController>(true);
-                    if (!current || current.TransitionElapsed <=
-                        transitionFirstElapsed + 0.25f)
-                        throw new InvalidOperationException(
-                            "Crystal overlay did not advance before the scene load.");
-                    transitionAdvanced = true;
+                    AssertWhiteOnlyTransition(current);
+                    if (current && current.TransitionElapsed >
+                        transitionFirstElapsed + 0.05f)
+                        transitionAdvanced = true;
                 }
                 return;
             }
@@ -226,6 +338,11 @@ public static class PlayableGameSmokeRunner
                         "Gameplay did not preserve the selected song on return.");
                 LocalPlayerDataStore reloaded = LocalPlayerDataStore.Load(
                     SessionState.GetString(DataPathKey, string.Empty));
+                if (AppRoot.Current.EquippedCharacterId != NonCharacterId ||
+                    reloaded.EquippedCharacterId != NonCharacterId ||
+                    !reloaded.OwnsCharacter(NonCharacterId))
+                    throw new InvalidOperationException(
+                        "Equipped NON was not retained after the result and reload.");
                 bool hasBest = AppRoot.Current.TryGetBestRecord(
                     SongIds[songIndex], "hard", out double bestScore, out _);
                 bool hasSavedBest = reloaded.TryGetBestRecord(
@@ -260,6 +377,7 @@ public static class PlayableGameSmokeRunner
                         "Player settings were not preserved across the song flow.");
                 if (++songIndex < SongIds.Length)
                 {
+                    nonFirstAttempt = null;
                     checkedScene = false;
                     startedSelection = false;
                     checkingResult = false;
@@ -274,6 +392,7 @@ public static class PlayableGameSmokeRunner
                     hardPhase = HardPhase.Select;
                     return;
                 }
+                Debug.Log("GAME_NON_PLAYMODE_SMOKE_PASSED");
                 Debug.Log("GAME_PLAYMODE_SMOKE_PASSED");
                 Complete(0);
                 return;
@@ -314,6 +433,9 @@ public static class PlayableGameSmokeRunner
                     waitingForRetry = true;
                     waitingForPauseResume = false;
                     checkedScene = false;
+                    expectGameEntry = true;
+                    expectWhiteGameEntry = false;
+                    sawGameTransitionHold = false;
                     actions.Retry();
                     return;
                 }
@@ -362,12 +484,19 @@ public static class PlayableGameSmokeRunner
                 if (SceneManager.GetActiveScene().name != "Home")
                     throw new InvalidOperationException(
                         "Settings overlay replaced the Home scene.");
-                SettingsMenuController menu = UnityEngine.Object
-                    .FindFirstObjectByType<SettingsMenuController>();
-                if (!menu || !menu.IsOverlayOpen ||
+                SettingsMenuController menu = AppRoot.Current
+                    .GetComponentInChildren<SettingsMenuController>(true);
+                if (!menu ||
+                    settingsOverlayStage != 2 && settingsOverlayStage != 4 &&
+                    !menu.IsOverlayOpen ||
                     typeof(SettingsMenuController).GetField("settings",
                         BindingFlags.Instance | BindingFlags.NonPublic)
                     .GetValue(menu) == null) return;
+                OverlayPresentation presentation = menu
+                    .GetComponent<OverlayPresentation>();
+                if (!presentation)
+                    throw new InvalidOperationException(
+                        "Settings overlay has no entrance and exit presentation.");
                 if (menu.transform.parent != AppRoot.Current.transform ||
                     !AppRoot.Current.GetComponent<CanvasScaler>() ||
                     !AppRoot.Current.GetComponent<GraphicRaycaster>())
@@ -377,9 +506,84 @@ public static class PlayableGameSmokeRunner
                     .FindFirstObjectByType<MenuNavigationController>();
                 NavigationScope modalScope = menu.GetComponent<NavigationScope>();
                 if (!modalNavigation || !modalScope ||
+                    settingsOverlayStage != 2 && settingsOverlayStage != 4 &&
                     modalNavigation.ActiveScope != modalScope)
                     throw new InvalidOperationException(
                         "Settings did not own the Home modal navigation scope.");
+                if (settingsOverlayStage == 0)
+                {
+                    if (!presentation.IsInteractive) return;
+                    settingsOverlayStage = 1;
+                }
+                if (settingsOverlayStage == 2)
+                {
+                    if (menu.gameObject.activeSelf) return;
+                    if (modalNavigation.ActiveScope == modalScope)
+                        throw new InvalidOperationException(
+                            "Settings restored Home before its exit completed.");
+                    HomeMenuActions home = UnityEngine.Object
+                        .FindFirstObjectByType<HomeMenuActions>();
+                    Time.timeScale = 0f;
+                    home.OpenOption();
+                    if (!menu.IsOverlayOpen ||
+                        SceneManager.GetActiveScene().name != "Home")
+                        throw new InvalidOperationException(
+                            "Home OPTION opened a scene instead of Settings overlay.");
+                    settingsOverlayStage = 3;
+                    return;
+                }
+                if (settingsOverlayStage == 3)
+                {
+                    if (!presentation.IsInteractive) return;
+                    Time.timeScale = 1f;
+                    modalScope.InvokeCancel();
+                    if (!menu.IsOverlayOpen || !presentation.IsClosing)
+                        throw new InvalidOperationException(
+                            "Settings Cancel skipped its exit animation.");
+                    settingsOverlayStage = 4;
+                    return;
+                }
+                if (settingsOverlayStage == 5)
+                {
+                    if (Time.frameCount < settingsRebindCancelledFrame + 3)
+                        return;
+                    if (!presentation.IsInteractive) return;
+                    GameObject focused = EventSystem.current
+                        ? EventSystem.current.currentSelectedGameObject : null;
+                    if (!menu.GetComponent<CanvasGroup>().interactable ||
+                        !focused || modalScope.FindNode(focused) == null)
+                        throw new InvalidOperationException(
+                            "Settings key cancel did not restore modal focus.");
+                    FindButton(menu, "ResetKeys").onClick.Invoke();
+                    if (AppRoot.Current.Settings.GetLaneBinding(0) !=
+                        "<Keyboard>/z")
+                        throw new InvalidOperationException(
+                            "Reset Keys did not restore the default binding.");
+                    AppRoot.Current.SetLaneBinding(0, "<Keyboard>/a");
+                    FindButton(menu, "Close").onClick.Invoke();
+                    if (!menu.IsOverlayOpen || !presentation.IsClosing ||
+                        SceneManager.GetActiveScene().name != "Home" ||
+                        modalNavigation.ActiveScope != modalScope ||
+                        !menu.GetComponent<CanvasGroup>().blocksRaycasts)
+                        throw new InvalidOperationException(
+                            "Settings released Home before its exit animation completed.");
+                    settingsOverlayStage = 2;
+                    return;
+                }
+                if (settingsOverlayStage == 4)
+                {
+                    if (menu.gameObject.activeSelf) return;
+                    HomeMenuActions home = UnityEngine.Object
+                        .FindFirstObjectByType<HomeMenuActions>();
+                    home.OpenSettings();
+                    if (!menu.IsOverlayOpen ||
+                        !AppRoot.NavigateToScene("MusicSelect"))
+                        throw new InvalidOperationException(
+                            "Settings overlay could not start a scene change.");
+                    checkingSettingsMenu = false;
+                    openedMusicSelect = true;
+                    return;
+                }
                 FindSlider(menu, "VolumeSlider0").value = 0.8f;
                 if (Math.Abs(AppRoot.Current.Settings.MasterVolume - 0.8f) >
                     0.001f || Math.Abs(AudioListener.volume - 0.8f) > 0.001f)
@@ -413,38 +617,17 @@ public static class PlayableGameSmokeRunner
                 FindButton(menu, "TimingMinus").onClick.Invoke();
                 menu.SelectCategory(5);
                 FindButton(menu, "Lane1").onClick.Invoke();
+                if (!menu.GetComponent<CanvasGroup>().blocksRaycasts)
+                    throw new InvalidOperationException(
+                        "Key rebinding exposed Home to pointer input.");
+                menu.ReturnHome();
                 menu.ReturnHome();
                 if (!menu.IsOverlayOpen ||
                     SceneManager.GetActiveScene().name != "Home")
                     throw new InvalidOperationException(
                         "Cancelling a key change closed the overlay.");
-                FindButton(menu, "ResetKeys").onClick.Invoke();
-                if (AppRoot.Current.Settings.GetLaneBinding(0) !=
-                    "<Keyboard>/z")
-                    throw new InvalidOperationException(
-                        "Reset Keys did not restore the default binding.");
-                AppRoot.Current.SetLaneBinding(0, "<Keyboard>/a");
-                FindButton(menu, "Close").onClick.Invoke();
-                if (menu.IsOverlayOpen ||
-                    SceneManager.GetActiveScene().name != "Home" ||
-                    modalNavigation.ActiveScope == modalScope)
-                    throw new InvalidOperationException(
-                        "Settings overlay did not restore Home.");
-                HomeMenuActions homeActions = UnityEngine.Object
-                    .FindFirstObjectByType<HomeMenuActions>();
-                homeActions.OpenSettings();
-                if (!menu.IsOverlayOpen) throw new InvalidOperationException(
-                    "Settings overlay could not reopen.");
-                modalScope.InvokeCancel();
-                if (menu.IsOverlayOpen) throw new InvalidOperationException(
-                    "Settings overlay Cancel did not restore Home.");
-                homeActions.OpenSettings();
-                if (!menu.IsOverlayOpen ||
-                    !AppRoot.NavigateToScene("MusicSelect"))
-                    throw new InvalidOperationException(
-                        "Settings overlay could not start a scene change.");
-                checkingSettingsMenu = false;
-                openedMusicSelect = true;
+                settingsRebindCancelledFrame = Time.frameCount;
+                settingsOverlayStage = 5;
                 return;
             }
             if (!openedMusicSelect &&
@@ -452,10 +635,37 @@ public static class PlayableGameSmokeRunner
             {
                 if (!assignedTestData)
                 {
+                    string playerPath = SessionState.GetString(DataPathKey,
+                        string.Empty);
+                    CharacterCatalog characterCatalog = AssetDatabase
+                        .LoadAssetAtPath<CharacterCatalog>(CharacterCatalogPath);
+                    if (!characterCatalog ||
+                        characterCatalog.DefaultCharacterId != NonCharacterId)
+                        throw new InvalidOperationException(
+                            "The NON character catalog is missing or has a different starter.");
+                    LocalPlayerDataStore player = LocalPlayerDataStore.Load(
+                        playerPath);
+                    if (!player.EnsureStarterCharacter(NonCharacterId,
+                            id => characterCatalog.TryResolve(id,
+                                out _, out _)) ||
+                        player.EquippedCharacterId != NonCharacterId ||
+                        !player.OwnsCharacter(NonCharacterId))
+                        throw new InvalidOperationException(
+                            "A fresh player did not receive and equip NON.");
+                    string firstSave = File.ReadAllText(playerPath);
+                    if (player.EnsureStarterCharacter(NonCharacterId,
+                            id => characterCatalog.TryResolve(id,
+                                out _, out _)) ||
+                        File.ReadAllText(playerPath) != firstSave)
+                        throw new InvalidOperationException(
+                            "The NON starter grant was not idempotent.");
                     typeof(AppRoot).GetField("playerData", BindingFlags.Instance |
-                        BindingFlags.NonPublic).SetValue(AppRoot.Current,
-                        LocalPlayerDataStore.Load(
-                            SessionState.GetString(DataPathKey, string.Empty)));
+                        BindingFlags.NonPublic).SetValue(AppRoot.Current, player);
+                    if (AppRoot.Current.TryEquipCharacter("unowned", out _) ||
+                        AppRoot.Current.EquippedCharacterId != NonCharacterId ||
+                        File.ReadAllText(playerPath) != firstSave)
+                        throw new InvalidOperationException(
+                            "An unowned character changed saved equipment.");
                     LocalGameSettingsStore settings =
                         LocalGameSettingsStore.Load(SessionState.GetString(
                             SettingsPathKey, string.Empty));
@@ -481,6 +691,136 @@ public static class PlayableGameSmokeRunner
                             "Auto Play result entered local best records.");
                     assignedTestData = true;
                 }
+                if (!checkedCharacterOverlay)
+                {
+                    CharacterOverlayController overlay = AppRoot.Current
+                        .GetComponentInChildren<CharacterOverlayController>(true);
+                    HomeMenuActions home = UnityEngine.Object
+                        .FindFirstObjectByType<HomeMenuActions>();
+                    OverlayPresentation presentation = overlay
+                        ? overlay.GetComponent<OverlayPresentation>() : null;
+                    if (!overlay || !home || !presentation)
+                        throw new InvalidOperationException(
+                            "Character overlay or its presentation is missing.");
+                    if (characterOverlayStage == 0)
+                    {
+                        if (overlay.gameObject.activeSelf)
+                            throw new InvalidOperationException(
+                                "Character overlay opened before selection.");
+                        home.OpenCharacter();
+                        if (!overlay.IsOverlayOpen ||
+                            overlay.transform.parent != AppRoot.Current.transform ||
+                            SceneManager.GetActiveScene().name != "Home" ||
+                            !overlay.GetComponent<CanvasGroup>().blocksRaycasts)
+                            throw new InvalidOperationException(
+                                "Home did not open its persistent Character overlay.");
+                        home.OpenCharacter();
+                        if (!presentation.IsOpening ||
+                            !overlay.IsOverlayOpen)
+                            throw new InvalidOperationException(
+                                "Repeated Character open interrupted its entrance.");
+                        overlay.Begin();
+                        if (!presentation.IsOpening ||
+                            !overlay.IsOverlayOpen)
+                            throw new InvalidOperationException(
+                                "Character Begin submitted during its entrance.");
+                        overlay.GetComponent<NavigationScope>().InvokeCancel();
+                        if (!presentation.IsClosing ||
+                            !overlay.IsOverlayOpen ||
+                            !overlay.GetComponent<CanvasGroup>().blocksRaycasts)
+                            throw new InvalidOperationException(
+                                "Character Cancel did not reverse its entrance safely.");
+                        characterOverlayStage = 5;
+                        return;
+                    }
+                    if (characterOverlayStage == 5)
+                    {
+                        if (overlay.gameObject.activeSelf) return;
+                        home.OpenCharacter();
+                        characterOverlayStage = 1;
+                        return;
+                    }
+                    if (characterOverlayStage == 2)
+                    {
+                        if (overlay.gameObject.activeSelf) return;
+                        if (AppRoot.Current.EquippedCharacterId != NonCharacterId ||
+                            File.ReadAllText(SessionState.GetString(DataPathKey,
+                                string.Empty)) != characterPreviewSnapshot)
+                            throw new InvalidOperationException(
+                                "Cancelling a character preview changed equipment.");
+                        home.OpenCharacter();
+                        characterOverlayStage = 3;
+                        return;
+                    }
+                    if (characterOverlayStage == 4)
+                    {
+                        if (overlay.gameObject.activeSelf) return;
+                        checkedCharacterOverlay = true;
+                        return;
+                    }
+                    if (!presentation.IsInteractive) return;
+                    if (characterOverlayStage == 3)
+                    {
+                        FindButton(overlay, "CharacterCard0").onClick.Invoke();
+                        FindButton(overlay, "BeginButton").onClick.Invoke();
+                        if (!overlay.IsOverlayOpen || !presentation.IsClosing ||
+                            AppRoot.Current.EquippedCharacterId != NonCharacterId ||
+                            LocalPlayerDataStore.Load(SessionState.GetString(
+                                DataPathKey, string.Empty)).EquippedCharacterId !=
+                            NonCharacterId)
+                            throw new InvalidOperationException(
+                                "Character Begin did not save before its exit.");
+                        characterOverlayStage = 4;
+                        return;
+                    }
+                    GameObject[] pages = (GameObject[])typeof(
+                        CharacterOverlayController).GetField("tabPages",
+                        BindingFlags.Instance | BindingFlags.NonPublic)
+                        .GetValue(overlay);
+                    if (pages == null || pages.Length < 2 ||
+                        !pages[0] || !pages[1])
+                        throw new InvalidOperationException(
+                            "Character overlay is missing its authored tabs.");
+                    overlay.SelectTab(1);
+                    if (pages[0].activeSelf || !pages[1].activeSelf)
+                        throw new InvalidOperationException(
+                            "Character overlay did not switch tabs.");
+                    overlay.SelectTab(0);
+                    characterPreviewSnapshot = File.ReadAllText(SessionState
+                        .GetString(DataPathKey, string.Empty));
+                    FindButton(overlay, "CharacterCard0").onClick.Invoke();
+                    TMP_Text displayedName = (TMP_Text)typeof(
+                        CharacterOverlayController).GetField("englishName",
+                        BindingFlags.Instance | BindingFlags.NonPublic)
+                        .GetValue(overlay);
+                    TMP_Text[] statValues = (TMP_Text[])typeof(
+                        CharacterOverlayController).GetField("statValues",
+                        BindingFlags.Instance | BindingFlags.NonPublic)
+                        .GetValue(overlay);
+                    if (!displayedName || displayedName.text != "NON" ||
+                        statValues == null || statValues.Length < 4 ||
+                        !statValues[0] ||
+                        !statValues[0].text.Contains("50") ||
+                        !statValues[0].text.Contains("100") ||
+                        !statValues[1] ||
+                        !statValues[1].text.Contains("50") ||
+                        !statValues[1].text.Contains("100") ||
+                        !statValues[2] ||
+                        !statValues[2].text.Contains("50") ||
+                        !statValues[2].text.Contains("100") ||
+                        !statValues[3] || statValues[3].text != "-")
+                        throw new InvalidOperationException(
+                            "The NON card preview did not show its neutral values.");
+                    FindButton(overlay, "CloseButton").onClick.Invoke();
+                    if (!overlay.IsOverlayOpen || !presentation.IsClosing ||
+                        AppRoot.Current.EquippedCharacterId != NonCharacterId ||
+                        File.ReadAllText(SessionState.GetString(DataPathKey,
+                            string.Empty)) != characterPreviewSnapshot)
+                        throw new InvalidOperationException(
+                            "Cancelling a character preview changed equipment.");
+                    characterOverlayStage = 2;
+                    return;
+                }
                 if (temporaryScreenIndex < TemporaryScreens.Length)
                 {
                     checkingTemporaryScreen = true;
@@ -488,14 +828,7 @@ public static class PlayableGameSmokeRunner
                         .FindFirstObjectByType<HomeMenuActions>();
                     if (!home) throw new InvalidOperationException(
                         "Home menu actions are missing.");
-                    switch (TemporaryScreens[temporaryScreenIndex])
-                    {
-                        case "Story": home.OpenStory(); break;
-                        case "Character": home.OpenCharacter(); break;
-                        case "ReMind": home.OpenReMind(); break;
-                        case "Option": home.OpenOption(); break;
-                        default: AppRoot.NavigateToScene("Music"); break;
-                    }
+                    home.OpenReMind();
                     return;
                 }
                 if (!openedSettingsMenu)
@@ -507,6 +840,20 @@ public static class PlayableGameSmokeRunner
                     if (!home) throw new InvalidOperationException(
                         "Home actions are missing for Settings overlay.");
                     home.OpenSettings();
+                    SettingsMenuController opening = AppRoot.Current
+                        .GetComponentInChildren<SettingsMenuController>(true);
+                    OverlayPresentation entering = opening
+                        ? opening.GetComponent<OverlayPresentation>() : null;
+                    if (!opening || !opening.IsOverlayOpen || !entering ||
+                        !entering.IsOpening ||
+                        !opening.GetComponent<CanvasGroup>().blocksRaycasts)
+                        throw new InvalidOperationException(
+                            "Settings did not block Home during its entrance.");
+                    home.OpenOption();
+                    if (!entering.IsOpening ||
+                        SceneManager.GetActiveScene().name != "Home")
+                        throw new InvalidOperationException(
+                            "OPTION interrupted the opening Settings overlay.");
                     return;
                 }
                 openedMusicSelect = true;
@@ -569,15 +916,18 @@ public static class PlayableGameSmokeRunner
                     SceneManager.GetActiveScene().name != "MusicSelect")
                     throw new InvalidOperationException(
                         "Music Select did not start the persistent visual transition.");
+                AssertWhiteOnlyTransition(transition);
                 selection.PlaySelectedSong();
                 if (!AppRoot.Current.IsTransitioning ||
                     SceneManager.GetActiveScene().name != "MusicSelect")
                     throw new InvalidOperationException(
                         "A second Play action interrupted the transition.");
                 transitionFirstElapsed = transition.TransitionElapsed;
-                transitionStartedAt = Time.unscaledTime;
                 transitionAdvanced = false;
                 startedSelection = true;
+                expectGameEntry = true;
+                expectWhiteGameEntry = true;
+                sawGameTransitionHold = false;
                 return;
             }
             if (!startedSelection ||
@@ -617,6 +967,7 @@ public static class PlayableGameSmokeRunner
                    manager.PlaybackState == PlaybackState.Paused)))
                 throw new InvalidOperationException(
                     "Music Select did not start the selected Game chart.");
+            AssertGameEntryStartedOnce();
             checkedScene = true;
             if (waitingForRetry)
             {
@@ -625,7 +976,6 @@ public static class PlayableGameSmokeRunner
                     judgement.PendingNoteCount == 0)
                     throw new InvalidOperationException(
                         "Retry inherited a previous session's judgement or result state.");
-                waitingForRetry = false;
             }
             MusicCatalog catalog = (MusicCatalog)typeof(DemoPlayController)
                 .GetField("musicCatalog", System.Reflection.BindingFlags.Instance |
@@ -659,6 +1009,23 @@ public static class PlayableGameSmokeRunner
                     "Playback ends before the final chart note.");
             GameFlowController flow = UnityEngine.Object
                 .FindFirstObjectByType<GameFlowController>();
+            if (!flow || flow.CurrentAttempt == null)
+                throw new InvalidOperationException(
+                    "The selected Game has no live attempt snapshot.");
+            AssertNonAttempt(flow.CurrentAttempt);
+            if (waitingForRetry)
+            {
+                if (nonFirstAttempt == null ||
+                    nonFirstAttempt.AttemptId == flow.CurrentAttempt.AttemptId)
+                    throw new InvalidOperationException(
+                        "Retry did not create a fresh NON attempt.");
+                Debug.Log("GAME_NON_RETRY_ATTEMPT_VERIFIED " +
+                    nonFirstAttempt.AttemptId + " -> " +
+                    flow.CurrentAttempt.AttemptId);
+                waitingForRetry = false;
+            }
+            else if (nonFirstAttempt == null)
+                nonFirstAttempt = flow.CurrentAttempt;
             if (!checkedNormalIsolation)
             {
                 GameRule rule = manager.GameRule;
@@ -696,10 +1063,14 @@ public static class PlayableGameSmokeRunner
             if (waitingForPauseResume)
             {
                 if (Time.frameCount == pauseOpenedFrame) return;
+                GameAttemptStartSnapshot beforeResume = flow.CurrentAttempt;
                 flow.Resume();
                 if (manager.PlaybackState != PlaybackState.Playing)
                     throw new InvalidOperationException(
                         "The pause menu did not resume on the next frame.");
+                if (!ReferenceEquals(beforeResume, flow.CurrentAttempt))
+                    throw new InvalidOperationException(
+                        "Resume replaced the NON attempt snapshot.");
                 if (!judgement.UsedAutoPlayInCurrentAttempt)
                     throw new InvalidOperationException(
                         "Resume cleared the current attempt's Auto Play history.");
@@ -722,6 +1093,7 @@ public static class PlayableGameSmokeRunner
                 typeof(GameFlowController).GetMethod("FinishSong",
                     BindingFlags.Instance | BindingFlags.NonPublic)
                     .Invoke(flow, null);
+                AssertNonResult(flow.CurrentAttempt ?? nonFirstAttempt);
                 return;
             }
             if (!waitingForPauseResume && manager.PlaybackState ==
@@ -742,10 +1114,17 @@ public static class PlayableGameSmokeRunner
                 pauseOpenedFrame = Time.frameCount;
                 return;
             }
+            GameAttemptStartSnapshot beforeRestart = flow.CurrentAttempt;
             if (!manager.PauseGame() ||
                 !manager.ResumeGame() || !manager.RestartGame())
                 throw new InvalidOperationException(
                     "Play/Pause/Resume/Restart transition failed.");
+            GameAttemptStartSnapshot restartedAttempt = flow.CurrentAttempt;
+            if (restartedAttempt == null ||
+                restartedAttempt.AttemptId == beforeRestart.AttemptId)
+                throw new InvalidOperationException(
+                    "Restart did not create a fresh NON attempt.");
+            AssertNonAttempt(restartedAttempt);
             if (judgement.UsedAutoPlayInCurrentAttempt)
                 throw new InvalidOperationException(
                     "A successful Restart inherited Auto Play usage.");
@@ -772,6 +1151,7 @@ public static class PlayableGameSmokeRunner
             GameResultSnapshot autoResult = (GameResultSnapshot)typeof(AppRoot)
                 .GetField("pendingResult", BindingFlags.Instance |
                     BindingFlags.NonPublic).GetValue(AppRoot.Current);
+            AssertNonResult(restartedAttempt);
             if (autoResult == null || !autoResult.IsAutoPlay ||
                 autoResult.AttemptStart == null ||
                 autoResult.AttemptStart.IsAutoPlay)
@@ -783,6 +1163,44 @@ public static class PlayableGameSmokeRunner
             Debug.LogException(exception);
             Complete(1);
         }
+    }
+
+    private static void CaptureGameEntry(Scene scene, LoadSceneMode mode)
+    {
+        if (gameEntryPlayback)
+            gameEntryPlayback.PlaybackStarted -= CaptureGameEntryStart;
+        gameEntryPlayback = null;
+        if (scene.name != "Game") return;
+        gameEntryStartCount = 0;
+        startedDuringGameTransition = false;
+        GameManager manager = UnityEngine.Object
+            .FindFirstObjectByType<GameManager>();
+        if (!manager || !manager.GamePlay) return;
+        gameEntryPlayback = manager.GamePlay;
+        gameEntryPlayback.PlaybackStarted += CaptureGameEntryStart;
+    }
+
+    private static void CaptureGameEntryStart(double songTimeMs)
+    {
+        gameEntryStartCount++;
+        if (AppRoot.Current && AppRoot.Current.IsTransitioning)
+            startedDuringGameTransition = true;
+    }
+
+    private static void AssertGameEntryStartedOnce()
+    {
+        if (!expectGameEntry) return;
+        if (!sawGameTransitionHold || startedDuringGameTransition ||
+            gameEntryStartCount != 1 ||
+            AppRoot.Current && AppRoot.Current.IsTransitioning)
+            throw new InvalidOperationException(
+                "Game scene entry did not wait for transition completion " +
+                "and start exactly once. Saw hold=" +
+                sawGameTransitionHold + ", early=" +
+                startedDuringGameTransition + ", starts=" +
+                gameEntryStartCount + ".");
+        expectGameEntry = false;
+        expectWhiteGameEntry = false;
     }
 
     private static void CaptureHardSceneLoad(Scene scene, LoadSceneMode mode)
@@ -840,6 +1258,9 @@ public static class PlayableGameSmokeRunner
                 throw new InvalidOperationException(
                     "The selected Hard song did not start its Game transition.");
             hardPhase = HardPhase.Start;
+            expectGameEntry = true;
+            expectWhiteGameEntry = true;
+            sawGameTransitionHold = false;
             return;
         }
 
@@ -864,6 +1285,92 @@ public static class PlayableGameSmokeRunner
                 throw new InvalidOperationException(
                     "The Hard result lost its attempt values after Game teardown.");
             Debug.Log("GAME_HARD_PLAYMODE_SMOKE_PASSED");
+            if (SessionState.GetBool(RuntimeFailureKey, false))
+            {
+                string path = SessionState.GetString(DataPathKey, string.Empty);
+                if (!File.Exists(path))
+                    throw new InvalidOperationException(
+                        "The smoke player save is missing before Effect failure.");
+                saveBeforeEffectFailure = File.ReadAllText(path);
+                ResultMenuActions actions = UnityEngine.Object
+                    .FindFirstObjectByType<ResultMenuActions>();
+                if (!actions)
+                    throw new InvalidOperationException(
+                        "Result has no Music Select return action.");
+                actions.MusicSelect();
+                hardPhase = HardPhase.EffectSelect;
+                return;
+            }
+            Complete(0);
+            return;
+        }
+
+        if (hardPhase == HardPhase.EffectSelect)
+        {
+            if (SceneManager.GetActiveScene().name != "MusicSelect" ||
+                AppRoot.Current.IsTransitioning) return;
+            AppRoot.Current.SelectSong("i", "hard");
+            expectGameEntry = true;
+            expectWhiteGameEntry = true;
+            sawGameTransitionHold = false;
+            if (!AppRoot.Current.TryStartSelectedGame())
+                throw new InvalidOperationException(
+                    "Effect failure attempt did not start its Game transition.");
+            hardPhase = HardPhase.EffectStart;
+            return;
+        }
+
+        if (hardPhase == HardPhase.EffectReturned)
+        {
+            if (SceneManager.GetActiveScene().name != "MusicSelect" ||
+                AppRoot.Current.IsTransitioning) return;
+            string path = SessionState.GetString(DataPathKey, string.Empty);
+            if (!File.Exists(path) ||
+                File.ReadAllText(path) != saveBeforeEffectFailure ||
+                AppRoot.Current.TryTakeResult(out _))
+                throw new InvalidOperationException(
+                    "A failed Effect run saved progression or published a result.");
+            Debug.Log("GAME_EFFECT_FAILURE_PLAYMODE_SMOKE_PASSED");
+            if (SessionState.GetBool(ComponentDisableKey, false))
+            {
+                hardPhase = HardPhase.ComponentSelect;
+                return;
+            }
+            Complete(0);
+            return;
+        }
+
+        if (hardPhase == HardPhase.ComponentSelect)
+        {
+            if (SceneManager.GetActiveScene().name != "MusicSelect" ||
+                AppRoot.Current.IsTransitioning) return;
+            AppRoot.Current.SelectSong("i", "hard");
+            expectGameEntry = true;
+            expectWhiteGameEntry = true;
+            sawGameTransitionHold = false;
+            if (!AppRoot.Current.TryStartSelectedGame())
+                throw new InvalidOperationException(
+                    "Component disable attempt did not start its transition.");
+            hardPhase = HardPhase.ComponentStart;
+            return;
+        }
+
+        if (hardPhase == HardPhase.ComponentReturned)
+        {
+            if (SceneManager.GetActiveScene().name != "MusicSelect" ||
+                AppRoot.Current.IsTransitioning) return;
+            string path = SessionState.GetString(DataPathKey, string.Empty);
+            if (!File.Exists(path) ||
+                File.ReadAllText(path) != saveBeforeEffectFailure ||
+                AppRoot.Current.TryTakeResult(out _))
+                throw new InvalidOperationException(
+                    "A disabled gameplay component saved progress or a result.");
+            if (++componentDisableIndex < 2)
+            {
+                hardPhase = HardPhase.ComponentSelect;
+                return;
+            }
+            Debug.Log("GAME_COMPONENT_DISABLE_PLAYMODE_SMOKE_PASSED");
             Complete(0);
             return;
         }
@@ -881,17 +1388,132 @@ public static class PlayableGameSmokeRunner
             .FindFirstObjectByType<GameplayChartSessionController>();
         NoteJudgementSystem judgement = UnityEngine.Object
             .FindFirstObjectByType<NoteJudgementSystem>();
-        if (!play || !play.IsReady || !flow || !manager || !state ||
-            !charts || !charts.IsPrepared || !judgement ||
-            manager.PlaybackState != PlaybackState.Playing &&
-            hardPhase != HardPhase.Resume) return;
-        if (charts.CurrentChart.Metadata.MusicId != "i" ||
-            charts.CurrentChart.Metadata.DifficultyId != "hard")
+        if (hardPhase == HardPhase.EffectError ||
+            hardPhase == HardPhase.ComponentError)
+        {
+            if (!flow || !manager)
+                throw new InvalidOperationException(
+                    "Game flow disappeared after the Effect failure.");
+        }
+        else if (!play || !play.IsReady || !flow || !manager || !state ||
+                 !charts || !charts.IsPrepared || !judgement ||
+                 manager.PlaybackState != PlaybackState.Playing &&
+                 hardPhase != HardPhase.Resume) return;
+        if (hardPhase != HardPhase.EffectError &&
+            hardPhase != HardPhase.ComponentError &&
+            (charts.CurrentChart.Metadata.MusicId != "i" ||
+             charts.CurrentChart.Metadata.DifficultyId != "hard"))
             throw new InvalidOperationException(
                 "The Hard attempt did not load the selected chart.");
 
+        if (hardPhase == HardPhase.ComponentStart)
+        {
+            AssertGameEntryStartedOnce();
+            if (flow.CurrentAttempt == null)
+                throw new InvalidOperationException(
+                    "Component disable attempt has no active attempt.");
+            int failures = 0;
+            Action<string> capture = _ => failures++;
+            if (componentDisableIndex == 0)
+            {
+                GameplayChartEffectController effects = UnityEngine.Object
+                    .FindFirstObjectByType<GameplayChartEffectController>();
+                if (!effects)
+                    throw new InvalidOperationException(
+                        "The live Effect component is missing.");
+                effects.PlaybackFailed += capture;
+                try { effects.enabled = false; }
+                finally { effects.PlaybackFailed -= capture; }
+            }
+            else
+            {
+                judgement.PlaybackFailed += capture;
+                try { judgement.enabled = false; }
+                finally { judgement.PlaybackFailed -= capture; }
+            }
+            if (failures != 1)
+                throw new InvalidOperationException(
+                    "Disabling a live gameplay component emitted " +
+                    failures + " playback failures instead of one.");
+            hardPhase = HardPhase.ComponentError;
+            return;
+        }
+
+        if (hardPhase == HardPhase.EffectStart)
+        {
+            AssertGameEntryStartedOnce();
+            GameplayChartEffectController effects = UnityEngine.Object
+                .FindFirstObjectByType<GameplayChartEffectController>();
+            object session = effects
+                ? typeof(GameplayChartEffectController)
+                    .GetField("activeSession", BindingFlags.Instance |
+                        BindingFlags.NonPublic).GetValue(effects)
+                : null;
+            EffectRunner runner = session == null ? null : (EffectRunner)session
+                .GetType().GetField("Runner", BindingFlags.Instance |
+                    BindingFlags.Public).GetValue(session);
+            if (runner == null || flow.CurrentAttempt == null)
+                throw new InvalidOperationException(
+                    "Effect failure attempt has no active runtime runner.");
+            typeof(EffectRunner).GetField("gimmick", BindingFlags.Instance |
+                BindingFlags.NonPublic).SetValue(runner,
+                new ThrowingSmokeGimmick());
+            int expectedErrorLogs = 0;
+            Application.LogCallback capture = (condition, _, type) =>
+            {
+                if (type == LogType.Error &&
+                    condition.Contains("Injected runtime gimmick failure"))
+                {
+                    expectedErrorLogs++;
+                    effectFailureDiagnostic = condition;
+                }
+            };
+            Application.logMessageReceived += capture;
+            try
+            {
+                judgement.ProcessFrame(Math.Max(manager.GamePlay.SongTimeMs,
+                    charts.CurrentChart.ChartOffsetMs) + 100d);
+            }
+            finally { Application.logMessageReceived -= capture; }
+            if (runner.Failure == null || expectedErrorLogs != 1 ||
+                effects.LastError != effectFailureDiagnostic)
+                throw new InvalidOperationException(
+                    "Runtime gimmick failure did not reach Effect playback failure.");
+            hardPhase = HardPhase.EffectError;
+            return;
+        }
+
+        if (hardPhase == HardPhase.EffectError ||
+            hardPhase == HardPhase.ComponentError)
+        {
+            GameObject panel = (GameObject)typeof(GameFlowController)
+                .GetField("errorPanel", BindingFlags.Instance |
+                    BindingFlags.NonPublic).GetValue(flow);
+            TMP_Text detail = (TMP_Text)typeof(GameFlowController)
+                .GetField("errorDetail", BindingFlags.Instance |
+                    BindingFlags.NonPublic).GetValue(flow);
+            object screen = typeof(GameFlowController).GetField("screen",
+                BindingFlags.Instance | BindingFlags.NonPublic).GetValue(flow);
+            Button returnButton = panel ? Array.Find(
+                panel.GetComponentsInChildren<Button>(true),
+                button => button.name == "ErrorSongSelectButton") : null;
+            if (screen.ToString() != "Error" || !panel ||
+                !panel.activeInHierarchy || !detail ||
+                string.IsNullOrWhiteSpace(detail.text) || !returnButton ||
+                flow.CurrentAttempt != null ||
+                manager.PlaybackState == PlaybackState.Playing ||
+                AppRoot.Current.TryTakeResult(out _))
+                throw new InvalidOperationException(
+                    "A runtime playback failure did not open a recoverable error UI.");
+            returnButton.onClick.Invoke();
+            hardPhase = hardPhase == HardPhase.EffectError
+                ? HardPhase.EffectReturned : HardPhase.ComponentReturned;
+            return;
+        }
+
         if (hardPhase == HardPhase.Start)
         {
+            AssertGameEntryStartedOnce();
             hardFirstAttempt = flow.CurrentAttempt;
             hardLiveConfig = manager.GameRule.Config;
             if (hardStartCaptureCount != 1 ||
@@ -903,16 +1525,21 @@ public static class PlayableGameSmokeRunner
                 hardFirstAttempt.IsAutoPlay ||
                 hardFirstAttempt.CharacterAbility?.CharacterId !=
                     hardAbility.CharacterId ||
-                hardFirstAttempt.CharacterAbility.Stats.WorldProgressBonusPercent
-                    != 20 ||
-                hardFirstAttempt.CharacterAbility.Stats.RewardBonusPercent != 50 ||
+                hardFirstAttempt.CharacterAbility.Stats.WorldUnlock != 60 ||
+                hardFirstAttempt.CharacterAbility.Stats.RegularCurrency != 75 ||
+                hardFirstAttempt.CharacterAbility.Stats.BasisForOneHundredPercent
+                    != 50 ||
+                hardFirstAttempt.CharacterAbility.WorldUnlockMultiplier !=
+                    1.2m ||
+                hardFirstAttempt.CharacterAbility.RegularCurrencyMultiplier !=
+                    1.5m ||
                 hardFirstAttempt.GaugeRule.GaugeType != HealthGaugeType.Hard ||
                 hardFirstAttempt.GaugeRule.MaxHealth != 100 ||
                 hardFirstAttempt.GaugeRule.InitialHealth != 100 ||
                 hardFirstAttempt.GaugeRule.ClearHealth != 1 ||
+                hardFirstAttempt.GaugeRule.PerfectPlusHealthDelta != 1 ||
                 hardFirstAttempt.GaugeRule.PerfectHealthDelta != 1 ||
                 hardFirstAttempt.GaugeRule.GreatHealthDelta != 1 ||
-                hardFirstAttempt.GaugeRule.GoodHealthDelta != -5 ||
                 hardFirstAttempt.GaugeRule.MissHealthDelta != -20 ||
                 !hardFirstAttempt.GaugeRule.FailImmediately ||
                 hardFirstAttempt.GaugeRule.ContinueAfterFail ||
@@ -926,19 +1553,18 @@ public static class PlayableGameSmokeRunner
                         hardFirstAttempt.IsAutoPlay + ", ability=" +
                         hardFirstAttempt.CharacterAbility?.CharacterId +
                         ", stats=" +
-                        hardFirstAttempt.CharacterAbility?.Stats
-                            .WorldProgressBonusPercent + "/" +
-                        hardFirstAttempt.CharacterAbility?.Stats
-                            .RewardBonusPercent +
+                        hardFirstAttempt.CharacterAbility?.Stats.WorldUnlock +
+                        "/" + hardFirstAttempt.CharacterAbility?.Stats
+                            .RegularCurrency +
                         ", gauge=" + hardFirstAttempt.GaugeRule.GaugeType +
                         ", max=" + hardFirstAttempt.GaugeRule.MaxHealth +
                         ", initial=" +
                         hardFirstAttempt.GaugeRule.InitialHealth +
                         ", clear=" + hardFirstAttempt.GaugeRule.ClearHealth +
                         ", deltas=" +
+                        hardFirstAttempt.GaugeRule.PerfectPlusHealthDelta + "/" +
                         hardFirstAttempt.GaugeRule.PerfectHealthDelta + "/" +
                         hardFirstAttempt.GaugeRule.GreatHealthDelta + "/" +
-                        hardFirstAttempt.GaugeRule.GoodHealthDelta + "/" +
                         hardFirstAttempt.GaugeRule.MissHealthDelta +
                         ", immediate=" +
                         hardFirstAttempt.GaugeRule.FailImmediately +
@@ -1201,6 +1827,78 @@ public static class PlayableGameSmokeRunner
                 ", expected " + expected;
     }
 
+    private static void AssertNonAttempt(GameAttemptStartSnapshot attempt)
+    {
+        CharacterAbilityStartSnapshot character = attempt?.CharacterAbility;
+        if (attempt.MusicId != SongIds[songIndex] ||
+            attempt.DifficultyId != "hard" || character == null ||
+            character.CharacterId != NonCharacterId ||
+            character.DefinitionVersion != 1 ||
+            character.Stats.WorldUnlock != 50 ||
+            character.Stats.RegularCurrency != 50 ||
+            character.Stats.HiddenUnlock != 50 ||
+            character.StatBasis != 50 ||
+            character.WorldUnlockMultiplier != 1m ||
+            character.RegularCurrencyMultiplier != 1m ||
+            character.HiddenUnlockMultiplier != 1m ||
+            character.Stats.TryGetRawValue(CharacterStatType.Reserved,
+                out _) ||
+            attempt.GaugeRule.InitialHealth != 0 ||
+            attempt.GaugeRule.MaxHealth != 100 ||
+            attempt.GaugeRule.ClearHealth != 70 ||
+            attempt.GaugeRule.PerfectPlusHealthDelta != 1 ||
+            attempt.GaugeRule.PerfectHealthDelta != 1 ||
+            attempt.GaugeRule.GreatHealthDelta != 1 ||
+            attempt.GaugeRule.MissHealthDelta != -10 ||
+            attempt.GaugeRule.FailImmediately ||
+            !attempt.GaugeRule.ContinueAfterFail)
+            throw new InvalidOperationException(
+                "Music Select did not freeze the equipped NON definition and gauge.");
+    }
+
+    private static void AssertNonResult(GameAttemptStartSnapshot attempt)
+    {
+        GameResultSnapshot result = (GameResultSnapshot)typeof(AppRoot)
+            .GetField("pendingResult", BindingFlags.Instance |
+                BindingFlags.NonPublic).GetValue(AppRoot.Current);
+        if (result == null || !ReferenceEquals(result.AttemptStart,
+                attempt) || result.AttemptStart.AttemptId != attempt.AttemptId ||
+            result.AttemptStart.CharacterAbility.CharacterId !=
+                NonCharacterId ||
+            result.AttemptStart.CharacterAbility.DefinitionVersion != 1)
+            throw new InvalidOperationException(
+                "Result lost the equipped NON identity or attempt snapshot.");
+    }
+
+    private static CrystalTransitionPlayer GetTransitionPlayer(
+        SceneTransitionController controller, string fieldName)
+    {
+        if (!controller) return null;
+        return (CrystalTransitionPlayer)typeof(SceneTransitionController)
+            .GetField(fieldName, BindingFlags.Instance |
+                BindingFlags.NonPublic).GetValue(controller);
+    }
+
+    private static void AssertWhiteOnlyTransition(
+        SceneTransitionController controller)
+    {
+        CrystalTransitionPlayer white = GetTransitionPlayer(controller,
+            "crystalTransition");
+        CrystalTransitionPlayer overlay = GetTransitionPlayer(controller,
+            "crystalOverlayTransition");
+        Canvas dark = controller ? (Canvas)typeof(SceneTransitionController)
+            .GetField("fadeCanvas", BindingFlags.Instance |
+                BindingFlags.NonPublic).GetValue(controller) : null;
+        bool overlayActive = overlay &&
+            (overlay.IsPlaying || overlay.visibility &&
+             overlay.visibility.alpha > 0f);
+        bool darkActive = dark && dark.enabled;
+        if (!white || !white.visibility ||
+            white.visibility.alpha <= 0f || overlayActive || darkActive)
+            throw new InvalidOperationException(
+                "Music Select played the general overlay or failed to show the white transition.");
+    }
+
     private static Button FindButton(Component root, string name)
     {
         foreach (Button button in root.GetComponentsInChildren<Button>(true))
@@ -1224,13 +1922,20 @@ public static class PlayableGameSmokeRunner
 
     private static void Complete(int code)
     {
+        Time.timeScale = 1f;
         EditorApplication.update -= Tick;
+        SceneManager.sceneLoaded -= CaptureGameEntry;
+        if (gameEntryPlayback)
+            gameEntryPlayback.PlaybackStarted -= CaptureGameEntryStart;
+        gameEntryPlayback = null;
         SceneManager.sceneLoaded -= CaptureHardSceneLoad;
         if (hardCapturePlayback)
             hardCapturePlayback.PlaybackStarted -= CaptureHardPlaybackStart;
         hardCapturePlayback = null;
         SessionState.SetBool(ActiveKey, false);
         SessionState.SetBool(HardKey, false);
+        SessionState.SetBool(RuntimeFailureKey, false);
+        SessionState.SetBool(ComponentDisableKey, false);
         if (hardRuleSource)
         {
             if (EditorApplication.isPlaying)

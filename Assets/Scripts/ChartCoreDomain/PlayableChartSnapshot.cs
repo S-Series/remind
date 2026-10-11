@@ -8,18 +8,24 @@ namespace REmind.Charting
         Tap = 0,
         HoldStart = 1,
         HoldEnd = 2,
-        HoldMid = 3
+        HoldMid = 3,
+        KnobStart = 4,
+        KnobTurn = 5,
+        KnobTick = 6
     }
 
     public sealed class PlayableNotePoint
     {
         internal PlayableNotePoint(ChartNotePoint source, double timeMs,
-            double floorPosition)
+            double floorPosition, ChartKnobDirection? knobDirection = null)
         {
             Position = source.Position;
             Kind = source.Kind;
             Motion = source.Motion;
             MoveAmount = source.MoveAmount;
+            KnobX = source.KnobX;
+            KnobDirection = knobDirection ?? source.KnobDirection;
+            KnobInterpolation = source.KnobInterpolation;
             TimeMs = timeMs;
             FloorPosition = floorPosition;
         }
@@ -28,6 +34,9 @@ namespace REmind.Charting
         public ChartNotePointKind Kind { get; }
         public ChartScratchMotionKind Motion { get; }
         public int MoveAmount { get; }
+        public double KnobX { get; }
+        public ChartKnobDirection KnobDirection { get; }
+        public ChartKnobInterpolation KnobInterpolation { get; }
         public double TimeMs { get; }
         public double FloorPosition { get; }
     }
@@ -44,7 +53,8 @@ namespace REmind.Charting
             double? endTimeMs,
             double startFloorPosition,
             double? endFloorPosition,
-            PlayableNotePoint[] points)
+            PlayableNotePoint[] points,
+            JudgementTarget[] knobTargets = null)
         {
             Id = id;
             Kind = kind;
@@ -56,6 +66,7 @@ namespace REmind.Charting
             StartFloorPosition = startFloorPosition;
             EndFloorPosition = endFloorPosition;
             Points = Array.AsReadOnly((PlayableNotePoint[])points.Clone());
+            KnobTargets = Array.AsReadOnly(knobTargets ?? Array.Empty<JudgementTarget>());
         }
 
         public string Id { get; }
@@ -68,6 +79,7 @@ namespace REmind.Charting
         public double StartFloorPosition { get; }
         public double? EndFloorPosition { get; }
         public IReadOnlyList<PlayableNotePoint> Points { get; }
+        public IReadOnlyList<JudgementTarget> KnobTargets { get; }
     }
 
     public sealed class JudgementTarget
@@ -80,7 +92,9 @@ namespace REmind.Charting
             int lane,
             int position,
             double targetTimeMs,
-            double floorPosition)
+            double floorPosition,
+            int pointIndex = 0,
+            ChartKnobDirection knobDirection = ChartKnobDirection.None)
         {
             Id = id;
             NoteId = noteId;
@@ -90,6 +104,8 @@ namespace REmind.Charting
             Position = position;
             TargetTimeMs = targetTimeMs;
             FloorPosition = floorPosition;
+            PointIndex = pointIndex;
+            KnobDirection = knobDirection;
         }
 
         public string Id { get; }
@@ -100,6 +116,8 @@ namespace REmind.Charting
         public int Position { get; }
         public double TargetTimeMs { get; }
         public double FloorPosition { get; }
+        public int PointIndex { get; }
+        public ChartKnobDirection KnobDirection { get; }
     }
 
     /// <summary>One independently scored interval of a Long note.</summary>
@@ -163,6 +181,9 @@ namespace REmind.Charting
             EffectEvents = Array.AsReadOnly(effectEvents != null
                 ? (PlayableEffectEvent[])effectEvents.Clone()
                 : Array.Empty<PlayableEffectEvent>());
+            foreach (PlayableNoteSnapshot note in Notes)
+                JudgementUnitCount += note.Kind == ChartNoteKind.Knob
+                    ? note.KnobTargets.Count : Math.Max(1, note.Points.Count - 1);
         }
 
         public TimingMap TimingMap { get; }
@@ -173,6 +194,7 @@ namespace REmind.Charting
         public IReadOnlyList<JudgementTarget> JudgementTargets { get; }
         public IReadOnlyList<JudgementSegment> JudgementSegments { get; }
         public IReadOnlyList<PlayableEffectEvent> EffectEvents { get; }
+        public int JudgementUnitCount { get; }
     }
 
     public sealed class PlayableEffectEvent

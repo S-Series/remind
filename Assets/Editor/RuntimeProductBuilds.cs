@@ -12,9 +12,7 @@ public static class RuntimeProductBuilds
     private static readonly string[] GameScenes =
     {
         "Assets/Scenes/Bootstrap.unity", "Assets/Scenes/Home.unity",
-        "Assets/Scenes/Story.unity", "Assets/Scenes/MusicSelect.unity",
-        "Assets/Scenes/Music.unity", "Assets/Scenes/Character.unity",
-        "Assets/Scenes/ReMind.unity", "Assets/Scenes/Option.unity",
+        "Assets/Scenes/MusicSelect.unity", "Assets/Scenes/ReMind.unity",
         "Assets/Scenes/Game.unity",
         "Assets/Scenes/Result.unity"
     };

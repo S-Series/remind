@@ -9,3 +9,9 @@ public interface IRuleModifier
     bool ModifyShouldFail(bool current, RuleContext context);
     bool ModifyIsCleared(bool current, RuleContext context);
 }
+
+public interface IPreciseHealthDeltaModifier
+{
+    double ModifyHealthDelta(double current, JudgeResult result,
+        RuleContext context);
+}

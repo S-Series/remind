@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using REmind.Common.UI;
 using REmind.Gameplay;
+using REmind.Gameplay.Characters;
 using REmind.Gameplay.Demo;
 using TMPro;
 using UnityEditor;
@@ -23,6 +24,8 @@ public static class CharacterOverlayPrefabBuilder
     private const string PortraitPath =
         "Assets/Art/UI/CharacterUI/ame_hina_portraits.png";
     private const string SpritePath = "Assets/Art/UI/CharacterUI/";
+    private const string CatalogPath =
+        "Assets/Data/Characters/CharacterCatalog.asset";
 
     private static readonly Color Glass = new(0.015f, 0.03f, 0.075f, 0.94f);
     private static readonly Color Silver = new(0.83f, 0.88f, 1f, 1f);
@@ -80,7 +83,8 @@ public static class CharacterOverlayPrefabBuilder
             new Vector2(460, 85), new Vector2(880, 850));
         RectTransform identity = Empty(right, "Identity",
             Vector2.zero, new Vector2(880, 850));
-        BuildIdentity(identity);
+        BuildIdentity(identity, out TMP_Text characterName,
+            out TMP_Text englishName, out TMP_Text profileText);
         RectTransform tabBar = Empty(right, "TabBar",
             Vector2.zero, new Vector2(880, 850));
         Button[] tabs = new Button[3];
@@ -105,7 +109,11 @@ public static class CharacterOverlayPrefabBuilder
         RectTransform tabContent = Empty(right, "TabContent",
             Vector2.zero, new Vector2(880, 850));
         GameObject[] pages = new GameObject[3];
-        pages[0] = BuildProfile(tabContent).gameObject;
+        pages[0] = BuildProfile(tabContent, out TMP_Text[] statLabels,
+            out TMP_Text[] statValues, out Image[] statTracks,
+            out Image[] statFills, out TMP_Text gaugeLabel,
+            out TMP_Text skillName, out TMP_Text skillDescription)
+            .gameObject;
         pages[1] = BuildPendingPage(tabContent, "StoryPage", "STORY",
             "이야기는 추후 공개됩니다.").gameObject;
         pages[2] = BuildPendingPage(tabContent, "VoicePage", "VOICE",
@@ -115,16 +123,29 @@ public static class CharacterOverlayPrefabBuilder
 
         RectTransform roster = Empty(root.transform, "05_RosterArea",
             Vector2.zero, new Vector2(1920, 1080));
-        BuildRoster(roster, background, portraits);
+        BuildRoster(roster, background, portraits, controller, nodes,
+            out Button[] rosterButtons, out TMP_Text[] rosterCaptions,
+            out GameObject[] rosterLocks, out RawImage selectedPortrait);
         RectTransform actions = Empty(root.transform, "06_Actions",
             Vector2.zero, new Vector2(1920, 1080));
-        Button begin = ButtonAt(actions, "BeginButton", "BEGIN  →",
+        RectTransform equipAction = Empty(actions, "EquipAction",
+            Vector2.zero, new Vector2(1920, 1080));
+        TMP_Text equipStatus = Label(equipAction, "EquipStatus",
+            "장착 가능", 20, new Vector2(744, -348),
+            new Vector2(285, 32), TextAlignmentOptions.Center);
+        TMP_Text errorMessage = Label(equipAction, "ErrorMessage",
+            string.Empty, 17, new Vector2(744, -472),
+            new Vector2(360, 33), TextAlignmentOptions.Center);
+        errorMessage.color = new Color(1f, 0.68f, 0.7f);
+        Button begin = ButtonAt(equipAction, "BeginButton", "장착  →",
             new Vector2(744, -410), new Vector2(285, 90),
-            2, 3, nodes, button => UnityEventTools.AddPersistentListener(
+            2, 5, nodes, button => UnityEventTools.AddPersistentListener(
                 button.onClick, controller.Begin), true);
         begin.GetComponent<Image>().sprite = Sprite("begin_button");
         begin.GetComponent<Image>().color = Color.white;
-        ButtonAt(actions, "CloseButton", "X",
+        RectTransform closeAction = Empty(actions, "CloseAction",
+            Vector2.zero, new Vector2(1920, 1080));
+        ButtonAt(closeAction, "CloseButton", "X",
             new Vector2(884, 405), new Vector2(50, 50),
             0, 3, nodes, button => UnityEventTools.AddPersistentListener(
                 button.onClick, controller.CloseOverlay));
@@ -163,7 +184,27 @@ public static class CharacterOverlayPrefabBuilder
             Sprite("tab_selected");
         data.FindProperty("idleTabSprite").objectReferenceValue =
             Sprite("tab_idle");
+        SetArray(data, "rosterCardButtons", rosterButtons);
+        SetArray(data, "rosterCaptions", rosterCaptions);
+        SetArray(data, "rosterLockOverlays", rosterLocks);
+        data.FindProperty("characterName").objectReferenceValue =
+            characterName;
+        data.FindProperty("englishName").objectReferenceValue = englishName;
+        data.FindProperty("profileText").objectReferenceValue = profileText;
+        data.FindProperty("portrait").objectReferenceValue = selectedPortrait;
+        SetArray(data, "statLabels", statLabels);
+        SetArray(data, "statValues", statValues);
+        SetArray(data, "statTracks", statTracks);
+        SetArray(data, "statFills", statFills);
+        data.FindProperty("gaugeLabel").objectReferenceValue = gaugeLabel;
+        data.FindProperty("skillName").objectReferenceValue = skillName;
+        data.FindProperty("skillDescription").objectReferenceValue =
+            skillDescription;
+        data.FindProperty("equipStatus").objectReferenceValue = equipStatus;
+        data.FindProperty("errorMessage").objectReferenceValue = errorMessage;
+        data.FindProperty("beginButton").objectReferenceValue = begin;
         data.ApplyModifiedPropertiesWithoutUndo();
+        OverlayPresentationPrefabBinder.Configure(root, right, controller);
 
         root.SetActive(false);
         PrefabUtility.SaveAsPrefabAsset(root, PrefabPath);
@@ -259,15 +300,20 @@ public static class CharacterOverlayPrefabBuilder
             TextAlignmentOptions.Center).color = new Color(0.18f, 0.29f, 0.65f);
     }
 
-    private static void BuildIdentity(RectTransform right)
+    private static void BuildIdentity(RectTransform right,
+        out TMP_Text characterName, out TMP_Text englishName,
+        out TMP_Text profileText)
     {
         RectTransform nameBlock = Empty(right, "NameBlock",
             Vector2.zero, new Vector2(880, 850));
         Label(nameBlock, "Motto", "Still, with you.", 28,
             new Vector2(-245, 338), new Vector2(355, 52),
             TextAlignmentOptions.Left).fontStyle = FontStyles.Italic;
-        Label(nameBlock, "CharacterName", "NON", 86,
+        englishName = Label(nameBlock, "EnglishName", "NON", 86,
             new Vector2(-214, 270), new Vector2(430, 105),
+            TextAlignmentOptions.Left);
+        characterName = Label(nameBlock, "CharacterName", "논", 20,
+            new Vector2(145, 270), new Vector2(140, 38),
             TextAlignmentOptions.Left);
         Decor(nameBlock, "NameRule", Sprite("divider_starline"),
             new Vector2(-14, 225), new Vector2(750, 22));
@@ -279,7 +325,7 @@ public static class CharacterOverlayPrefabBuilder
             TextAlignmentOptions.Left);
         RectTransform biography = Empty(right, "Biography",
             Vector2.zero, new Vector2(880, 850));
-        Label(biography, "CharacterQuote",
+        profileText = Label(biography, "CharacterQuote",
             "「 … 잊혀진 마음도,\n    어딘가에 빛나고 있을 거야. 」",
             25, new Vector2(-213, 65), new Vector2(470, 85),
             TextAlignmentOptions.Left);
@@ -293,7 +339,11 @@ public static class CharacterOverlayPrefabBuilder
             new Vector2(224, 156), new Vector2(90, 90));
     }
 
-    private static RectTransform BuildProfile(RectTransform right)
+    private static RectTransform BuildProfile(RectTransform right,
+        out TMP_Text[] statLabels, out TMP_Text[] statValues,
+        out Image[] statTracks, out Image[] statFills,
+        out TMP_Text gaugeLabel, out TMP_Text skillName,
+        out TMP_Text skillDescription)
     {
         RectTransform page = Empty(right, "ProfilePage",
             new Vector2(0, -255), new Vector2(850, 250));
@@ -305,28 +355,33 @@ public static class CharacterOverlayPrefabBuilder
             TextAlignmentOptions.Left);
         Decor(stats, "HeadingLine", Sprite("divider_starline"),
             new Vector2(53, 96), new Vector2(165, 14));
-        string[] titles = { "Memory", "Resonance", "Focus", "Support" };
+        string[] titles = { "월드 해금", "통상 재화", "히든 해금", "미정" };
         string[] icons = { "stat_icon_memory", "stat_icon_resonance",
             "stat_icon_focus", "stat_icon_support" };
-        int[] values = { 82, 68, 75, 91 };
+        statLabels = new TMP_Text[titles.Length];
+        statValues = new TMP_Text[titles.Length];
+        statTracks = new Image[titles.Length];
+        statFills = new Image[titles.Length];
         for (int i = 0; i < titles.Length; i++)
         {
             float y = 49 - i * 45;
-            RectTransform row = Empty(stats, titles[i] + "Row",
+            RectTransform row = Empty(stats, "StatRow" + i,
                 new Vector2(0, y), new Vector2(416, 45));
             Decor(row, "Icon", Sprite(icons[i]),
                 new Vector2(-175, 0), new Vector2(35, 35));
-            Label(row, "Label", titles[i], 19,
+            statLabels[i] = Label(row, "Label", titles[i], 19,
                 new Vector2(-81, 0), new Vector2(135, 33),
                 TextAlignmentOptions.Left);
-            SpriteBox(row, "Track", new Vector2(65, 0),
-                new Vector2(160, 15), Sprite("progress_track"));
-            SpriteBox(row, "Fill",
-                new Vector2(-15 + values[i] * 0.8f, 0),
-                new Vector2(160 * values[i] / 100f, 13),
-                Sprite("progress_fill"));
-            Label(row, "Value", values[i].ToString(), 19,
-                new Vector2(176, 0), new Vector2(45, 31),
+            RectTransform meter = Empty(row, "Meter",
+                Vector2.zero, new Vector2(125, 15));
+            statTracks[i] = SpriteBox(meter, "Track",
+                new Vector2(45, 0), new Vector2(125, 15),
+                Sprite("progress_track")).GetComponent<Image>();
+            statFills[i] = SpriteBox(meter, "Fill",
+                new Vector2(-17.5f, 0), new Vector2(0, 13),
+                Sprite("progress_fill")).GetComponent<Image>();
+            statValues[i] = Label(row, "Value", "-", 16,
+                new Vector2(153, 0), new Vector2(95, 31),
                 TextAlignmentOptions.Right);
         }
 
@@ -338,6 +393,9 @@ public static class CharacterOverlayPrefabBuilder
             TextAlignmentOptions.Left);
         Rule(skill, "HeadingLine", new Vector2(54, 96),
             new Vector2(155, 1));
+        gaugeLabel = Label(skill, "GaugeLabel", "게이지 0 / 100", 16,
+            new Vector2(-22, 70), new Vector2(310, 28),
+            TextAlignmentOptions.Left);
         RectTransform iconGroup = Empty(skill, "SkillArtwork",
             new Vector2(-124, -20), new Vector2(105, 105));
         Box(iconGroup, "SkillIconBackdrop", Vector2.zero,
@@ -348,14 +406,14 @@ public static class CharacterOverlayPrefabBuilder
             Vector2.zero, new Vector2(78, 85));
         RectTransform copyGroup = Empty(skill, "SkillCopy",
             Vector2.zero, new Vector2(410, 237));
-        Label(copyGroup, "SkillName", "달이 기억하는 것", 23,
+        skillName = Label(copyGroup, "SkillName", "스킬 없음", 23,
             new Vector2(65, 38), new Vector2(237, 38),
             TextAlignmentOptions.Left);
-        Label(copyGroup, "SkillEnglish", "Lunar Recollection", 17,
+        Label(copyGroup, "SkillEnglish", "NO ACTIVE SKILL", 17,
             new Vector2(67, 9), new Vector2(240, 29),
             TextAlignmentOptions.Left).color = Silver;
-        Label(copyGroup, "SkillDescription",
-            "잠든 기억을 비추어,\n잊힌 것도 다시 이어지게 한다.", 18,
+        skillDescription = Label(copyGroup, "SkillDescription",
+            "장착 시 별도 스킬 효과가 없습니다.", 18,
             new Vector2(64, -55), new Vector2(240, 90),
             TextAlignmentOptions.Left);
         return page;
@@ -375,15 +433,47 @@ public static class CharacterOverlayPrefabBuilder
     }
 
     private static void BuildRoster(Transform root,
-        Texture2D background, Texture2D portraits)
+        Texture2D background, Texture2D portraits,
+        CharacterOverlayController controller, List<NavigationNode> nodes,
+        out Button[] buttons, out TMP_Text[] captions,
+        out GameObject[] lockOverlays, out RawImage selectedPortrait)
     {
         RectTransform strip = Empty(root, "CharacterRoster",
             new Vector2(185, -415), new Vector2(805, 170));
-        string[] names = { "NON", "AME", "HINA", "???", "???" };
+        string[] names = { "NON", "???", "???", "???", "???" };
+        buttons = new Button[names.Length];
+        captions = new TMP_Text[names.Length];
+        lockOverlays = new GameObject[names.Length];
+        selectedPortrait = null;
         for (int i = 0; i < names.Length; i++)
         {
-            RectTransform card = Empty(strip, "CharacterCard" + i,
-                new Vector2(-314 + i * 160, 0), new Vector2(148, 143));
+            int index = i;
+            GameObject cardObject = new("CharacterCard" + i,
+                typeof(RectTransform), typeof(Image), typeof(Button),
+                typeof(NavigationNode));
+            cardObject.transform.SetParent(strip, false);
+            RectTransform card = (RectTransform)cardObject.transform;
+            Place(card, new Vector2(-314 + i * 160, 0),
+                new Vector2(148, 143));
+            Image hitArea = cardObject.GetComponent<Image>();
+            hitArea.color = new Color(1f, 1f, 1f, 0f);
+            hitArea.raycastTarget = true;
+            Button button = cardObject.GetComponent<Button>();
+            button.targetGraphic = hitArea;
+            button.transition = Selectable.Transition.None;
+            button.interactable = i == 0;
+            UnityEventTools.AddIntPersistentListener(button.onClick,
+                controller.SelectRosterIndex, index);
+            buttons[i] = button;
+            NavigationNode node = cardObject.GetComponent<NavigationNode>();
+            SerializedObject nodeData = new(node);
+            nodeData.FindProperty("selectable").objectReferenceValue = button;
+            nodeData.FindProperty("row").intValue = 2;
+            nodeData.FindProperty("column").intValue = i;
+            nodeData.ApplyModifiedPropertiesWithoutUndo();
+            nodes.Add(node);
+            RectTransform artwork = Empty(card, "PortraitArtwork",
+                Vector2.zero, new Vector2(148, 143));
             if (i < 3)
             {
                 Texture2D texture = i == 0 ? background : portraits;
@@ -391,25 +481,25 @@ public static class CharacterOverlayPrefabBuilder
                     ? new Rect(0.26f, 0.60f, 0.20f, 0.31f)
                     : new Rect(i == 1 ? 0.03f : 0.53f,
                         0.20f, 0.44f, 0.75f);
-                Raw(card, "Portrait", texture,
+                RawImage portrait = Raw(artwork, "Portrait", texture,
                     new Vector2(0, 17), new Vector2(136, 100), crop);
+                if (i == 0) selectedPortrait = portrait;
             }
-            else
-            {
-                Image locked = SpriteBox(card, "LockedOverlay",
-                    Vector2.zero, new Vector2(148, 143),
-                    Sprite("thumbnail_locked_overlay"))
-                    .GetComponent<Image>();
-                locked.color = new Color(1f, 1f, 1f, 0.8f);
-            }
+            RectTransform availability = Empty(card, "Availability",
+                Vector2.zero, new Vector2(148, 143));
+            Image locked = SpriteBox(availability, "LockedOverlay",
+                Vector2.zero, new Vector2(148, 143),
+                Sprite("thumbnail_locked_overlay")).GetComponent<Image>();
+            locked.color = new Color(1f, 1f, 1f, 0.8f);
+            Decor(availability, "IconLock", Sprite("icon_lock"),
+                new Vector2(0, 15), new Vector2(27, 33));
+            availability.gameObject.SetActive(i != 0);
+            lockOverlays[i] = availability.gameObject;
             SpriteBox(card, "FrameOverlay", Vector2.zero,
                 new Vector2(148, 143),
                 Sprite(i == 0 ? "thumbnail_frame_selected" :
                     "thumbnail_frame_idle"));
-            if (i >= 3)
-                Decor(card, "IconLock", Sprite("icon_lock"),
-                    new Vector2(0, 15), new Vector2(27, 33));
-            Label(card, "Caption", names[i], 20,
+            captions[i] = Label(card, "Caption", names[i], 20,
                 new Vector2(0, -54), new Vector2(136, 28),
                 TextAlignmentOptions.Center);
         }
@@ -444,11 +534,27 @@ public static class CharacterOverlayPrefabBuilder
         }
         SerializedObject data = new(appRoot);
         SerializedProperty binding = data.FindProperty("characterOverlay");
+        SerializedProperty catalogBinding = data.FindProperty("characterCatalog");
+        CharacterCatalog catalog = AssetDatabase.LoadAssetAtPath<CharacterCatalog>(
+            CatalogPath);
+        if (!catalog)
+            throw new InvalidOperationException(
+                "Character catalog asset is missing: " + CatalogPath);
         CharacterOverlayController overlay =
             instance.GetComponent<CharacterOverlayController>();
+        bool bindingChanged = false;
         if (binding.objectReferenceValue != overlay)
         {
             binding.objectReferenceValue = overlay;
+            bindingChanged = true;
+        }
+        if (catalogBinding.objectReferenceValue != catalog)
+        {
+            catalogBinding.objectReferenceValue = catalog;
+            bindingChanged = true;
+        }
+        if (bindingChanged)
+        {
             data.ApplyModifiedPropertiesWithoutUndo();
             sceneChanged = true;
         }

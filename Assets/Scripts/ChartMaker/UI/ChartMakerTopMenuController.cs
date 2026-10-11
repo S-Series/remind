@@ -288,6 +288,15 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
         }
 
         isMenuBound = true;
+        AddCenterToolButton("Place Center Tap", () => placementController?.SelectCenterTap());
+        AddCenterToolButton("Draw Knob Path", () => placementController?.SelectKnobPath());
+        AddCenterToolButton("Insert Knob Point", () => placementController?.SelectInsertKnobPoint());
+        AddCenterToolButton("Toggle Knob X Snap (0.25)", () => placementController?.ToggleKnobXSnap());
+        AddCenterToolButton("Knob Segment: Linear", () => placementController?.SelectKnobLinear());
+        AddCenterToolButton("Knob Segment: Sin", () => placementController?.SelectKnobSin());
+        AddCenterToolButton("Knob Segment: Cos", () => placementController?.SelectKnobCos());
+        AddCenterToolButton("Place Knob Start", () => placementController?.SelectKnobStart());
+        AddCenterToolButton("Place Knob Middle", () => placementController?.SelectKnobMid());
         noteEditPopup?.Initialize(
             RootVisualElement,
             selectionController,
@@ -298,6 +307,15 @@ public sealed class ChartMakerTopMenuController : MonoBehaviour
         RefreshDocumentCommandState();
         RefreshEditMenuState();
         RefreshPlaybackMenuState();
+    }
+
+    private void AddCenterToolButton(string label, Action select)
+    {
+        string name = label.Replace(' ', '-');
+        if (editMenuPopup.Q<Button>(name) != null) return;
+        var button = new Button(() => { select(); HideMenus(); }) { name = name, text = label };
+        button.AddToClassList("menu-item");
+        editMenuPopup.Add(button);
     }
 
     private void UnbindMenu()

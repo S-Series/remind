@@ -1,0 +1,8 @@
+{
+  "name": "REmind.ChartMaker.Tests",
+  "references": ["REmind.ChartMaker", "REmind.ChartCore", "REmind.NoteRules", "REmind.Presentation"],
+  "includePlatforms": ["Editor"],
+  "autoReferenced": false,
+  "defineConstraints": ["UNITY_INCLUDE_TESTS"],
+  "optionalUnityReferences": ["TestAssemblies"]
+}

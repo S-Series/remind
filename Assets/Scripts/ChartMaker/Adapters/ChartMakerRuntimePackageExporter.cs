@@ -15,17 +15,21 @@ public static class ChartMakerRuntimePackageExporter
     }
 
     public static string Export(string chartJson, int beatsPerMeasure = 4) =>
-        Export(chartJson, null, beatsPerMeasure);
+        Export(chartJson, null, null, beatsPerMeasure);
 
     public static string Export(string chartJson, string effectParameterJson,
-        int beatsPerMeasure = 4)
+        int beatsPerMeasure = 4) =>
+        Export(chartJson, effectParameterJson, null, beatsPerMeasure);
+
+    public static string Export(string chartJson, string effectParameterJson,
+        string difficultyId, int beatsPerMeasure = 4)
     {
         if (string.IsNullOrWhiteSpace(chartJson))
             throw new FormatException("Chart data is empty.");
         if (beatsPerMeasure <= 0)
             throw new ArgumentOutOfRangeException(nameof(beatsPerMeasure));
 
-        ChartFile chart = ChartFileCodec.Parse(chartJson);
+        ChartFile chart = ChartFileCodec.Parse(chartJson, difficultyId);
         if (chart.HasEffectParameterFile)
         {
             if (string.IsNullOrWhiteSpace(effectParameterJson))
@@ -38,13 +42,13 @@ public static class ChartMakerRuntimePackageExporter
 
         string musicId = string.IsNullOrWhiteSpace(chart.MusicId)
             ? "untitled" : chart.MusicId;
-        string difficultyId = string.IsNullOrWhiteSpace(chart.DifficultyId)
+        string resolvedDifficultyId = string.IsNullOrWhiteSpace(chart.DifficultyId)
             ? "default" : chart.DifficultyId;
         if (chart.HasEffectParameterFile)
         {
             ChartEffectFileStore.ValidateFileId(musicId,
                 nameof(chart.MusicId));
-            ChartEffectFileStore.ValidateFileId(difficultyId,
+            ChartEffectFileStore.ValidateFileId(resolvedDifficultyId,
                 nameof(chart.DifficultyId));
         }
 
@@ -75,7 +79,7 @@ public static class ChartMakerRuntimePackageExporter
             }
 
         return RuntimeChartPackageCodec.Export(built.Document, musicId,
-            difficultyId, chart.GimmickId ?? string.Empty,
+            resolvedDifficultyId, chart.GimmickId ?? string.Empty,
             chart.EffectRevision ?? string.Empty,
             -chart.MusicStartCorrectionMs,
             1d / ChartHolder.PositionUnitsPerWorldUnit, parameters);

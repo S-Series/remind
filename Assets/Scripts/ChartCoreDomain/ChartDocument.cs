@@ -17,7 +17,8 @@ namespace REmind.Charting
         AirMain3 = 6,
         AirMain4 = 7,
         GroundLeft = 8,
-        GroundRight = 9
+        GroundRight = 9,
+        Center = 10
     }
 
     public static class ChartLaneLayout
@@ -26,7 +27,7 @@ namespace REmind.Charting
         public const int AirMainLaneCount = 4;
         public const int GroundSideLaneCount = 2;
         public const int LaneCount =
-            MainLaneCount + AirMainLaneCount + GroundSideLaneCount;
+            MainLaneCount + AirMainLaneCount + GroundSideLaneCount + 1;
 
         public static bool IsValid(int lane)
         {
@@ -40,8 +41,13 @@ namespace REmind.Charting
         Hold = 1,
         Scratch = 2,
         LongScratch = 3,
-        Air = 4
+        Air = 4,
+        CenterTap = 5,
+        Knob = 6
     }
+
+    public enum ChartKnobDirection { None = 0, Left = 1, Right = 2 }
+    public enum ChartKnobInterpolation { Linear = 0, Step = 1, Sin = 2, Cos = 3 }
 
     public enum ChartNotePointKind
     {
@@ -81,6 +87,10 @@ namespace REmind.Charting
         public ChartNotePointKind Kind { get; set; }
         public ChartScratchMotionKind Motion { get; set; }
         public int MoveAmount { get; set; }
+        public double KnobX { get; set; }
+        public ChartKnobDirection KnobDirection { get; set; }
+        /// <summary>How the path arrives at this point; absent data means Linear.</summary>
+        public ChartKnobInterpolation KnobInterpolation { get; set; }
     }
 
     /// <summary>

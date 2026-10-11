@@ -8,7 +8,6 @@ internal sealed class ChartEffectNoteEditorPanel
 {
     private readonly EffectRegistry registry = EffectRegistry.CreateDefault();
     private readonly TextField musicId = Field(new TextField("Music ID"));
-    private readonly TextField difficultyId = Field(new TextField("Difficulty"));
     private readonly DropdownField gimmick = Field(new DropdownField("Gimmick"));
     private readonly DropdownField effect = Field(new DropdownField("Effect"));
     private readonly DropdownField command = Field(new DropdownField("Command"));
@@ -25,7 +24,7 @@ internal sealed class ChartEffectNoteEditorPanel
 
     public VisualElement Element { get; } = new VisualElement();
     public string MusicId => musicId.value?.Trim();
-    public string DifficultyId => difficultyId.value?.Trim();
+    public string DifficultyId => ChartEffectDocumentState.DifficultyId;
     public string GimmickId => SelectedId(gimmick, gimmickIds);
     public string EffectTypeId => SelectedId(effect, effectIds);
     public string CommandId => SelectedId(command, commandIds);
@@ -41,7 +40,6 @@ internal sealed class ChartEffectNoteEditorPanel
         this.copy = copy;
         this.reload = reload;
         musicId.name = "effect-music-id-field";
-        difficultyId.name = "effect-difficulty-id-field";
         gimmick.name = "effect-gimmick-field";
         effect.name = "effect-type-field";
         command.name = "effect-command-field";
@@ -57,7 +55,6 @@ internal sealed class ChartEffectNoteEditorPanel
         title.AddToClassList("note-edit-section-title");
         scroll.Add(title);
         scroll.Add(musicId);
-        scroll.Add(difficultyId);
         scroll.Add(gimmick);
         scroll.Add(effect);
         scroll.Add(command);
@@ -77,7 +74,7 @@ internal sealed class ChartEffectNoteEditorPanel
         AddButton(scroll, "effect-reload-json-button",
             "Reload saved JSON (discard parameter edits)", () => this.reload());
         var note = new Label(
-            "Apply commits all fields as one Undo step. Music / difficulty / gimmick are chart-wide. " +
+            "Apply commits all fields as one Undo step. Music / gimmick are chart-wide. Difficulty comes from the .rd filename. " +
             "Copy uses the last applied settings. JSON is saved beside .rd as " +
             "effect.{musicId}.{difficultyId}.json. Legacy Effects require an explicit type.");
         note.AddToClassList("note-edit-meta");
@@ -108,7 +105,6 @@ internal sealed class ChartEffectNoteEditorPanel
         try
         {
             musicId.SetValueWithoutNotify(ChartEffectDocumentState.MusicId);
-            difficultyId.SetValueWithoutNotify(ChartEffectDocumentState.DifficultyId);
             var effectNames = new List<string>();
             effectIds.Clear();
             effectIds.Add(string.Empty);

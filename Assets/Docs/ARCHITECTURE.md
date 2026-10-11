@@ -54,14 +54,15 @@ Shared는 두 앱에서 우연히 재사용할 수 있는 모든 코드를 뜻�
 | 곡 `data.json` | `musicId`, `title`, `artist`, `audioFile` | 곡 식별자와 공통 표시·음원 정보. 음원 기본값 `audio.mp3` |
 | 곡 `data.json` | `musicVolumeMultiplier` | 곡 음악 볼륨 배수 `0`~`2`. 기본값 `1`은 AudioSource 볼륨 `0.5` |
 | 곡 `data.json` | `previewStartMs`, `previewDurationMs` | 곡 선택 화면의 미리듣기 구간 |
-| 곡 `data.json` | `jacketFile`, `jacketIllustrator`, `charts[]` | 공통 재킷과 난이도 목록. 재킷 기본값 `art.jpg` |
-| `charts[]` 항목 | `difficultyId`, `level`, `chartAuthor`, `chartFile` | 난이도 표시 정보와 제작용 채보 참조. 채보 기본값 `<difficultyId>.rd` |
+| 곡 `data.json` | `jacketFile`, `jacketIllustrator` | 공통 재킷과 일러스트레이터. 재킷 기본값 `art.jpg` |
+| 난이도별 채보 | `level`, `author`, `extraName` | 숫자 레벨과 채보 제작자. `extraName`은 `Extra.rd`의 표시명 |
 | 난이도별 채보 | `jacketFile` | 선택적 전용 재킷. 기본 `<difficultyId>.jpg`, 파일이 없으면 공통 재킷 사용 |
-| 난이도별 채보 | `musicId`, `difficultyId` | 곡·난이도 연결을 검증하는 식별자 |
+| 난이도별 채보 | `musicId`와 고정 파일명 | 곡 ID는 파일 내부, 난이도 ID는 `Easy.rd`·`Normal.rd`·`Hard.rd`·`Chaos.rd`·`Extra.rd` 파일명에서 결정 |
 | 난이도별 채보 | `baseBpm`, `bpmChanges`, `musicStartCorrectionMs` | 채보의 시간 계산과 음원 정렬 |
 | 난이도별 채보 | `backgroundId`, `backgroundLayerId`, `notes`, `eventDictionary` | 해당 채보의 노트·연출과 실행 규칙. Effect 파라미터도 `eventDictionary`에 포함 |
 
-이 표는 목표 소유권과 이름이다. 현행 `.rd`와 로더에 없는 필드를 이미 지원한다고
+이 표는 목표 소유권과 이름이다. 고정 채보 파일명과 `level`·`author`·`extraName`은
+현행 계약에 반영됐다. 나머지 목표 필드 중 `.rd`와 로더에 없는 필드는 이미 지원한다고
 간주하지 않는다. 선택 화면의 BPM 표기는 채보의 시간 데이터에서 산출하며, 곡 파일에
 독립된 BPM 원본을 중복 저장하지 않는다. 버전은 파일 계약마다 따로 관리한다.
 현재 곡 `data.json`과 `.rd`는 `formatVersion`, Runtime Package는 `Version`을 쓴다.
@@ -114,16 +115,55 @@ Validated Runtime Package
 
 ## 5. Application-specific Systems
 
+### 중앙 Tap / Knob 확장 경계 (2026-10-08)
+
+기존 레인 `0`~`9`와 좌우 Scratch/Long Scratch는 보존하며, 별도 `CenterTap`/`Knob`만
+중앙 레인 `10`에 추가한다. 제작 형식과 실행 패키지는 새 종류가 있을 때만 v2를 쓴다.
+저장 필드와 위치 추적 규칙은 [ChartFormat.md](ChartFormat.md)의 18.3절을 따른다.
+
+방향 Hold 모델을 위치 추적으로 교체했다. 공용 `ChartCompiler`는 목적지 지점의
+`KnobInterpolation`(Linear/Step)과 판정 타깃을 만들고, `KnobPathEvaluator.TargetX`가
+작성 position 보간을 논리 목표 X로 변환한다. `PlayableJudgementSession`과 내부
+`KnobJudgementSession`은 플레이어 위치·입력 소비·보정·예약 결과를 소유한다.
+일반 시작은 시작 위치로 초기화하되 유효한 시작 전 Step 이동이 있으면 그 위치를 유지한다.
+`PlayerKnobX`와 `PlayerKnobNoteId`로 실제 cursor와 소유 경로를 표시한다. 유효한 조기 입력부터
+소유 Knob을 지정하며 Reset 시 소유 ID를 null로 되돌린다.
+
+논리 범위 ±2.5, 속도 5 units/s, 공간 허용·사선 보정 ±0.25, 체크 간격 100ms를 쓴다.
+정상 위치 판정은 Perfect+, 실패는 Miss다. Step의 새 방향 Down ±80ms는 위치를 옮기고,
+조기 입력은 직전 구간의 남은 판정만 원래 timestamp에 Perfect+로 확정하도록 예약한다.
+과거 Miss나 다음 구간에 소급/일괄 보상하지 않는다. 이 입력은 Tap보다 먼저 소비한다.
+예약은 해당 Knob의 직전 구간에만 적용하므로 조기 이동으로 벗어난 다른 Knob은 Miss가
+될 수 있다. 다른 Knob까지 성공 보정을 확장하지 않는다.
+이전 150ms/50ms 유예는 폐기하고 기존 Tap 창·Long Scratch End release는 유지한다.
+
+Game 입력 adapter는 좌/우 논리 입력의 Down/Up·시각을 독립적으로 전달한다.
+Space Tap은 기본 OFF인 Game 설정이며 ON일 때 중앙 Tap에 Space를 추가한다.
+설정 변경은 다음 플레이부터 적용한다. Space는 노브 위치를 조작하지 않는다.
+다른 레인에 Space가 할당돼 있으면 ON을
+거부하고, ON 상태의 레인 키 변경에서도 Space 중복을 막는다. 설정 내부 버전은 3이며
+v1/v2를 읽을 때 기존 값을 보존하고 Space Tap은 OFF로 이행한다.
+
+공유 표시의 RibbonMesh·실제 cursor 및 Maker 한 경로 지점 편집을 연결했다.
+경로 표시와 판정 계산을 분리하며 사용자 아트 교체는 표시 책임 안에서 진행한다.
+Game의 기존 좌우 위치 ±15와 중앙 Tap X=0은 유지한다. 이전 EditMode 299/299·두 제품
+빌드·씬 probe는 방향 Hold 모델의 기록이며 새 위치 추적 모델의 검증 결과가 아니다.
+시작 전 Step 수정 후 고정 검증본의 집중 EditMode 87/87, 전체 316/316와 두 제품 빌드를
+확인했다. 전체에는 시작 전 독립 probe 1개·Maker 경로 probe 1개·Game 표시 probe 2개가
+포함된다. 이전 0/1 재현은 해결했고 조기 이동 유지·Start/tick 예약과 실제 cursor를 검증했다.
+사용자 후속 Game 씬 편집이 계속돼 현재 원본 씬 전체의 빌드는 미검증이다. 실제 화면·물리 입력·
+청음·전체 세션·밸런스 검수는 남아 있다. 원본 범위와 증거는 [TASKS.md](TASKS.md)에 기록한다.
+
 ### Game
 
 - Game 빌드는 `Bootstrap` 씬에서 시작한다. 하이어라키의 `AppRoot`만
   `DontDestroyOnLoad`로 유지하며 Home을 연다. 이 루트는 곡/난이도 선택처럼
   씬 사이의 선택·결과 요약과 로컬 플레이어 기록 저장소를 소유한다. 그 자식의
   `SceneTransitionController`는 Bootstrap→Home을 포함한 Game의 씬 이동을 맡는다.
-  투명 `CrystalOverlayTransition`의 Intro를 시작하고, 씬 로딩이 길어지면
-  Loop를 반복한 뒤 Outro로 새 화면을 드러낸다. 일반 이동은
-  어두운 덮개로 로드 순간을 가린다. Music Select→Game에서만
-  `CrystalTransition`의 흰 화면을 사용한다. `GameManager`, 채보·판정·Effect·오디오
+  일반 이동은 투명 `CrystalOverlayTransition`의 Intro를 시작하고, 씬 로딩이 길어지면
+  Loop를 반복한 뒤 Outro로 새 화면을 드러내며 어두운 덮개로 로드 순간을 가린다.
+  Music Select→Game은 `CrystalTransition`의 흰 화면만 사용하고 투명 오버레이의
+  세 단계와 어두운 덮개를 생략한다. `GameManager`, 채보·판정·Effect·오디오
   세션은 계속 Game 씬이 소유하고 씬 종료 시 정리한다.
   Bootstrap의 씬 전용 Canvas는 로고·문구·장식과 진행 표시를 보여준다.
   `BootstrapLoadingController`가 표시 시간을 마친 뒤 새 키·클릭·터치·게임패드
@@ -140,33 +180,64 @@ Validated Runtime Package
   실제 플레이 중 Pause 진입만 Gameplay 입력에서 처리한다.
 - Settings는 별도 씬을 열지 않는다. `SettingsOverlay.prefab` 인스턴스는
   Bootstrap의 영속 `AppRoot` Canvas 아래에 둔다. Home은 `AppRoot`에 열기를
-  요청하고 현재 `MenuNavigationController`의 모달 Scope로 Push/Pop한다.
+  요청하고 Option도 같은 Settings 모달을 연다. 현재 `MenuNavigationController`의
+  모달 Scope로 Push/Pop한다.
   씬이 바뀌면 오버레이와 씬 소유 탐색 참조를 정리한다. 설정 데이터는
   `LocalGameSettingsStore`가 소유하며 Prefab은 표시와 입력만 맡는다.
-  기존 Settings 씬은 빌드 목록에서 제외했다.
+  기존 Settings 씬은 제거했다.
 - Character 선택 화면은 `CharacterOverlay.prefab`으로 Bootstrap의 영속 `AppRoot`
   Canvas 아래에 둔다. Home의 Character 버튼은 현재 메뉴 탐색 범위 위에 모달
-  Scope를 열고, BEGIN과 닫기는 오버레이만 닫는다. 현재 프로필·능력 수치는
-  화면 시안이며 Game 시작 조건에 연결하지 않는다. 기존 Character 씬은 임시
-  화면으로 남아 있지만 Home에서는 열지 않는다.
+  Scope를 연다. 두 모달의 `OverlayPresentation`은 비축척 시간으로 패널의
+  alpha/scale Intro·Outro를 진행한다. Intro 동안 모달 입력을 막고 Outro가 끝난
+  뒤 Home Scope와 선택을 복원하며, 씬 이동 시 진행 중 표시와 탐색 참조를 정리한다.
+  `CharacterCatalog`는 Game 전용 정의 ID·버전·게이지·raw stat을
+  소유하고, `LocalPlayerDataStore` v2는 보유·장착 ID를 곡 기록/즐겨찾기와 함께
+  저장한다. 오버레이의 카드 선택은 미리보기만 바꾸며 닫기는 장착을 바꾸지 않는다.
+  BEGIN은 보유·정의·저장 성공을 확인한 뒤 장착하고 오버레이를 닫는다. 최초
+  NON 지급과 잘못된 장착 ID 복구는 저장소와 카탈로그 경계에서 처리한다. 기존
+  기존 Character 씬은 제거했다.
+  NON의 월드 해금·통상 재화·히든 해금 raw stat 50과 basis 50은 중립 배율 100%를
+  뜻하는 조정 가능한 개발값이다. 네 번째 stat은 미정이며 스킬·성장·실제 지급은
+  아직 연결하지 않았다. 기본 게이지는 시작 0/최대 100이다.
 - Home의 MUSIC 버튼은 하이어라키에 저장된 `MusicSelect` 곡 선택 화면을 연다.
-  Play를 누르면 선택한 곡 ID와 난이도 ID를 `AppRoot`에 기록하고 Game 씬으로
+  Play를 누르면 선택한 곡·난이도와 현재 장착한 캐릭터의 정의·게이지 규칙을
+  `AppRoot`에 기록하고 Game 씬으로
   이동한다. Music Select→Game에서는 흰 결정 연출이 화면을 덮은 뒤 Game을
-  로드하고, 새 씬 위에서 투명 오버레이의 후반부를 이어 재생한다. 전환 중
+  로드하고, 새 씬 위에서 흰 화면을 걷는다. 전환 중
   중복 Play와 Music Select의 ESC 복귀를 막는다. Game 씬은
   `MusicCatalog`에서 해당 ID의 검증된 실행 패키지와 음원을
-  찾아 패키지 ID를 다시 확인한 뒤 세션을 준비한다. 음원 로드가 끝나면 재생을
-  시작한다. 실패하면 Game 오류 화면으로 이동한다. 패키지와 재생 세션은 Game 씬이
+  찾아 패키지 ID를 다시 확인한 뒤 세션을 준비한다. 음원 로드가 끝나고
+  `AppRoot.IsTransitioning`이 해제되면 한 번만 재생을 시작한다. 재생 준비 오류,
+  Effect 실행 오류, 필수 Effect·판정 구성요소의 비정상 중단은 해당 시도를
+  무효화하고 Game 오류 화면으로 이동한다. 오류 화면에서 Music Select로 복귀할
+  수 있으며 이 오류 시도는 결과·진행 저장을 만들지 않는다. 정상 규칙에 따른
+  플레이 실패 결과는 별도의 종료 경계로 처리한다.
+  패키지와 재생 세션은 Game 씬이
   소유하며 `AppRoot`에는 남기지 않는다. Game에서 나가면 `MusicSelect`로 복귀한다.
   플레이 종료 시 Game은 세션의 점수·판정·콤보와 GameRule의 랭크를 불변 결과
   요약으로 확정한다. `AppRoot`는 이 요약을 Result 씬으로 한 번 전달하고 즉시
   비운다. Result 씬은 곡 카탈로그에서 제목·아티스트·재킷·난이도를 읽어 표시한다.
   곡·난이도별 최고 점수, 클리어 이력, 플레이 횟수, 최고 콤보와 곡 즐겨찾기는
-  Game 전용 로컬 JSON에 저장한다. Music Select는 최고 점수·즐겨찾기를,
+  Game 전용 로컬 JSON에 저장한다. 저장 v1을 읽을 때 기존 곡 기록과 즐겨찾기를
+  보존해 v2 보유·장착 필드를 채운다. 미지원 미래 버전이나 복구 불가 저장은
+  새 빈 데이터로 덮어쓰지 않고 시작 오류를 표시한다. Music Select는 최고 점수·즐겨찾기를,
   Result는 확정된 결과와 저장된 진행 기록을 읽는다. Auto Play는 진행에 반영하지
   않는다. 곡·난이도 첫 클리어마다 기억 조각 1개를 지급하며, 보유 수량은 클리어
   기록에서 계산한다. Result는 첫 클리어 보상만 표시하고 곡별 서사는 숨긴다.
-  기존 `Music` 임시 씬은 샘플 진입용으로 보존한다.
+  기존 `Music` 임시 씬은 제거했고 Home의 MUSIC 버튼은 `MusicSelect`를 연다.
+
+- 해금 도전 선택은 Game 전용 `MusicUnlockLibrary`가 맡는다. Bootstrap의
+  `AppRoot.musicUnlockLibrary`는 `Assets/Data/Music Unlock/MusicUnlockLibrary.asset`을
+  참조하고, 라이브러리의 `entries`에는 곡별 `Config.asset`을 명시적으로 등록한다.
+  현재 designant Config는 기존 전용 Rule 참조를 유지한다. 실제 선택 곡·난이도와
+  대상 곡의 선택 난이도 해금 여부로 후보를 정하며, 둘 이상 맞으면 기존 시작 오류
+  안내로 차단한다. 등록 순서는 우선순위가 아니다. null·중복 Config·잘못된 규칙과
+  등록된 대상의 잠긴 난이도 직접 시작도 차단한다. 미연결/빈 라이브러리와 조건
+  불일치는 기존 장착 캐릭터 경로를 유지한다. 특수 Hard 도전은 캐릭터 없이 시작하고,
+  대상 ID를 시작 snapshot에 고정한다. 기존 결과 저장은 성공한 수동 플레이에서
+  해당 난이도 이하를 누적 해금하며 Retry·저장 재시도·Auto Play 정책은 유지한다.
+  라이브러리는 작성 데이터만 소유하며 런타임에 자산을 수정하거나 폴더를 검색하지 않는다.
+  공통 선택·실행·저장 코드는 Gameplay에 유지하고 ChartMaker에는 의존을 추가하지 않는다.
 
 ### ChartMaker
 
@@ -189,14 +260,21 @@ Validated Runtime Package
 규칙, 판정 상태를 바꾸지 않는다. Resume은 같은 세션을 유지하고, Play/Restart는
 준비·commit이 성공한 뒤 새 세대를 게시한다.
 
-Game의 현재 시작 경계에서는 `AppRoot`가 다음 플레이의 곡·난이도와 선택한 캐릭터·
-게이지 규칙 입력을 보관한다. Game 씬의 `GameFlowController`가 준비된 채보 ID와
+Game의 현재 시작 경계에서는 `AppRoot`가 다음 플레이의 곡·난이도와 장착 캐릭터의
+정의 버전·raw stat·게이지 규칙 입력을 보관한다. Game 씬의 `GameFlowController`가 준비된 채보 ID와
 입력을 확인하고 규칙 자산을 세션 전용으로 복사한 뒤, 재생 시작 시 불변
 `GameAttemptStartSnapshot`을 확정한다. 실패한 시작은 규칙 변경을 되돌리고,
 Pause/Resume은 같은 시도를 유지하며 성공한 Retry만 새 시도를 만든다. 종료
 결과는 그 시작 snapshot을 Result에 전달한다. 자동 판정을 시도 중 한 번이라도
-사용하면 이후 꺼도 해당 결과는 로컬 기록·진행에 반영하지 않는다. 이 경계는
-Game 소유이며 ChartMaker에 캐릭터/사용자 저장 의존을 추가하지 않는다.
+사용하면 이후 꺼도 해당 결과는 로컬 기록·진행에 반영하지 않는다. Easy·Normal
+게이지는 체력 0으로 시작하거나 플레이 중 0을 유지해도 실패하지 않으며, 채보를
+끝까지 완료하고 체력이 70 이상이면 클리어한다. Hard와 특수 Hard는 체력 0에서
+즉시 실패하고 이후 판정으로 부활하지 않는다. 체력이 0보다 큰 채로 끝까지
+완료하면 클리어하며 0.1처럼 소수 체력도 인정한다. 현재 `clearHealth` 자산 값은
+이 게이지별 종료 판정에 사용하지 않는다.
+이 경계는 Game 소유이며 ChartMaker에 캐릭터/사용자 저장 의존을 추가하지 않는다.
+향후 장착·조건부 능력·정산을 연결하기 전에 `GameFlowController`의 시작 조건과
+시도 진행 책임을 Game 전용 소유자로 분리할지 검토한다.
 
 ## 7. Time / Judgement
 
@@ -210,7 +288,9 @@ Game 소유이며 ChartMaker에 캐릭터/사용자 저장 의존을 추가하�
 
 시각 T의 규칙 변경은 T 이전 입력에 소급하지 않는다. 같은 시각에는 Effect가 먼저이며,
 정확한 Miss 마감 시각에서는 기존 판정 계약대로 입력을 먼저 처리한다. 프레임 시간 역행과
-같은 시각의 중복 Effect 갱신은 막는다. 다음 프레임에 늦게 도착한 입력의 허용/폐기 경계와
+같은 시각의 중복 Effect 갱신은 막는다. 같은 시각에 여러 자동 Miss가 생겨도
+종료 실패가 확정되면 해당 자동 처리 묶음의 뒤 판정과 규칙 적용을 멈춘다.
+다음 프레임에 늦게 도착한 입력의 허용/폐기 경계와
 보정 부호는 [RhythmSystem.md](RhythmSystem.md)를 따른다.
 
 노트 배치의 Y/시간/scroll 계산은 Snapshot의 Timing/Scroll 결과를 공유한다. X 위치,
@@ -295,6 +375,8 @@ Game의 영구 진행이나 실제 해금 권한을 주지 않는다.
   않는다.
 - 이전 세대의 지연 callback이나 Dispose가 새 세대의 presenter를 변경할 수 없어야 한다.
 - 실행·취소·예외·컴포넌트 비활성화 모두 같은 멱등 cleanup 경로를 사용한다.
+  실행 중 Effect 또는 판정 컴포넌트가 독립적으로 비활성화되면 실패를 한 번만
+  보고하고 시도를 무효화한다. 정상적인 씬 종료·정리 과정은 새 실패를 만들지 않는다.
 - mutable runtime state를 static singleton이나 설정 asset에 저장하지 않는다.
 - Preview capability는 영구 진행이나 실제 Scene/Audio 교체 권한을 갖지 않는다.
 

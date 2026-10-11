@@ -64,7 +64,8 @@ namespace REmind.Gameplay.Effects
             owned.Clear();
         }
 
-        private sealed class DamageModifier : IRuleModifier, IEffectRuleHandle
+        private sealed class DamageModifier : IRuleModifier,
+            IPreciseHealthDeltaModifier, IEffectRuleHandle
         {
             private readonly double multiplier;
             private readonly double startTimeMs;
@@ -91,6 +92,13 @@ namespace REmind.Gameplay.Effects
                 if (current >= 0 || double.IsNaN(context.EvaluationTimeMs) ||
                     context.EvaluationTimeMs < startTimeMs || context.EvaluationTimeMs >= endTimeMs) return current;
                 return (int)Math.Max(int.MinValue, Math.Round(current * multiplier, MidpointRounding.AwayFromZero));
+            }
+            double IPreciseHealthDeltaModifier.ModifyHealthDelta(
+                double current, JudgeResult result, RuleContext context)
+            {
+                if (current >= 0d || double.IsNaN(context.EvaluationTimeMs) ||
+                    context.EvaluationTimeMs < startTimeMs || context.EvaluationTimeMs >= endTimeMs) return current;
+                return current * multiplier;
             }
             public double ModifyScoreWeight(double current, JudgeResult result, RuleContext context) => current;
             public ComboBehavior ModifyComboBehavior(ComboBehavior current, JudgeResult result, RuleContext context) => current;

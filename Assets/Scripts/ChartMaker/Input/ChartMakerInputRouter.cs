@@ -16,7 +16,9 @@ public enum ChartToolType
     SingleScratch = 3,
     LongScratch = 4,
     SingleAir = 5,
-    Eraser = 6
+    Eraser = 6,
+    CenterTap = 7,
+    Knob = 8
 }
 
 public enum ChartToolShortcut
@@ -73,8 +75,8 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
     public event Action UndoRequested;
     public event Action RedoRequested;
     /// <summary>
-    /// 선택된 Tap/Scratch 계열 편집을 요청합니다. true이면 일반/Long 종류를,
-    /// false이면 Tap 손 방향 또는 Scratch Powered 상태를 전환합니다.
+    /// Tab edits the selected note, or the active Knob placement mode.
+    /// For Knob, plain Tab cycles its outgoing curve; Shift toggles Start/Middle.
     /// </summary>
     public event Action<bool> EditSelectedNoteRequested;
     public event Action<Vector2Int, bool> MoveSelectionRequested;
@@ -184,6 +186,11 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
     public void SelectEraser()
     {
         SelectTool(ChartToolType.Eraser);
+    }
+
+    public void SelectKnob()
+    {
+        SelectTool(ChartToolType.Knob);
     }
 
     public void CancelTool()

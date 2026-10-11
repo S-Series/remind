@@ -2,6 +2,7 @@ using System;
 using REmind.Common.UI;
 using REmind.Gameplay.Chart;
 using REmind.Gameplay.Characters;
+using REmind.Gameplay.Effects;
 using REmind.Gameplay.Input.Judgement;
 using TMPro;
 using UnityEngine;
@@ -22,6 +23,7 @@ namespace REmind.Gameplay.Demo
         [SerializeField] private GameplayChartSessionController chartSession;
         [SerializeField] private GameplaySessionState sessionState;
         [SerializeField] private NoteJudgementSystem judgementSystem;
+        [SerializeField] private GameplayChartEffectController effectController;
         [SerializeField] private string songTitle = "Chroma I";
 
         [Header("Scene UI")]
@@ -42,17 +44,20 @@ namespace REmind.Gameplay.Demo
         [SerializeField] private TMP_Text resultTitle;
         [SerializeField] private TMP_Text resultDetail;
         [SerializeField] private TMP_Text errorDetail;
+        [SerializeField] private TMP_Text errorActionLabel;
         [SerializeField] private TMP_Text startNotice;
 
         private Screen screen = Screen.Loading;
         private bool autoPlay;
+        private int perfectPlus;
         private int perfect;
         private int great;
-        private int good;
         private int miss;
         private int maxCombo;
         private int lastPauseTransitionFrame = -1;
         private bool resultDispatched;
+        private GameResultSnapshot pendingSaveResult;
+        private bool handlingEffectFailure;
         private string startError;
         private float startNoticeUntil;
         private GameAttemptStartSnapshot activeAttempt;
@@ -63,6 +68,7 @@ namespace REmind.Gameplay.Demo
         private GameRuleConfig preparedRuleSource;
         private string preparedMusicId;
         private string preparedDifficultyId;
+        private string preparedUnlockTargetMusicId;
         private GameRule.SessionConfigChange pendingRuleChange;
 
         public GameAttemptStartSnapshot CurrentAttempt => activeAttempt;
@@ -75,12 +81,19 @@ namespace REmind.Gameplay.Demo
             if (!chartSession) chartSession = GetComponentInChildren<GameplayChartSessionController>(true);
             if (!sessionState) sessionState = GetComponentInChildren<GameplaySessionState>(true);
             if (!judgementSystem) judgementSystem = GetComponentInChildren<NoteJudgementSystem>(true);
+            if (!effectController && chartSession)
+                effectController = chartSession.GetComponent<GameplayChartEffectController>();
         }
 
         private void OnEnable()
         {
-            if (judgementSystem) judgementSystem.NoteJudged += OnNoteJudged;
+            if (judgementSystem)
+            {
+                judgementSystem.NoteJudged += OnNoteJudged;
+                judgementSystem.PlaybackFailed += HandlePlaybackFailed;
+            }
             if (sessionState) sessionState.StateChanged += OnSessionStateChanged;
+            if (effectController) effectController.PlaybackFailed += HandlePlaybackFailed;
             if (gameManager && gameManager.GamePlay)
             {
                 gameManager.GamePlay.PlaybackStarting += HandlePlaybackStarting;
@@ -92,8 +105,13 @@ namespace REmind.Gameplay.Demo
 
         private void OnDisable()
         {
-            if (judgementSystem) judgementSystem.NoteJudged -= OnNoteJudged;
+            if (judgementSystem)
+            {
+                judgementSystem.NoteJudged -= OnNoteJudged;
+                judgementSystem.PlaybackFailed -= HandlePlaybackFailed;
+            }
             if (sessionState) sessionState.StateChanged -= OnSessionStateChanged;
+            if (effectController) effectController.PlaybackFailed -= HandlePlaybackFailed;
             if (gameManager && gameManager.GamePlay)
             {
                 gameManager.GamePlay.PlaybackStarting -= HandlePlaybackStarting;
@@ -104,16 +122,17 @@ namespace REmind.Gameplay.Demo
             pendingRuleChange?.Rollback();
             pendingRuleChange = null;
             gameManager?.StopGame();
-            judgementSystem?.ResetJudgements(false);
             if (gameManager && gameManager.GameRule)
                 gameManager.GameRule.ClearSessionConfig();
             if (activeAttempt != null && AppRoot.Current)
                 AppRoot.Current.EndAttempt(activeAttempt.AttemptId);
             activeAttempt = null;
+            pendingSaveResult = null;
             activeAbilitySource = null;
             activeRuleSource = null;
             ClearPreparedStart();
             resultDispatched = true;
+            handlingEffectFailure = false;
             ResetCounts();
             startError = null;
             ClearStartNotice();
@@ -146,7 +165,12 @@ namespace REmind.Gameplay.Demo
                         songTitle = chartSession.CurrentSongTitle;
                     if (AppRoot.Current &&
                         AppRoot.Current.TryGetSelectedSong(out _))
-                        BeginSong(false);
+                    {
+                        // Scene activation precedes the transition's Outro. Keep
+                        // the prepared chart idle until the cover is fully gone.
+                        if (!AppRoot.Current.IsTransitioning)
+                            BeginSong(false);
+                    }
                     else
                         Show(Screen.Select);
                 }
@@ -200,7 +224,8 @@ namespace REmind.Gameplay.Demo
 
         public void Resume()
         {
-            if (screen == Screen.Paused &&
+            if ((!AppRoot.Current || !AppRoot.Current.IsTransitioning) &&
+                screen == Screen.Paused &&
                 lastPauseTransitionFrame != Time.frameCount &&
                 gameManager && gameManager.ResumeGame())
             {
@@ -213,7 +238,8 @@ namespace REmind.Gameplay.Demo
 
         public void Restart()
         {
-            if (!gameManager) return;
+            if (!gameManager ||
+                (AppRoot.Current && AppRoot.Current.IsTransitioning)) return;
             notePresenter?.SetAutoPlayEnabled(autoPlay);
             PresentStartOutcome(gameManager.RestartGame());
         }
@@ -237,8 +263,38 @@ namespace REmind.Gameplay.Demo
             AppRoot.NavigateToScene("MusicSelect");
         }
 
+        public void ResolveError()
+        {
+            if (screen != Screen.Error ||
+                (AppRoot.Current && AppRoot.Current.IsTransitioning)) return;
+            if (pendingSaveResult == null)
+            {
+                ReturnToMusic();
+                return;
+            }
+
+            try { AppRoot.Current.PublishResult(pendingSaveResult); }
+            catch (Exception exception)
+            {
+                Debug.LogError("Could not retry gameplay result save: " +
+                    exception, this);
+                startError = "플레이 결과를 저장하지 못했습니다. 저장 공간을 확인한 뒤 다시 시도해주세요. Esc를 누르면 곡 선택으로 돌아갑니다.";
+                Show(Screen.Error);
+                return;
+            }
+
+            pendingSaveResult = null;
+            startError = null;
+            if (!AppRoot.NavigateToScene("Result"))
+            {
+                startError = "결과는 저장했지만 결과 화면으로 이동하지 못했습니다. 곡 선택으로 돌아가 주세요.";
+                Show(Screen.Error);
+            }
+        }
+
         private void BeginSong(bool enableAutoPlay)
         {
+            if (AppRoot.Current && AppRoot.Current.IsTransitioning) return;
             if (!notePresenter || !notePresenter.IsReady || !gameManager ||
                 gameManager.PlaybackState == PlaybackState.Playing ||
                 gameManager.PlaybackState == PlaybackState.Paused) return;
@@ -277,6 +333,9 @@ namespace REmind.Gameplay.Demo
             }
 
             ClearStartNotice();
+            // A rejected Restart can stop playback after commit has begun. In
+            // that case the prior attempt cannot produce a valid result.
+            StopAttempt();
             Show(Screen.Error);
         }
 
@@ -314,6 +373,9 @@ namespace REmind.Gameplay.Demo
             }
             else if (next == Screen.Error)
             {
+                if (errorActionLabel)
+                    errorActionLabel.text = pendingSaveResult == null
+                        ? "Song Select" : "Retry Save";
                 if (errorDetail)
                     errorDetail.text = !string.IsNullOrEmpty(startError)
                         ? startError
@@ -337,7 +399,7 @@ namespace REmind.Gameplay.Demo
             double ratio = max > 0d ? sessionState.CurrentScore / max : 0d;
             RankGrade rank = gameManager.GameRule.Config.RankThresholds.Evaluate(ratio);
             resultDetail.text = $"Rank {rank}    Score {sessionState.CurrentScore:0}\n" +
-                $"Perfect {perfect}    Great {great}    Good {good}    Miss {miss}\n" +
+                $"Perfect+ {perfectPlus}    Perfect {perfect}    Great {great}    Miss {miss}\n" +
                 $"Health {sessionState.CurrentHealth:0}    " +
                 $"Judged {sessionState.JudgedNoteCount}/{sessionState.TotalNoteCount}";
         }
@@ -346,9 +408,9 @@ namespace REmind.Gameplay.Demo
         {
             switch (judgement.Result)
             {
+                case JudgeResult.PerfectPlus: perfectPlus++; break;
                 case JudgeResult.Perfect: perfect++; break;
                 case JudgeResult.Great: great++; break;
-                case JudgeResult.Good: good++; break;
                 case JudgeResult.Miss: miss++; break;
             }
         }
@@ -357,6 +419,26 @@ namespace REmind.Gameplay.Demo
         {
             if (sessionState && sessionState.CurrentCombo > maxCombo)
                 maxCombo = sessionState.CurrentCombo;
+        }
+
+        private void HandlePlaybackFailed(string diagnostic)
+        {
+            if (!isActiveAndEnabled || handlingEffectFailure ||
+                (screen != Screen.Playing && screen != Screen.Paused) ||
+                (gameManager && gameManager.GamePlay &&
+                 gameManager.GamePlay.IsStartInProgress)) return;
+
+            // A rejected start is handled by PresentStartOutcome, preserving
+            // the previous attempt on failed Restart. Here playback was active:
+            // invalidate it before any result can settle.
+            handlingEffectFailure = true;
+            try
+            {
+                startError = "곡을 재생하는 중 문제가 발생했습니다. 곡 선택으로 돌아가 다시 시도해주세요.";
+                StopAttempt();
+                Show(Screen.Error);
+            }
+            finally { handlingEffectFailure = false; }
         }
 
         private void FinishSong()
@@ -374,13 +456,22 @@ namespace REmind.Gameplay.Demo
                     activeAttempt.MusicId, activeAttempt.DifficultyId,
                     sessionState.CurrentScore, gameManager.GameRule.MaxScore,
                     gameManager.GameRule.GetRank(sessionState.CurrentScore),
-                    perfect, great, good, miss, maxCombo,
+                    perfectPlus, perfect, great, miss, maxCombo,
                     sessionState.TotalNoteCount, sessionState.IsCleared,
                     sessionState.IsFailed,
                     activeAttempt.IsAutoPlay ||
                         judgementSystem.UsedAutoPlayInCurrentAttempt,
                     activeAttempt);
-                AppRoot.Current.PublishResult(result);
+                try { AppRoot.Current.PublishResult(result); }
+                catch (Exception exception)
+                {
+                    Debug.LogError("Could not save gameplay result: " +
+                        exception, this);
+                    pendingSaveResult = result;
+                    startError = "플레이 결과를 저장하지 못했습니다. 저장 공간을 확인한 뒤 다시 시도해주세요. Esc를 누르면 곡 선택으로 돌아갑니다.";
+                    Show(Screen.Error);
+                    return;
+                }
                 AppRoot.NavigateToScene("Result");
                 return;
             }
@@ -403,6 +494,7 @@ namespace REmind.Gameplay.Demo
             string difficultyId = chartSession.CurrentChart.Metadata.DifficultyId;
             CharacterAbilityDefinition ability = null;
             GameRuleConfig selectedRule = null;
+            string unlockTargetMusicId = null;
             AppRoot.SongSelection selection = default;
             bool hasSelection = AppRoot.Current &&
                 AppRoot.Current.TryGetSelectedSong(out selection);
@@ -411,7 +503,7 @@ namespace REmind.Gameplay.Demo
                 string.Equals(selection.DifficultyId, difficultyId, StringComparison.Ordinal);
             if (selectionMatchesChart)
                 AppRoot.Current.TryGetSelectedPlayConditions(
-                    out ability, out selectedRule);
+                    out ability, out selectedRule, out unlockTargetMusicId);
             else if (gameManager.GamePlay.StartReason == PlaybackStartReason.Restart &&
                      activeAttempt != null &&
                      string.Equals(activeAttempt.MusicId, musicId,
@@ -423,6 +515,7 @@ namespace REmind.Gameplay.Demo
                 // that Restart is actually going to replay.
                 ability = activeAbilitySource;
                 selectedRule = activeRuleSource;
+                unlockTargetMusicId = activeAttempt.UnlockTargetMusicId;
             }
             else if (hasSelection)
                 return RejectStart(
@@ -447,6 +540,7 @@ namespace REmind.Gameplay.Demo
                 preparedRuleSource = selectedRule;
                 preparedMusicId = musicId;
                 preparedDifficultyId = difficultyId;
+                preparedUnlockTargetMusicId = unlockTargetMusicId;
                 return true;
             }
             catch (Exception exception)
@@ -471,13 +565,17 @@ namespace REmind.Gameplay.Demo
             {
                 pendingRuleChange?.Commit();
                 GameRuleConfig committed = gameManager.GameRule.Config;
+                if (!string.IsNullOrEmpty(preparedUnlockTargetMusicId) &&
+                    committed.SpecialHardGauge == null)
+                    throw new InvalidOperationException(
+                        "A song unlock attempt must start with Special Hard.");
                 CharacterGaugeRuleSnapshot gauge =
                     CharacterGaugeRuleSnapshot.Capture(committed);
                 CharacterAbilityStartSnapshot character =
                     preparedAbilitySource?.FreezeForStart(committed);
                 preparedAttempt = new GameAttemptStartSnapshot(
                     Guid.NewGuid(), preparedMusicId, preparedDifficultyId,
-                    autoPlay, gauge, character);
+                    autoPlay, gauge, character, preparedUnlockTargetMusicId);
                 return true;
             }
             catch (Exception exception)
@@ -499,6 +597,7 @@ namespace REmind.Gameplay.Demo
             pendingRuleChange?.Complete();
             pendingRuleChange = null;
             activeAttempt = preparedAttempt;
+            pendingSaveResult = null;
             activeAbilitySource = preparedAbilitySource;
             activeRuleSource = preparedRuleSource;
             ClearPreparedStart();
@@ -523,6 +622,7 @@ namespace REmind.Gameplay.Demo
             preparedRuleSource = null;
             preparedMusicId = null;
             preparedDifficultyId = null;
+            preparedUnlockTargetMusicId = null;
         }
 
         private bool RejectStart(string error)
@@ -540,10 +640,14 @@ namespace REmind.Gameplay.Demo
 
         private void StopAttempt()
         {
+            pendingRuleChange?.Rollback();
+            pendingRuleChange = null;
+            ClearPreparedStart();
             gameManager?.StopGame();
             if (activeAttempt != null && AppRoot.Current)
                 AppRoot.Current.EndAttempt(activeAttempt.AttemptId);
             activeAttempt = null;
+            pendingSaveResult = null;
             activeAbilitySource = null;
             activeRuleSource = null;
             resultDispatched = true;
@@ -554,7 +658,7 @@ namespace REmind.Gameplay.Demo
 
         private void ResetCounts()
         {
-            perfect = great = good = miss = maxCombo = 0;
+            perfectPlus = perfect = great = miss = maxCombo = 0;
         }
 
         private static void SetVisible(GameObject target, bool visible)

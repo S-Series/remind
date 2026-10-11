@@ -19,6 +19,7 @@ namespace REmind.Gameplay
         [SerializeField, Min(0f)] private float revealSeconds = 0.25f;
 
         private bool transitioning;
+        private bool usingCrystalCover;
 
         public bool IsTransitioning => transitioning;
         public bool OverlayVisible => (crystalOverlayTransition &&
@@ -28,8 +29,15 @@ namespace REmind.Gameplay
              crystalTransition.visibility.alpha > 0f) ||
             (fadeCanvas && fadeCanvas.enabled && fadeGroup &&
              fadeGroup.alpha > 0f);
-        public float TransitionElapsed => crystalOverlayTransition
-            ? crystalOverlayTransition.Elapsed : 0f;
+        public float TransitionElapsed
+        {
+            get
+            {
+                CrystalTransitionPlayer active = usingCrystalCover
+                    ? crystalTransition : crystalOverlayTransition;
+                return active ? active.Elapsed : 0f;
+            }
+        }
 
         private void Awake()
         {
@@ -47,16 +55,33 @@ namespace REmind.Gameplay
         public bool TransitionTo(string sceneName, bool useCrystalCover = false)
         {
             if (transitioning || string.IsNullOrEmpty(sceneName) ||
-                !Application.CanStreamedLevelBeLoaded(sceneName) ||
-                !crystalOverlayTransition || !crystalOverlayTransition.clip ||
+                !Application.CanStreamedLevelBeLoaded(sceneName)) return false;
+
+            if (useCrystalCover)
+            {
+                if (!crystalTransition || !crystalTransition.clip ||
+                    !crystalTransition.visibility ||
+                    !crystalTransition.whiteCover) return false;
+                transitioning = true;
+                usingCrystalCover = true;
+                crystalTransition.Play();
+                if (!crystalTransition.IsPlaying)
+                {
+                    FinishTransition();
+                    return false;
+                }
+                StartCoroutine(PlayWhiteAndLoad(sceneName));
+                return true;
+            }
+
+            if (!crystalOverlayTransition || !crystalOverlayTransition.clip ||
                 !crystalOverlayTransition.loopClip ||
                 !crystalOverlayTransition.outroClip ||
                 !crystalOverlayTransition.visibility || !fadeCanvas ||
-                !fadeGroup || (useCrystalCover && (!crystalTransition ||
-                !crystalTransition.clip || !crystalTransition.visibility ||
-                !crystalTransition.whiteCover))) return false;
+                !fadeGroup) return false;
 
             transitioning = true;
+            usingCrystalCover = false;
             float introStartedAt = Time.unscaledTime;
             crystalOverlayTransition.PlayPhase(crystalOverlayTransition.clip,
                 crystalOverlayTransition.Duration * 0.5f, false, false);
@@ -65,81 +90,47 @@ namespace REmind.Gameplay
                 transitioning = false;
                 return false;
             }
-            StartCoroutine(PlayAndLoad(sceneName, useCrystalCover, introStartedAt));
+            StartCoroutine(PlayOverlayAndLoad(sceneName, introStartedAt));
             return true;
         }
 
-        private IEnumerator PlayAndLoad(string sceneName, bool useCrystalCover,
+        private IEnumerator PlayOverlayAndLoad(string sceneName,
             float introStartedAt)
         {
             float halfDuration = crystalOverlayTransition.Duration * 0.5f;
             float darkFadeInSeconds = Mathf.Min(DarkFadeSeconds, halfDuration);
             float darkFadeOutSeconds = Mathf.Min(DarkFadeSeconds, halfDuration);
-            if (!useCrystalCover)
-            {
-                fadeCanvas.enabled = true;
-                fadeGroup.blocksRaycasts = true;
-            }
+            fadeCanvas.enabled = true;
+            fadeGroup.blocksRaycasts = true;
 
-            // Let Intro animate before general navigation starts loading. The
-            // whiteout route still waits until its own cover is complete.
+            // Let Intro animate before general navigation starts loading.
             AsyncOperation load = null;
-            if (!useCrystalCover)
+            while (Time.unscaledTime - introStartedAt < SceneLoadDelaySeconds)
             {
-                while (Time.unscaledTime - introStartedAt < SceneLoadDelaySeconds)
-                {
-                    fadeGroup.alpha = Mathf.Clamp01(
-                        crystalOverlayTransition.Elapsed /
-                        Mathf.Max(0.001f, darkFadeInSeconds));
-                    yield return null;
-                }
-                load = StartSceneLoad(sceneName);
-                if (load == null)
-                {
-                    FinishTransition();
-                    yield break;
-                }
+                fadeGroup.alpha = Mathf.Clamp01(
+                    crystalOverlayTransition.Elapsed /
+                    Mathf.Max(0.001f, darkFadeInSeconds));
+                yield return null;
+            }
+            load = StartSceneLoad(sceneName);
+            if (load == null)
+            {
+                FinishTransition();
+                yield break;
             }
             while (crystalOverlayTransition.IsPlaying)
             {
-                if (!useCrystalCover)
-                    fadeGroup.alpha = Mathf.Clamp01(
-                        crystalOverlayTransition.Elapsed /
-                        Mathf.Max(0.001f, darkFadeInSeconds));
+                fadeGroup.alpha = Mathf.Clamp01(
+                    crystalOverlayTransition.Elapsed /
+                    Mathf.Max(0.001f, darkFadeInSeconds));
                 yield return null;
             }
-            if (!useCrystalCover) fadeGroup.alpha = 1f;
+            fadeGroup.alpha = 1f;
 
-            bool looping = useCrystalCover || load.progress < 0.9f;
+            bool looping = load.progress < 0.9f;
             if (looping)
                 crystalOverlayTransition.PlayPhase(crystalOverlayTransition.loopClip,
                     crystalOverlayTransition.loopClip.length, true);
-
-            if (useCrystalCover)
-            {
-                crystalTransition.Play();
-                float fadeStart = Time.unscaledTime;
-                crystalTransition.visibility.alpha = 0f;
-                while (crystalTransition.IsPlaying && !crystalTransition.IsCovered)
-                {
-                    crystalTransition.visibility.alpha = Mathf.Clamp01(
-                        (Time.unscaledTime - fadeStart) / 0.25f);
-                    yield return null;
-                }
-                if (!crystalTransition.IsCovered)
-                {
-                    FinishTransition();
-                    yield break;
-                }
-                crystalTransition.Pause();
-                crystalTransition.visibility.alpha = 1f;
-                load = StartSceneLoad(sceneName);
-                if (load == null)
-                {
-                    FinishTransition();
-                    yield break;
-                }
-            }
 
             while (load.progress < 0.9f) yield return null;
             load.allowSceneActivation = true;
@@ -153,25 +144,45 @@ namespace REmind.Gameplay
             }
             crystalOverlayTransition.PlayPhase(crystalOverlayTransition.outroClip,
                 halfDuration);
-            if (useCrystalCover)
-            {
-                float revealStart = Time.unscaledTime;
-                while (Time.unscaledTime - revealStart < revealSeconds)
-                {
-                    crystalTransition.visibility.alpha = 1f - Mathf.Clamp01(
-                        (Time.unscaledTime - revealStart) /
-                        Mathf.Max(0.001f, revealSeconds));
-                    yield return null;
-                }
-                crystalTransition.Hide();
-            }
             while (crystalOverlayTransition.IsPlaying)
             {
-                if (!useCrystalCover)
-                    fadeGroup.alpha = Mathf.Clamp01(
-                        (crystalOverlayTransition.PlaybackDuration -
-                         crystalOverlayTransition.Elapsed) /
-                        Mathf.Max(0.001f, darkFadeOutSeconds));
+                fadeGroup.alpha = Mathf.Clamp01(
+                    (crystalOverlayTransition.PlaybackDuration -
+                     crystalOverlayTransition.Elapsed) /
+                    Mathf.Max(0.001f, darkFadeOutSeconds));
+                yield return null;
+            }
+            FinishTransition();
+        }
+
+        private IEnumerator PlayWhiteAndLoad(string sceneName)
+        {
+            while (crystalTransition.IsPlaying && !crystalTransition.IsCovered)
+                yield return null;
+            if (!crystalTransition.IsCovered)
+            {
+                FinishTransition();
+                yield break;
+            }
+            crystalTransition.Pause();
+            crystalTransition.visibility.alpha = 1f;
+            AsyncOperation load = StartSceneLoad(sceneName);
+            if (load == null)
+            {
+                FinishTransition();
+                yield break;
+            }
+            while (load.progress < 0.9f) yield return null;
+            load.allowSceneActivation = true;
+            while (!load.isDone) yield return null;
+            yield return null;
+
+            float revealStart = Time.unscaledTime;
+            while (Time.unscaledTime - revealStart < revealSeconds)
+            {
+                crystalTransition.visibility.alpha = 1f - Mathf.Clamp01(
+                    (Time.unscaledTime - revealStart) /
+                    Mathf.Max(0.001f, revealSeconds));
                 yield return null;
             }
             FinishTransition();
@@ -183,6 +194,7 @@ namespace REmind.Gameplay
             if (crystalOverlayTransition) crystalOverlayTransition.Hide();
             HideFade();
             transitioning = false;
+            usingCrystalCover = false;
         }
 
         private static AsyncOperation StartSceneLoad(string sceneName)

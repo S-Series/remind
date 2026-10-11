@@ -1,3 +1,4 @@
+using REmind.Charting;
 using System;
 using System.Collections.Generic;
 using REmind.Data;
@@ -6,7 +7,7 @@ using UnityEngine;
 [DisallowMultipleComponent]
 public sealed class ChartNoteSelectionController : MonoBehaviour
 {
-    private const int SelectionCategoryCount = 8;
+    private const int SelectionCategoryCount = 10;
     private const int MeasureCount = ChartHolder.MeasureCount;
 
     [SerializeField] private ChartMakerInputRouter inputRouter;
@@ -311,6 +312,8 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
             NoteType.Effect => 5,
             NoteType.Camera => 6,
             NoteType.Marker => 7,
+            NoteType.CenterTap => 8,
+            NoteType.Knob => 9,
             _ => -1
         };
     }
@@ -348,9 +351,16 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
     /// <summary>
     /// Tab은 Tap의 손 방향 또는 Scratch의 Powered 상태를 전환합니다.
     /// Shift+Tab은 일반/Long 종류를 전환합니다.
+    /// Knob는 Tab으로 다음 구간 Linear/Sin/Cos, Shift+Tab으로 Start/Middle을 전환합니다.
     /// </summary>
     public void EditSelectedNote(bool toggleLongType)
     {
+        if (CanEditChart && placementController && selectedNoteObjects.Count == 0 &&
+            placementController.CurrentTool == ChartToolType.Knob)
+        {
+            placementController.ToggleKnobMode(!toggleLongType);
+            return;
+        }
         if (!CanEditChart || !placementController ||
             selectedNoteObjects.Count == 0 ||
             !selectedNoteObjects[0])
@@ -367,7 +377,7 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
                 out NoteType noteType,
                 out NoteHandleType handleType,
                 out _) ||
-            (noteType != NoteType.Tap &&
+            (noteType != NoteType.Knob && noteType != NoteType.Tap &&
              noteType != NoteType.LongTap &&
              noteType != NoteType.Scratch &&
              noteType != NoteType.LongScratch))
@@ -378,7 +388,16 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
         bool succeeded;
         string error;
 
-        if (noteType == NoteType.Scratch ||
+        if (noteType == NoteType.Knob)
+        {
+            ChartNotePointKind kind = !toggleLongType ? holder.knobPointKind :
+                holder.knobPointKind == ChartNotePointKind.Start ? ChartNotePointKind.Mid : ChartNotePointKind.Start;
+            ChartKnobInterpolation curve = !toggleLongType
+                ? ChartPlacementController.NextKnobCurve(holder.knobCurve) : holder.knobCurve;
+            succeeded = placementController.TryEditCenterNote(selectedObject, holder.AbsoluteChartPosition,
+                kind, holder.knobX, out error, curve: !toggleLongType ? curve : null);
+        }
+        else if (noteType == NoteType.Scratch ||
             noteType == NoteType.LongScratch)
         {
             succeeded = toggleLongType
@@ -443,6 +462,17 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
         }
 
         int targetLine = sourceLine;
+        if (noteType.IsCenter())
+        {
+            int position = direction.y == 0 ? holder.AbsoluteChartPosition :
+                GetMovedAbsolutePosition(holder.AbsoluteChartPosition, direction.y, moveByPage);
+            double x = noteType == NoteType.Knob
+                ? System.Math.Max(-1, System.Math.Min(1, holder.knobX + direction.x * 0.1)) : 0;
+            placementController.TryEditCenterNote(selectedObject, position, holder.knobPointKind,
+                x, out string centerError);
+            if (centerError != null) Debug.LogWarning(centerError, this);
+            return;
+        }
         int targetAbsolutePosition = holder.AbsoluteChartPosition;
         NoteHandleType targetHandle = sourceHandle;
 
@@ -658,6 +688,7 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
         }
 
         ChartEditHistory.CommitChange(editTransaction);
+        placementController?.RefreshKnobPaths();
         ClearSelection();
     }
 

@@ -470,6 +470,11 @@ namespace REmind.Gameplay.Effects
         {
             bool hadRuntimeState = pendingSession != null ||
                 activeSession != null;
+            // Report an isolated component shutdown, not the owning scene's exit.
+            bool interrupted = !enabled && gameObject.activeInHierarchy &&
+                gameManager && gameManager.GamePlay &&
+                (gameManager.PlaybackState == PlaybackState.Playing ||
+                 gameManager.PlaybackState == PlaybackState.Paused);
             lifecycleStopping = true;
             acceptingStarts = false;
             if (bound)
@@ -484,12 +489,15 @@ namespace REmind.Gameplay.Effects
             }
             Exception cleanupFailure = CombineCleanupFailures(
                 StopPendingSession(), StopSession());
-            if (hadRuntimeState && gameManager && gameManager.GamePlay)
+            if ((hadRuntimeState || interrupted) &&
+                gameManager && gameManager.GamePlay)
                 gameManager.StopGame();
             plan = null;
             if (cleanupFailure != null)
                 ReportFailure("Disabled Effect session cleanup failed: " +
                     cleanupFailure.Message);
+            else if (interrupted)
+                ReportFailure("Effect component was disabled during playback.");
             if (bound)
             {
                 gameManager.GamePlay.PlaybackStarting -= HandlePlaybackStarting;

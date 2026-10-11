@@ -37,13 +37,11 @@ public static class RuntimePackageAssetBuilder
         string root = Directory.GetParent(Application.dataPath).FullName;
         string dataPath = Path.Combine(root, ISongData);
         SongContent song = SongContentFileStore.Load(dataPath);
-        var entry = song.FindChart("hard") ?? throw new FormatException(
-            "The I song has no hard chart entry.");
         string chartPath = REmind.Charting.SongContentCodec.ResolveReference(
-            dataPath, entry.ChartFile);
+            dataPath, REmind.Charting.SongChartFiles.GetFileName("hard"));
         ChartFile chart = ChartEffectFileStore.Load(chartPath, out _, out string chartText);
         SongContentFileStore.ValidateChart(chartPath, chart);
-        string package = ChartMakerRuntimePackageExporter.Export(chartText);
+        string package = ChartMakerRuntimePackageExporter.Export(chartText, null, "hard");
         string outputPath = ChartMakerRuntimePackageExporter
             .DefaultOutputPath(chartPath);
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath));

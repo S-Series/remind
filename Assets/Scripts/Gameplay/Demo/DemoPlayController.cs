@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using REmind.Charting;
 using REmind.Gameplay.Chart;
 using REmind.Gameplay.Input.Judgement;
+using REmind.Presentation;
 using UnityEngine;
 
 namespace REmind.Gameplay.Demo
@@ -10,6 +11,7 @@ namespace REmind.Gameplay.Demo
     [DisallowMultipleComponent]
     public sealed class DemoPlayController : MonoBehaviour
     {
+        private const float FieldHalfWidth = 15f;
         private static readonly float[] LineXPositions =
         {
             -11.25f,
@@ -36,6 +38,8 @@ namespace REmind.Gameplay.Demo
         [SerializeField] private GameObject longTapNotePrefab;
         [SerializeField] private GameObject longScratchNotePrefab;
         [SerializeField] private GameObject airNotePrefab;
+        [SerializeField] private GameObject centerTapNotePrefab;
+        [SerializeField] private Material knobPathMaterial;
         [SerializeField] private Transform noteField;
         [SerializeField] private bool playOnReady = true;
 
@@ -234,6 +238,15 @@ namespace REmind.Gameplay.Demo
 
             judgementSystem.ClearRegisteredNoteViews();
 
+            SpriteRenderer knobSortingReference =
+                scratchNotePrefab
+                    ? scratchNotePrefab.GetComponentInChildren<SpriteRenderer>()
+                    : tapNotePrefab.GetComponentInChildren<SpriteRenderer>();
+            int knobSortingLayer = knobSortingReference
+                ? knobSortingReference.sortingLayerID : 0;
+            int knobSortingOrder = knobSortingReference
+                ? knobSortingReference.sortingOrder : 4;
+
             IReadOnlyList<PlayableNoteSnapshot> notes =
                 preparedChart.Snapshot.Notes;
             for (int noteIndex = 0; noteIndex < notes.Count; noteIndex++)
@@ -245,48 +258,63 @@ namespace REmind.Gameplay.Demo
                 }
                 var noteObject = new GameObject($"{note.Kind} {note.Id}");
                 noteObject.transform.SetParent(noteField, false);
-                GameObject prefab = PrefabFor(note.Kind);
-                for (int pointIndex = 0; pointIndex < note.Points.Count;
-                     pointIndex++)
+                if (note.Kind == ChartNoteKind.Knob)
                 {
-                    PlayableNotePoint point = note.Points[pointIndex];
-                    GameObject marker = Instantiate(prefab,
-                        noteObject.transform, false);
-                    marker.name = point.Kind.ToString();
-                    marker.transform.localPosition = new Vector3(
-                        LaneX(note.Lane), (float)point.FloorPosition,
-                        note.Lane >= 4 && note.Lane < 8 ? -2f : 0f);
-                    Vector3 markerScale = marker.transform.localScale;
-                    markerScale.y /= (float)EffectiveSpeedMultiplier;
-                    marker.transform.localScale = markerScale;
+                    List<KnobPathPoint> pathPoints =
+                        BuildKnobPathPoints(note,
+                            preparedChart.Snapshot);
+                    KnobPathView knobView =
+                        noteObject.AddComponent<KnobPathView>();
+                    knobView.Configure(pathPoints,
+                        (float)EffectiveSpeedMultiplier,
+                        knobSortingLayer, knobSortingOrder,
+                        knobPathMaterial);
                 }
-                for (int segmentIndex = 0;
-                     segmentIndex + 1 < note.Points.Count; segmentIndex++)
+                else
                 {
-                    PlayableNotePoint start = note.Points[segmentIndex];
-                    PlayableNotePoint end = note.Points[segmentIndex + 1];
-                    GameObject ribbon = Instantiate(prefab,
-                        noteObject.transform, false);
-                    ribbon.name = $"Segment {segmentIndex + 1}";
-                    ribbon.transform.localPosition = new Vector3(
-                        LaneX(note.Lane),
-                        (float)((start.FloorPosition +
-                            end.FloorPosition) * 0.5d),
-                        note.Lane >= 4 && note.Lane < 8 ? -2f : 0f);
-                    SpriteRenderer sprite = ribbon.GetComponent<SpriteRenderer>();
-                    if (sprite && sprite.sprite)
+                    GameObject prefab = PrefabFor(note.Kind);
+                    for (int pointIndex = 0; pointIndex < note.Points.Count;
+                         pointIndex++)
                     {
-                        Color color = sprite.color;
-                        color.a *= 0.4f;
-                        sprite.color = color;
-                        sprite.sortingOrder--;
-                        Vector3 scale = ribbon.transform.localScale;
-                        scale.y = (float)Math.Max(0.01d,
-                            Math.Abs(end.FloorPosition -
-                                start.FloorPosition) /
-                            sprite.sprite.bounds.size.y /
-                            EffectiveSpeedMultiplier);
-                        ribbon.transform.localScale = scale;
+                        PlayableNotePoint point = note.Points[pointIndex];
+                        GameObject marker = Instantiate(prefab,
+                            noteObject.transform, false);
+                        marker.name = point.Kind.ToString();
+                        marker.transform.localPosition = new Vector3(
+                            LaneX(note.Lane), (float)point.FloorPosition,
+                            note.Lane >= 4 && note.Lane < 8 ? -2f : 0f);
+                        Vector3 markerScale = marker.transform.localScale;
+                        markerScale.y /= (float)EffectiveSpeedMultiplier;
+                        marker.transform.localScale = markerScale;
+                    }
+                    for (int segmentIndex = 0;
+                         segmentIndex + 1 < note.Points.Count; segmentIndex++)
+                    {
+                        PlayableNotePoint start = note.Points[segmentIndex];
+                        PlayableNotePoint end = note.Points[segmentIndex + 1];
+                        GameObject ribbon = Instantiate(prefab,
+                            noteObject.transform, false);
+                        ribbon.name = $"Segment {segmentIndex + 1}";
+                        ribbon.transform.localPosition = new Vector3(
+                            LaneX(note.Lane),
+                            (float)((start.FloorPosition +
+                                end.FloorPosition) * 0.5d),
+                            note.Lane >= 4 && note.Lane < 8 ? -2f : 0f);
+                        SpriteRenderer sprite = ribbon.GetComponent<SpriteRenderer>();
+                        if (sprite && sprite.sprite)
+                        {
+                            Color color = sprite.color;
+                            color.a *= 0.4f;
+                            sprite.color = color;
+                            sprite.sortingOrder--;
+                            Vector3 scale = ribbon.transform.localScale;
+                            scale.y = (float)Math.Max(0.01d,
+                                Math.Abs(end.FloorPosition -
+                                    start.FloorPosition) /
+                                sprite.sprite.bounds.size.y /
+                                EffectiveSpeedMultiplier);
+                            ribbon.transform.localScale = scale;
+                        }
                     }
                 }
 
@@ -304,10 +332,18 @@ namespace REmind.Gameplay.Demo
             return true;
         }
 
+        private static List<KnobPathPoint> BuildKnobPathPoints(
+            PlayableNoteSnapshot note, PlayableChartSnapshot chart)
+        {
+            return KnobPathView.BuildPlayablePoints(note, chart, FieldHalfWidth);
+        }
+
         private GameObject PrefabFor(ChartNoteKind kind)
         {
             switch (kind)
             {
+                case ChartNoteKind.CenterTap:
+                    return centerTapNotePrefab ? centerTapNotePrefab : tapNotePrefab;
                 case ChartNoteKind.Scratch:
                     return scratchNotePrefab ? scratchNotePrefab : tapNotePrefab;
                 case ChartNoteKind.Hold:
@@ -324,7 +360,9 @@ namespace REmind.Gameplay.Demo
         {
             if (lane < 4) return LineXPositions[lane];
             if (lane < 8) return LineXPositions[lane - 4];
-            return lane == 8 ? -15f : 15f;
+            if (lane == (int)ChartLane.GroundLeft) return -FieldHalfWidth;
+            if (lane == (int)ChartLane.GroundRight) return FieldHalfWidth;
+            return 0f;
         }
     }
 }

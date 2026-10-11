@@ -1,6 +1,26 @@
 {
+  "_guide": {
+    "date": "YYYY-MM-DD HH:mm:ss. 예: 2026-10-07 14:49:47. 생성 메뉴는 PC 로컬 시각을 넣으며 이후 자동 갱신하지 않습니다.",
+    "metadataStatus": "draft는 제작 중인 초안으로 카탈로그에서 제외됩니다. 음원·재킷·채보 준비 후 test로 바꾸면 등록됩니다.",
+    "musicId": "생성 기본값은 default. 등록 전 1~80자의 영문·숫자·_·-로 된 곡별 고유 ID로 바꾸고 채보의 musicId와 맞춥니다.",
+    "songSeason": "0 이상의 시즌 번호.",
+    "audioFile / jacketFile": "같은 곡 폴더의 파일명만 사용합니다. 생략 시 audio.mp3 / art.jpg.",
+    "musicVolumeMultiplier": "0~2, 기본 1. 음악 볼륨은 이 값 × 0.5이며 Game 사용자 음량 설정도 적용됩니다.",
+    "previewStartMs / previewDurationMs": "미리듣기 시작·길이, 단위 ms(1000ms=1초). 생성 기본값은 0 / 5000(5초). 시작은 0 이상, 길이는 0 초과.",
+    "hiddenType": {
+      "NotHidden": "일반곡.",
+      "Masked": "해금 난이도가 없으면 목록에 존재만 표시하고 곡 정보·미리듣기를 가립니다.",
+      "Puzzle": "곡 정보는 Masked와 같이 가리며 잠긴 난이도를 직접 선택하면 unlockHint 안내를 표시합니다.",
+      "Invisible": "해금 난이도가 하나도 없으면 목록에서 제외합니다."
+    },
+    "unlockHint": "Puzzle의 조건 안내문. 비우면 미공개 안내를 표시합니다. 안내문 자체가 해금 조건을 판정하지는 않습니다.",
+    "requiresPurchase": "true이면 플레이에 사용자 isOwned가 필요합니다. 소유만으로 히든곡이 공개되지는 않습니다.",
+    "difficultyUnlock": "Easy → Normal → Hard → Chaos → Extra 순서로 도전 성공 난이도 이하를 누적 해금합니다. Extra는 전체 해금이며 낮은 난이도 재성공으로 줄어들지 않습니다. 기존 isUnlocked=true는 전체 해금으로 유지됩니다.",
+    "playerProgress": "isOwned(소유)와 unlockedDifficultyIds(해금 난이도)는 사용자 저장 값입니다. 히든곡은 하나 이상 해금하면 정보가 공개되며 플레이는 선택 난이도 해금과 별도 소유 조건을 따릅니다."
+  },
   "format": "REmindSong",
   "formatVersion": 1,
+  "date": "2026-10-07 14:49:47",
   "metadataStatus": "test",
   "musicId": "designant",
   "songSeason": 0,
@@ -9,13 +29,6 @@
   "musicVolumeMultiplier": 1.0,
   "previewStartMs": 1200.0,
   "previewDurationMs": 25000.0,
-  "hiddenType": "NotHidden",
-  "requiresPurchase": false,
-  "charts": [
-    {
-      "difficultyId": "hard",
-      "level": 0,
-      "chartAuthor": "Unknown"
-    }
-  ]
+  "hiddenType": "Masked",
+  "requiresPurchase": false
 }

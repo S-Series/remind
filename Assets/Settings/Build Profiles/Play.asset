@@ -25,17 +25,9 @@ MonoBehaviour:
   - m_enabled: 1
     m_path: Assets/Scenes/Home.unity
   - m_enabled: 1
-    m_path: Assets/Scenes/Story.unity
-  - m_enabled: 1
     m_path: Assets/Scenes/MusicSelect.unity
   - m_enabled: 1
-    m_path: Assets/Scenes/Music.unity
-  - m_enabled: 1
-    m_path: Assets/Scenes/Character.unity
-  - m_enabled: 1
     m_path: Assets/Scenes/ReMind.unity
-  - m_enabled: 1
-    m_path: Assets/Scenes/Option.unity
   - m_enabled: 1
     m_path: Assets/Scenes/Game.unity
   - m_enabled: 1

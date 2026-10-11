@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using REmind.Charting;
 using TMPro;
@@ -17,14 +18,10 @@ namespace REmind.Gameplay.Demo
         [SerializeField] private string difficultyId = "hard";
         [SerializeField] private string title;
         [SerializeField] private string artist;
-        [SerializeField, TextArea(2, 4)] private string description;
         [SerializeField, Min(1)] private int level = 1;
-        [SerializeField] private string rank = "-";
-        [SerializeField] private string bestScore = "-";
+        [SerializeField] private string bestScore = "0";
         [SerializeField] private MusicCategory category;
         [SerializeField] private Image slotImage;
-        [SerializeField] private Sprite normalBackgroundSprite;
-        [SerializeField] private Sprite selectedBackgroundSprite;
         [SerializeField] private Sprite artwork;
         [SerializeField] private Image jacketArtwork;
         [SerializeField] private TMP_Text titleLabel;
@@ -34,37 +31,47 @@ namespace REmind.Gameplay.Demo
 
         private static readonly Color NormalText = new(0.93f, 0.95f, 1f, 1f);
         private static readonly Color NormalSecondary = new(0.69f, 0.76f, 0.91f, 1f);
+        private static readonly Color NormalPanel = new(1f, 1f, 1f, 0.78f);
         private static readonly Color SelectedText = new(0.97f, 0.98f, 1f, 1f);
         private static readonly Color SelectedSecondary = new(0.84f, 0.91f, 1f, 1f);
         private MusicCatalogEntry catalogEntry;
 
-        public string Title => title;
+        public SongContent Content { get; private set; }
+        public SongAccessPolicy Access { get; private set; }
+        public SongAccessPolicy GetDifficultyAccess(string id) =>
+            Content != null && AppRoot.Current
+                ? AppRoot.Current.GetSongAccess(Content, id) : Access;
+        public string UnlockHint => string.IsNullOrWhiteSpace(Content?.UnlockHint)
+            ? "해금 조건이 아직 공개되지 않았습니다." : Content.UnlockHint;
+        public string Title => Access.IsMasked ? "???" : title;
         public string MusicId => catalogEntry?.MusicId;
+        public IReadOnlyList<MusicDifficultyEntry> Difficulties =>
+            catalogEntry?.Difficulties ?? Array.Empty<MusicDifficultyEntry>();
+        public MusicDifficultyEntry FindDifficulty(string id) => catalogEntry?.FindDifficulty(id);
         public string DifficultyId => difficultyId;
-        public string Artist => artist;
-        public string Description => description;
-        public int Level => level;
-        public string Rank => rank;
-        public string BestScore => bestScore;
+        public string Artist => Access.IsMasked ? "???" : artist;
+        public int Level => Access.IsMasked ? 0 : level;
+        public string BestScore => Access.IsMasked ? "—" : bestScore;
         public MusicCategory Category => category;
         public bool Favorite { get; private set; }
-        public Sprite Artwork => artwork;
+        public Sprite Artwork => Access.IsMasked ? null : artwork;
         public bool HasSongError { get; private set; }
-        public AudioClip PreviewAudio => catalogEntry?.AudioClip;
+        public AudioClip PreviewAudio => Access.IsMasked ? null : catalogEntry?.AudioClip;
         public double PreviewStartMs { get; private set; }
         public double PreviewDurationMs { get; private set; }
         public float PreviewVolume { get; private set; } = 0.5f;
 
         public bool TryGetLevel(string id, out int chartLevel)
         {
-            if (catalogEntry != null) return catalogEntry.TryGetLevel(id, out chartLevel);
+            if (catalogEntry != null && !Access.IsMasked)
+                return catalogEntry.TryGetLevel(id, out chartLevel);
             chartLevel = 0;
             return false;
         }
 
         public bool SelectDifficulty(string id)
         {
-            if (!TryGetLevel(id, out int chartLevel)) return false;
+            if (catalogEntry == null || !catalogEntry.TryGetLevel(id, out int chartLevel)) return false;
             difficultyId = id;
             level = chartLevel;
             artwork = catalogEntry.GetJacket(id);
@@ -86,6 +93,8 @@ namespace REmind.Gameplay.Demo
                 SongContent song = SongContentCodec.Parse(songData.text);
                 if (!string.Equals(song.MusicId, entry.MusicId, StringComparison.Ordinal))
                     throw new FormatException("Catalog musicId does not match data.json: " + entry.MusicId);
+                Content = song;
+                RefreshAccess();
                 PreviewStartMs = song.PreviewStartMs;
                 PreviewDurationMs = song.PreviewDurationMs;
                 PreviewVolume = song.PlaybackVolume;
@@ -112,26 +121,22 @@ namespace REmind.Gameplay.Demo
             button.onClick.AddListener(() => action());
         }
 
-        public void Display(bool selected, Color normal, Color highlight)
+        public void Display(bool selected)
         {
-            if (slotImage != null)
+            if (slotImage) slotImage.color = selected ? Color.white : NormalPanel;
+            if (jacketArtwork != null)
             {
-                if (normalBackgroundSprite != null && selectedBackgroundSprite != null)
-                {
-                    slotImage.sprite = selected ? selectedBackgroundSprite : normalBackgroundSprite;
-                    slotImage.color = Color.white;
-                }
-                else slotImage.color = selected ? highlight : normal;
+                jacketArtwork.sprite = Artwork;
+                jacketArtwork.enabled = Artwork != null;
             }
-            if (jacketArtwork != null) jacketArtwork.sprite = artwork;
             if (titleLabel != null)
             {
-                titleLabel.text = title;
+                titleLabel.text = Title;
                 titleLabel.color = selected ? SelectedText : NormalText;
             }
             if (artistLabel != null)
             {
-                artistLabel.text = artist;
+                artistLabel.text = Artist;
                 artistLabel.color = selected ? SelectedSecondary : NormalSecondary;
             }
             if (favoriteOffImage != null) favoriteOffImage.gameObject.SetActive(!Favorite);
@@ -140,13 +145,18 @@ namespace REmind.Gameplay.Demo
 
         public void ToggleFavorite() => Favorite = !Favorite;
 
-        public void ApplyPlayerData(bool favorite, bool hasRecord,
-            double score, RankGrade grade)
+        public void RefreshAccess()
+        {
+            if (Content == null) return;
+            Access = AppRoot.Current ? AppRoot.Current.GetSongAccess(Content)
+                : new SongAccessPolicy(Content, false, false);
+        }
+
+        public void ApplyPlayerData(bool favorite, bool hasRecord, double score)
         {
             Favorite = favorite;
-            rank = hasRecord ? grade.ToString() : "-";
-            bestScore = hasRecord ? Math.Round(score).ToString("N0",
-                CultureInfo.InvariantCulture) : "-";
+            bestScore = hasRecord ? Math.Round(score).ToString("0",
+                CultureInfo.InvariantCulture) : "0";
         }
     }
 }

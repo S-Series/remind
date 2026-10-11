@@ -3,13 +3,15 @@ using System.Collections.Generic;
 
 namespace REmind.Charting
 {
-    public enum ChartJudgementGrade { None, Perfect, Great, Good, Miss }
+    public enum ChartJudgementGrade { None, PerfectPlus, Perfect, Great, Miss }
 
     public readonly struct ChartJudgementResolution
     {
         public ChartJudgementResolution(PlayableNoteSnapshot note, int segmentIndex,
             ChartJudgementGrade grade, double offsetMs, double targetTimeMs,
-            double evaluationTimeMs, bool automaticMiss)
+            double evaluationTimeMs, bool automaticMiss,
+            bool? isNoteComplete = null,
+            JudgementTargetKind? targetKind = null)
         {
             Note = note;
             SegmentIndex = segmentIndex;
@@ -18,6 +20,9 @@ namespace REmind.Charting
             TargetTimeMs = targetTimeMs;
             EvaluationTimeMs = evaluationTimeMs;
             IsAutomaticMiss = automaticMiss;
+            IsNoteComplete = isNoteComplete ?? (segmentIndex < 0 ||
+                (note != null && segmentIndex == note.Points.Count - 2));
+            TargetKind = targetKind;
         }
 
         public PlayableNoteSnapshot Note { get; }
@@ -27,6 +32,8 @@ namespace REmind.Charting
         public double TargetTimeMs { get; }
         public double EvaluationTimeMs { get; }
         public bool IsAutomaticMiss { get; }
+        public bool IsNoteComplete { get; }
+        public JudgementTargetKind? TargetKind { get; }
     }
 
     /// <summary>
@@ -54,6 +61,9 @@ namespace REmind.Charting
         private readonly Func<PlayableNoteSnapshot, int, double> missWindow;
         private readonly Action<ChartJudgementResolution> resolved;
         private readonly double userOffsetMs;
+        private int generation;
+        private bool halted;
+        private readonly KnobJudgementSession knobs;
 
         public PlayableJudgementSession(PlayableChartSnapshot chart,
             Func<PlayableNoteSnapshot, int, double,
@@ -68,8 +78,10 @@ namespace REmind.Charting
             if (double.IsNaN(userOffsetMs) || double.IsInfinity(userOffsetMs))
                 throw new ArgumentOutOfRangeException(nameof(userOffsetMs));
             this.userOffsetMs = userOffsetMs;
+            knobs = new KnobJudgementSession(chart, resolved, userOffsetMs);
             foreach (PlayableNoteSnapshot note in chart.Notes)
-                entries.Add(new Entry { Note = note });
+                if (note.Kind != ChartNoteKind.Knob)
+                    entries.Add(new Entry { Note = note });
         }
 
         public int PendingNoteCount
@@ -78,12 +90,21 @@ namespace REmind.Charting
             {
                 int count = 0;
                 foreach (Entry entry in entries) if (!entry.Complete) count++;
-                return count;
+                return count + knobs.PendingNoteCount;
             }
         }
 
+        public double PlayerKnobX => knobs.PlayerX;
+        public string PlayerKnobNoteId => knobs.PlayerNoteId;
+
+        public void UpdateKnobDisplayTime(double chartTimeMs, bool autoPlay = false) =>
+            knobs.UpdateDisplayTime(chartTimeMs, autoPlay);
+
         public void Reset()
         {
+            unchecked { generation++; }
+            halted = false;
+            knobs.Reset();
             foreach (Entry entry in entries)
             {
                 entry.SegmentIndex = 0;
@@ -96,9 +117,12 @@ namespace REmind.Charting
             }
         }
 
-        public void BreakReleasedHolds(Func<int, bool> isPressed)
+        public void BreakReleasedHolds(Func<int, bool> isPressed,
+            double? chartTimeMs = null)
         {
             if (isPressed == null) throw new ArgumentNullException(nameof(isPressed));
+            if (halted) return;
+            knobs.SynchronizeHeld(isPressed, chartTimeMs);
             foreach (Entry entry in entries)
                 if (!entry.Complete && entry.Held &&
                     !isPressed(entry.Note.Lane))
@@ -111,10 +135,19 @@ namespace REmind.Charting
 
         public void Input(int lane, double chartTimeMs, bool pressed)
         {
-            if (double.IsNaN(chartTimeMs) || double.IsInfinity(chartTimeMs)) return;
+            if (halted || double.IsNaN(chartTimeMs) ||
+                double.IsInfinity(chartTimeMs)) return;
+            int currentGeneration = generation;
+            bool freshPress = knobs.UpdateInput(lane, chartTimeMs, pressed);
+            if (currentGeneration != generation) return;
+            if (pressed && freshPress && knobs.TryConsumePress(lane, chartTimeMs)) return;
             foreach (Entry entry in entries)
             {
-                if (entry.Complete || entry.Note.Lane != lane) continue;
+                bool centralTap = entry.Note.Kind == ChartNoteKind.CenterTap;
+                if (entry.Complete || (centralTap
+                    ? lane < (int)ChartLane.GroundLeft || lane > (int)ChartLane.Center ||
+                        !freshPress
+                    : entry.Note.Lane != lane)) continue;
                 PlayableNoteSnapshot note = entry.Note;
                 if (note.Points.Count == 1)
                 {
@@ -123,6 +156,7 @@ namespace REmind.Charting
                     ChartJudgementGrade grade = judge(note, 0, offset);
                     if (grade == ChartJudgementGrade.None) continue;
                     Emit(entry, -1, grade, offset, note.StartTimeMs, chartTimeMs, false);
+                    if (currentGeneration != generation) return;
                     entry.Complete = true;
                     return;
                 }
@@ -173,6 +207,7 @@ namespace REmind.Charting
                             Emit(entry, index, intervalGrade, endOffset,
                                 end.TimeMs,
                                 chartTimeMs, false);
+                            if (currentGeneration != generation) return;
                             entry.Complete = true;
                             return;
                         }
@@ -186,7 +221,8 @@ namespace REmind.Charting
 
         public double NextAutomaticTime(bool autoPlay)
         {
-            double next = double.PositiveInfinity;
+            if (halted) return double.PositiveInfinity;
+            double next = knobs.NextAutomaticTime(autoPlay);
             foreach (Entry entry in entries)
             {
                 if (entry.Complete) continue;
@@ -212,6 +248,10 @@ namespace REmind.Charting
 
         public void ProcessAutomatic(double timeMs, bool autoPlay)
         {
+            if (halted) return;
+            int currentGeneration = generation;
+            knobs.ProcessAutomatic(timeMs, autoPlay);
+            if (currentGeneration != generation) return;
             foreach (Entry entry in entries)
             {
                 if (entry.Complete) continue;
@@ -228,20 +268,22 @@ namespace REmind.Charting
 
                 if (single)
                 {
-                    Emit(entry, -1, autoPlay ? ChartJudgementGrade.Perfect :
+                    Emit(entry, -1, autoPlay ? ChartJudgementGrade.PerfectPlus :
                         ChartJudgementGrade.Miss, timeMs - userOffsetMs - target,
                         target, timeMs, !autoPlay);
+                    if (currentGeneration != generation) return;
                     entry.Complete = true;
                     continue;
                 }
 
                 ChartJudgementGrade grade = autoPlay
-                    ? ChartJudgementGrade.Perfect
+                    ? ChartJudgementGrade.PerfectPlus
                     : !isEnd && entry.Joined && entry.Held
                         ? entry.JoinGrade
                         : ChartJudgementGrade.Miss;
                 Emit(entry, index, grade, timeMs - userOffsetMs - target,
                     target, timeMs, grade == ChartJudgementGrade.Miss);
+                if (currentGeneration != generation) return;
                 if (isEnd)
                 {
                     entry.Complete = true;
@@ -253,9 +295,18 @@ namespace REmind.Charting
                     rejoinedAtMid;
                 entry.JoinAttempted = entry.Joined;
                 if (!rejoinedAtMid && entry.Joined)
-                    entry.JoinGrade = ChartJudgementGrade.Perfect;
+                    entry.JoinGrade = ChartJudgementGrade.PerfectPlus;
                 entry.PendingMidJoin = false;
             }
+        }
+
+        /// <summary>Stop resolving this attempt; Reset begins a fresh one.</summary>
+        public void Halt()
+        {
+            if (halted) return;
+            halted = true;
+            knobs.Halt();
+            unchecked { generation++; }
         }
 
         private void Emit(Entry entry, int segmentIndex,

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Xml.Linq;
+using REmind.Charting;
 
 /// <summary>Current single-file chart persistence and older paired-file recovery.</summary>
 public static class ChartEffectFileStore
@@ -100,6 +101,14 @@ public static class ChartEffectFileStore
                 ChartFile chart = ChartFileCodec.Parse(text);
                 if (!chart.HasEffectParameterFile)
                 {
+                    string filenameId = SongChartFiles.GetDifficultyIdFromFileName(
+                        Path.GetFileName(path)) ?? Path.GetFileNameWithoutExtension(path);
+                    ChartEffectFileStore.ValidateFileId(filenameId, "chart filename");
+                    if (!string.IsNullOrWhiteSpace(chart.DifficultyId) &&
+                        SongChartFiles.GetDifficultyIdFromFileName(Path.GetFileName(path)) != null &&
+                        !string.Equals(chart.DifficultyId, filenameId, StringComparison.Ordinal))
+                        throw new FormatException("Legacy chart difficultyId does not match its filename.");
+                    chart.DifficultyId = filenameId;
                     recovered = chartCandidate != path;
                     chartText = text;
                     parameterText = null;
