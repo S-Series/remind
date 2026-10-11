@@ -313,6 +313,7 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
             NoteType.Camera => 6,
             NoteType.Marker => 7,
             NoteType.CenterTap => 8,
+            NoteType.CenterHold => 8,
             NoteType.Knob => 9,
             _ => -1
         };
@@ -468,7 +469,8 @@ public sealed class ChartNoteSelectionController : MonoBehaviour
                 GetMovedAbsolutePosition(holder.AbsoluteChartPosition, direction.y, moveByPage);
             double x = noteType == NoteType.Knob
                 ? System.Math.Max(-1, System.Math.Min(1, holder.knobX + direction.x * 0.1)) : 0;
-            placementController.TryEditCenterNote(selectedObject, position, holder.knobPointKind,
+            placementController.TryEditCenterNote(selectedObject, position,
+                noteType == NoteType.CenterHold ? holder.centerHoldPointKind : holder.knobPointKind,
                 x, out string centerError);
             if (centerError != null) Debug.LogWarning(centerError, this);
             return;

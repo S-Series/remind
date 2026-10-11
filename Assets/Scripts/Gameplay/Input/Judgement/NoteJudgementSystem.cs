@@ -475,6 +475,7 @@ namespace REmind.Gameplay.Input.Judgement
                 case ChartNoteKind.LongScratch: return NoteType.LongScratch;
                 case ChartNoteKind.Air: return NoteType.Air;
                 case ChartNoteKind.CenterTap: return NoteType.CenterTap;
+                case ChartNoteKind.CenterHold: return NoteType.CenterHold;
                 case ChartNoteKind.Knob: return NoteType.Knob;
                 default: return NoteType.Unknown;
             }

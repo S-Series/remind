@@ -3087,8 +3087,9 @@ MonoBehaviour:
   longTapNotePrefab: {fileID: 6189104666034249852, guid: dcd8361cd23431843a556207df73d8e3, type: 3}
   longScratchNotePrefab: {fileID: 6189104666034249852, guid: 799d704f4831bb2498ba81ebcf6630f1, type: 3}
   airNotePrefab: {fileID: 2011992602274425352, guid: 4f120b3489da411d8297c4a981d6965e, type: 3}
-  centerTapNotePrefab: {fileID: 0}
-  knobPathMaterial: {fileID: 0}
+  centerTapNotePrefab: {fileID: 7861649489109115994, guid: e6cb0ebdac4a5fd47ade33d4a2c4bae7, type: 3}
+  centerHoldNotePrefab: {fileID: 7861649489109115994, guid: e6cb0ebdac4a5fd47ade33d4a2c4bae7, type: 3}
+  knobPathMaterial: {fileID: 2100000, guid: cec1e7117b3c483196814b2f395a2fb4, type: 2}
   noteField: {fileID: 418015322}
   playOnReady: 0
 --- !u!114 &2200000003

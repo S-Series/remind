@@ -218,6 +218,107 @@ namespace REmind.Gameplay.Tests
             }
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CenterHoldSwapCompletesOnceAtEndAndUsesCenterRuleContext(bool upFirst)
+        {
+            var document = CenterHoldDocument();
+            using (var fixture = new Fixture(false, document: document))
+            {
+                var results = new List<NoteJudgementEvent>();
+                fixture.Judgement.NoteJudged += results.Add;
+                Assert.That(fixture.Judgement.RuleContextFactory(fixture.Chart.Notes[0]).NoteType,
+                    Is.EqualTo(REmind.Data.NoteType.CenterHold));
+                fixture.Queue(8, 0d);
+                fixture.Queue(upFirst ? 8 : 9, 500d, !upFirst);
+                fixture.Queue(upFirst ? 9 : 8, 500d, upFirst);
+                fixture.Judgement.ProcessFrame(999d);
+                Assert.That(results, Is.Empty);
+                fixture.Judgement.ProcessFrame(1000d);
+                Assert.That(results.Count, Is.EqualTo(1));
+                Assert.That(results[0].Result, Is.EqualTo(JudgeResult.PerfectPlus));
+                Assert.That(results[0].TargetKind, Is.EqualTo(JudgementTargetKind.HoldEnd));
+                Assert.That(results[0].EvaluationTimeMs, Is.EqualTo(1000d));
+                Assert.That(fixture.State.CurrentScore, Is.EqualTo(1_000_000d).Within(0.001d));
+                Assert.That(fixture.State.IsCleared, Is.True);
+                Assert.That(fixture.Judgement.PendingNoteCount, Is.Zero);
+            }
+        }
+
+        [Test]
+        public void CenterHoldEndPreservesGreatStartGradeInGameScore()
+        {
+            var document = CenterHoldDocument(2400, 4800);
+            using (var fixture = new Fixture(false, document: document))
+            {
+                var results = new List<NoteJudgementEvent>();
+                fixture.Judgement.NoteJudged += results.Add;
+                fixture.Queue(9, 870d);
+                fixture.Judgement.ProcessFrame(2000d);
+                Assert.That(results.Count, Is.EqualTo(1));
+                Assert.That(results[0].Result, Is.EqualTo(JudgeResult.Great));
+                Assert.That(fixture.State.CurrentScore, Is.EqualTo(700_000d).Within(0.001d));
+            }
+        }
+
+        [Test]
+        public void CentralEndMissStopsHardBatchBeforeAnotherSuccessfulEnd()
+        {
+            var document = CenterHoldDocument();
+            document.Notes.Add(new ChartDocumentNote("second", ChartNoteKind.CenterHold, 10, 480, 2400));
+            using (var fixture = new Fixture(true, document: document))
+            {
+                var results = new List<NoteJudgementEvent>();
+                fixture.Judgement.NoteJudged += results.Add;
+                fixture.Queue(8, 0d);
+                fixture.Queue(8, 100d, false);
+                fixture.Queue(9, 200d);
+                fixture.Judgement.ProcessFrame(1000d);
+                Assert.That(results.Count, Is.EqualTo(1));
+                Assert.That(results[0].Result, Is.EqualTo(JudgeResult.Miss));
+                Assert.That(fixture.State.IsFailed, Is.True);
+                Assert.That(fixture.State.CurrentHealth, Is.Zero);
+                fixture.Queue(10, 1100d);
+                fixture.Judgement.ProcessFrame(2000d);
+                Assert.That(results.Count, Is.EqualTo(1));
+            }
+        }
+
+        [Test]
+        public void CentralHoldPauseKeepsSessionAndFreshRetryResetsItsHeldState()
+        {
+            using (var fixture = new Fixture(false, document: CenterHoldDocument()))
+            {
+                var results = new List<NoteJudgementEvent>();
+                fixture.Judgement.NoteJudged += results.Add;
+                fixture.Queue(8, 0d);
+                fixture.Judgement.ProcessFrame(500d);
+                typeof(NoteJudgementSystem).GetMethod("HandlePlaybackStateChanged", Private)
+                    .Invoke(fixture.Judgement, new object[] { PlaybackState.Paused });
+                var session = (PlayableJudgementSession)typeof(NoteJudgementSystem)
+                    .GetField("session", Private).GetValue(fixture.Judgement);
+                session.BreakReleasedHolds(lane => lane == 9, 500d);
+                Assert.That(results, Is.Empty);
+                fixture.Judgement.ProcessFrame(1000d);
+                Assert.That(results[0].Result, Is.EqualTo(JudgeResult.PerfectPlus));
+                fixture.Manager.StopGame();
+                fixture.Judgement.ResetJudgements();
+                Assert.That(fixture.State.TryConfigureChart(fixture.Chart.JudgementUnitCount,
+                    out string error), Is.True, error);
+                SetField(fixture.Manager.GamePlay, "<State>k__BackingField", PlaybackState.Playing);
+                fixture.Judgement.ProcessFrame(1000d);
+                Assert.That(results.Count, Is.EqualTo(2));
+                Assert.That(results[1].Result, Is.EqualTo(JudgeResult.Miss));
+            }
+        }
+
+        private static ChartDocument CenterHoldDocument(int start = 0, int end = 2400)
+        {
+            var document = new ChartDocument(4800, 4, 120d);
+            document.Notes.Add(new ChartDocumentNote("hold", ChartNoteKind.CenterHold, 10, start, end));
+            return document;
+        }
+
         private sealed class Fixture : IDisposable
         {
             public readonly GameManager Manager;
@@ -226,6 +327,7 @@ namespace REmind.Gameplay.Tests
             public readonly PlayableChartSnapshot Chart;
             private readonly GameObject root = new GameObject("Center Knob rule integration");
             private readonly GameRuleConfig config = ScriptableObject.CreateInstance<GameRuleConfig>();
+            private long queuedSequence;
 
             public Fixture(bool specialHard, bool addTap = false, ChartDocument document = null)
             {
@@ -273,11 +375,11 @@ namespace REmind.Gameplay.Tests
                 SetField(playback, "<State>k__BackingField", PlaybackState.Playing);
             }
 
-            public void Queue(int lane, double time)
+            public void Queue(int lane, double time, bool pressed = true)
             {
                 Type queued = typeof(NoteJudgementSystem).GetNestedType("QueuedInput", BindingFlags.NonPublic);
                 object input = Activator.CreateInstance(queued, BindingFlags.Instance | BindingFlags.Public |
-                    BindingFlags.NonPublic, null, new object[] { lane, time, 0L, true }, null);
+                    BindingFlags.NonPublic, null, new object[] { lane, time, queuedSequence++, pressed }, null);
                 ((IList)typeof(NoteJudgementSystem).GetField("pendingInputs", Private)
                     .GetValue(Judgement)).Add(input);
             }

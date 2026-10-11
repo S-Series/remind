@@ -20,9 +20,26 @@ public static partial class ChartManager
         ChartHolder sourceRow = GetHolder(source.AbsoluteChartPosition);
         bool isSecond = type == NoteType.Knob && sourceRow.secondKnobPoint == source;
         ChartHolder targetRow = GetHolder(position);
-        if (type == NoteType.CenterTap && targetRow != sourceRow && targetRow?.hasCenterTap == true)
+        if ((type == NoteType.CenterTap && targetRow != sourceRow && targetRow?.hasCenterTap == true) ||
+            (type == NoteType.CenterHold && targetRow != sourceRow && targetRow?.hasCenterHold == true))
         { error = "The central note slot is occupied."; return false; }
+        if ((type == NoteType.CenterTap && targetRow?.hasCenterHold == true &&
+                targetRow.centerHoldPointKind == ChartNotePointKind.Start) ||
+            (type == NoteType.CenterHold && source.centerHoldPointKind == ChartNotePointKind.Start &&
+                targetRow?.hasCenterTap == true))
+        { error = "Floor Tap and Long Floor Start cannot share the same position."; return false; }
         bool sameTime = position == source.AbsoluteChartPosition;
+        if (type == NoteType.CenterHold)
+        {
+            pointKind = source.centerHoldPointKind;
+            foreach (ChartHolder other in ChartHolders)
+            {
+                if (other == source || !other.hasCenterHold) continue;
+                if ((other.AbsoluteChartPosition < source.AbsoluteChartPosition && position <= other.AbsoluteChartPosition) ||
+                    (other.AbsoluteChartPosition > source.AbsoluteChartPosition && position >= other.AbsoluteChartPosition))
+                { error = "Long Floor endpoints must stay in time order."; return false; }
+            }
+        }
         if (type == NoteType.Knob && !sameTime && targetRow?.hasKnobPoint == true)
         { error = "The central note slot is occupied."; return false; }
         if (type == NoteType.Knob)
@@ -67,6 +84,13 @@ public static partial class ChartManager
             source.ClearCenterNote(type);
             target.hasCenterTap = true;
             target.centerTapObjects = objects;
+        }
+        else if (type == NoteType.CenterHold)
+        {
+            source.ClearCenterNote(type);
+            target.hasCenterHold = true;
+            target.centerHoldPointKind = pointKind;
+            target.centerHoldObjects = objects;
         }
         else
         {

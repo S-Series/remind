@@ -177,6 +177,7 @@ MonoBehaviour:
   settingsOverlay: {fileID: 1716070280}
   characterOverlay: {fileID: 1103767829}
   characterCatalog: {fileID: 11400000, guid: 1568b1ac83b64f58bdc896467737c850, type: 2}
+  itemCatalog: {fileID: 11400000, guid: e4e7d7a5dbcb41279bb176782ce19c29, type: 2}
   musicUnlockLibrary: {fileID: 11400000, guid: 8b2dfd02ec334ad896be718ca4b9716d, type: 2}
   autoEnterHomeOnStart: 0
 --- !u!223 &1000003

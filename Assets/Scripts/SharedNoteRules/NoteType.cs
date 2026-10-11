@@ -14,17 +14,18 @@ namespace REmind.Data
         Marker = 9,
         CenterTap = 10,
         Knob = 11,
+        CenterHold = 12,
     }
 
     public static class NoteTypeExtensions
     {
         public static bool IsCenter(this NoteType noteType) =>
-            noteType == NoteType.CenterTap || noteType == NoteType.Knob;
+            noteType == NoteType.CenterTap || noteType == NoteType.CenterHold || noteType == NoteType.Knob;
 
         public static bool IsLong(this NoteType noteType)
         {
             return noteType == NoteType.LongTap ||
-                noteType == NoteType.LongScratch;
+                noteType == NoteType.LongScratch || noteType == NoteType.CenterHold;
         }
 
         public static bool IsScratch(this NoteType noteType)

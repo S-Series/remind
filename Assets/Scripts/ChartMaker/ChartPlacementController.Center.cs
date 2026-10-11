@@ -8,8 +8,10 @@ public sealed partial class ChartPlacementController
 {
     [Header("Central note prefabs")]
     [SerializeField] private GameObject centerTapNotePrefab;
+    [SerializeField] private GameObject centerHoldNotePrefab;
     [SerializeField] private GameObject knobNotePrefab;
     [SerializeField] private GameObject chartPreviewCenterTapNotePrefab;
+    [SerializeField] private GameObject chartPreviewCenterHoldNotePrefab;
     [SerializeField] private GameObject chartPreviewKnobNotePrefab;
     [SerializeField] private Material knobPathMaterial;
     private KnobPathView knobPlacementPreview;
@@ -21,6 +23,7 @@ public sealed partial class ChartPlacementController
     private readonly List<PlayableNoteSnapshot> centerPathNotes = new List<PlayableNoteSnapshot>();
 
     public void SelectCenterTap() => SetCurrentNoteType(NoteType.CenterTap);
+    public void SelectCenterHold() => SetCurrentNoteType(NoteType.CenterHold);
     public void SelectKnobStart() => SelectKnobPoint(ChartNotePointKind.Start);
     public void SelectKnobMid() => SelectKnobPoint(ChartNotePointKind.Mid);
     public void SelectKnobPath() => SelectKnobStart();
@@ -66,7 +69,20 @@ public sealed partial class ChartPlacementController
         NoteType type = currentNoteType;
         double authoredX = position.x / PreviewMaxX;
         bool second = type == NoteType.Knob && holder.hasKnobPoint;
-        if (type == NoteType.CenterTap && holder.hasCenterTap) return;
+        if ((type == NoteType.CenterTap && holder.hasCenterTap) ||
+            (type == NoteType.CenterHold && holder.hasCenterHold))
+        { Debug.LogWarning("A Floor note of this type already occupies this position.", this); return; }
+        ChartHolder openHold = GetOpenCenterHold(holder.AbsoluteChartPosition);
+        bool holdStart = type == NoteType.CenterHold && openHold == null;
+        if ((type == NoteType.CenterTap && holder.hasCenterHold &&
+                holder.centerHoldPointKind == ChartNotePointKind.Start) ||
+            (holdStart && holder.hasCenterTap))
+        { Debug.LogWarning("Floor Tap and Long Floor Start cannot share the same position.", this); return; }
+        if (type == NoteType.CenterHold)
+        {
+            PlaceCenterHold(holder, position, openHold);
+            return;
+        }
         if (second && (holder.secondKnobPoint != null || authoredX == holder.knobX))
         { Debug.LogWarning("A row supports two Knob points with different X positions.", this); return; }
         ChartNotePointKind kind = second ? ChartNotePointKind.Mid : currentKnobPoint;
@@ -159,6 +175,8 @@ public sealed partial class ChartPlacementController
         making.transform.localPosition = position;
         preview.transform.localPosition = position;
         PrepareDisplayOnlyNote(preview);
+        if (type is NoteType.CenterTap or NoteType.CenterHold)
+            FloorNoteGeometry.EnsureClickArea(making);
         InitializeSelectionTargets(new[] { making }, type);
         return new[] { making, preview };
     }
@@ -169,6 +187,10 @@ public sealed partial class ChartPlacementController
             centerTapNotePrefab && chartPreviewCenterTapNotePrefab)
             holder.centerTapObjects = CreateCenterObjects(centerTapNotePrefab,
                 new Vector3(0, holder.WorldY, 0), NoteType.CenterTap);
+        if (holder.hasCenterHold && holder.centerHoldObjects == null &&
+            centerHoldNotePrefab && chartPreviewCenterHoldNotePrefab)
+            holder.centerHoldObjects = CreateCenterObjects(centerHoldNotePrefab,
+                new Vector3(0, holder.WorldY, 0), NoteType.CenterHold);
         if (holder.hasKnobPoint && holder.knobPointObjects == null &&
             knobNotePrefab && chartPreviewKnobNotePrefab)
             holder.knobPointObjects = CreateCenterObjects(knobNotePrefab,
@@ -194,7 +216,7 @@ public sealed partial class ChartPlacementController
             out _, out _);
         foreach (GameObject view in holder.GetCenterObjects(type))
             if (view) view.transform.localPosition = new Vector3(
-                type == NoteType.CenterTap ? 0 : (float)x * PreviewMaxX, holder.WorldY, 0);
+                type == NoteType.Knob ? (float)x * PreviewMaxX : 0, holder.WorldY, 0);
         ChartEditHistory.CommitChange(transaction);
         selectionController?.NotifySelectionChanged();
         return true;
@@ -248,6 +270,7 @@ public sealed partial class ChartPlacementController
     internal void RefreshKnobPaths(PlayableChartSnapshot snapshot = null)
     {
         ClearKnobPaths();
+        RefreshCenterHoldPaths(snapshot);
         var points = new List<KnobPathPoint>();
         if (snapshot != null)
         {
@@ -320,6 +343,7 @@ public sealed partial class ChartPlacementController
 
     internal void SetKnobPreviewTime(double timeMs)
     {
+        SetCenterHoldPreviewTime(timeMs);
         for (int i = 0; i < centerPaths.Count; i++)
             if (centerPaths[i] && centerPathNotes[i] != null)
             {
@@ -330,6 +354,7 @@ public sealed partial class ChartPlacementController
 
     private void ClearKnobPaths()
     {
+        ClearCenterHoldPaths();
         foreach (KnobPathView view in centerPaths)
             if (view) { view.gameObject.SetActive(false); Destroy(view.gameObject); }
         centerPaths.Clear();

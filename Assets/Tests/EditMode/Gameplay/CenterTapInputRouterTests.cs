@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using NUnit.Framework;
+using REmind.Charting;
 using REmind.Gameplay.Input.Routing;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -60,6 +61,63 @@ namespace REmind.Gameplay.Tests
                 fixture.Keys(Key.Space);
                 CollectionAssert.AreEqual(new[] { 10 }, fixture.Presses);
             }
+        }
+
+        [TestCase(false, ChartJudgementGrade.Miss)]
+        [TestCase(true, ChartJudgementGrade.PerfectPlus)]
+        public void SpaceOptionAlsoGatesCentralHoldButNeverMovesKnob(bool enabled, ChartJudgementGrade grade)
+        {
+            using (var fixture = new Fixture())
+            {
+                fixture.Settings.SetSpaceTapEnabled(enabled);
+                fixture.Router.SetInputEnabled(true);
+                var results = new List<ChartJudgementResolution>();
+                var session = HoldSession(results);
+                fixture.Router.InputPerformed += input => session.Input(input.Lane, 0d, input.Pressed);
+                fixture.Router.InputReleased += input => session.Input(input.Lane, 0d, input.Pressed);
+                fixture.Keys(Key.Space);
+                session.ProcessAutomatic(1000d, false);
+                Assert.That(results.Find(r => r.Note.Kind == ChartNoteKind.CenterHold).Grade, Is.EqualTo(grade));
+                Assert.That(session.PlayerKnobX, Is.Zero);
+                Assert.That(results.Exists(r => r.Note.Kind == ChartNoteKind.Knob &&
+                    r.Grade == ChartJudgementGrade.Miss), Is.True);
+            }
+        }
+
+        [TestCase(false, ChartJudgementGrade.Miss)]
+        [TestCase(true, ChartJudgementGrade.PerfectPlus)]
+        public void ShiftToSpaceSwapUsesActualRoutedDownAndUp(bool enabled, ChartJudgementGrade grade)
+        {
+            using (var fixture = new Fixture())
+            {
+                fixture.Settings.SetSpaceTapEnabled(enabled);
+                fixture.Router.SetInputEnabled(true);
+                var results = new List<ChartJudgementResolution>();
+                var session = HoldSession(results);
+                double time = 0d;
+                fixture.Router.InputPerformed += input => session.Input(input.Lane, time, input.Pressed);
+                fixture.Router.InputReleased += input => session.Input(input.Lane, time, input.Pressed);
+                fixture.Keys(Key.LeftShift);
+                session.ProcessAutomatic(0d, false);
+                time = 500d;
+                fixture.Keys(Key.Space);
+                session.ProcessAutomatic(1000d, false);
+                Assert.That(results.Find(r => r.Note.Kind == ChartNoteKind.CenterHold).Grade, Is.EqualTo(grade));
+            }
+        }
+
+        private static PlayableJudgementSession HoldSession(List<ChartJudgementResolution> results)
+        {
+            var document = new ChartDocument(4800, 4, 120d);
+            document.Notes.Add(new ChartDocumentNote("hold", ChartNoteKind.CenterHold, 10, 0, 2400));
+            var knob = new ChartDocumentNote("knob", ChartNoteKind.Knob, 10, 0, 2400);
+            knob.Points[1].KnobX = 1d;
+            document.Notes.Add(knob);
+            var compiled = ChartCompiler.Compile(document);
+            Assert.That(compiled.Succeeded, Is.True);
+            return new PlayableJudgementSession(compiled.Snapshot,
+                (_, __, offset) => Math.Abs(offset) <= 175d ? ChartJudgementGrade.PerfectPlus
+                    : ChartJudgementGrade.None, (_, __) => 175d, results.Add);
         }
 
         private sealed class Fixture : IDisposable

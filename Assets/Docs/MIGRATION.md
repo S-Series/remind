@@ -6,6 +6,37 @@
 
 ## 1. Current State
 
+### 중앙 Floor / FloorLong 제작·판정 확장, EditMode 통합·독립 빌드 확인 (2026-10-11)
+
+새 Floor 단타는 `CenterTap`, FloorLong은 `CenterHold`로 중앙 레인 `10`을 사용한다.
+기존 v1 좌우 Scratch/Long Scratch는 변환 없이 읽기·편집·저장하며 기존 일반 Hold도 유지한다.
+Maker의 Floor/Floor Long 메뉴를 중앙 배치로 연결했고 `.rd` v2 `centerNotes`에
+`holdStart`/`holdEnd` 쌍을 저장한다. 순서 오류·미완성 쌍·단타와 롱 Start의 같은 위치는
+codec/adapter에서 거부하며 공용 컴파일러도 같은 Start timestamp 충돌을 거부한다.
+롱 도중/End의 단타는 허용한다. Runtime v2는 Kind `7`, Lane `10`, 기존 Start/End 두 점을 쓰며
+새 DTO 필드는 없다. 세부 계약은 [ChartFormat.md](ChartFormat.md) 18.3절과 20절을 따른다.
+
+판정은 공용 세션에 추가했다. 새 Start Down 뒤 좌/우 Shift와 ON인 Space 중 하나라도
+유지하면 End에서 Start 등급으로 1회 자동 확정한다. 같은 timestamp의 키 교체는 허용하며
+양수 시간의 해제 유예·재합류·tick과 End의 정확한 Up 요구는 없다. Knob Step의 새 Down
+우선 소비·Space의 Knob 이동 금지와 기존 Hold/Long Scratch의 End release는 유지한다.
+양제품의 중앙 단타·롱 끝점·구간은 기존 Floor 프리팹의 Mesh·재질을 사용하고
+`FloorNoteGeometry`의 bounds 계산을 공유한다. 표시 계산은 판정을 소유하지 않는다.
+
+사전 순수 C# 검사는 **128/128** 통과했다. 독립 검토에서 확인한 Maker 롱 끝점의 배율 갱신
+누락 수정 후 고정본에서 Unity EditMode 전체 **413/413**, 집중 제품 소스 **149/149**,
+수정 씬 연결 probe **2/2**와 v2 export→Prepare→실제 Game 표시 생성 probe **2/2**가 통과했다.
+Game/ChartMaker 독립 Windows 빌드와 상대 제품 DLL 제외를 확인했다. 집중 151건 실행은
+별도 probe의 잘못된 SpriteRenderer 가정으로 150통과·1실패였으며 제품 소스 실패가 아니다.
+해당 probe를 MeshRenderer 계약에 맞춰 수정한 뒤 2/2를 확인했다. 횟수는 중복 합산하지 않는다.
+
+실행 고정본은 [source manifest](../../Logs/IntegrationBaseline/20261011-center-floor/source-manifest.json)의
+1,981파일 기준이다. 격리 Unity가 설정·폰트 7개를 재직렬화했고 원본에는 복사하지 않았다.
+이번 네 문서의 후속 갱신은 실행 manifest의 문서 해시와 다르다. 원본 전체와 바이트 단위로
+동일한 빌드로 해석하지 않는다. 카메라 픽셀·물리 입력·곡 전체 재생·청음·최종 외관은 미검수다.
+세부 검사·로그와 차이는 [Floor 통합 보고서](../../Logs/IntegrationBaseline/20261011-center-floor/README.md)
+및 [TASKS.md](TASKS.md)를 따른다. 아래 Knob/인벤토리의 이전 결과와 별개의 실행 기록이다.
+
 ### Knob Start/Middle 및 outgoing 곡선으로 편집 계약 변경 (2026-10-09)
 
 ChartMaker와 `.rd`는 Start/Middle만 다루고 `curve: linear/sin/cos`를 노드의 다음 구간에
@@ -16,13 +47,20 @@ Tab은 곡선 종류, Shift+Tab은 Start/Middle을 선택된 노드 또는 현�
 기존 v2의 Mid/End 및 incoming Step은 읽기 호환을 유지한다. 세부 계약은
 [ChartFormat.md](ChartFormat.md) 18.3절을 따른다.
 
-공용 Knob/Long Scratch .NET 검증은 65/65 통과했다. 관련 Unity 어셈블리와 Maker 검증
-코드는 C# 컴파일을 확인했다. 이번 변경의 Unity EditMode 실행 및 화면·단축키 검수는
-미실행이며, 아래 이전 검증 횟수는 이번 변경의 실행 검증으로 승계하지 않는다.
+당시 공용 Knob/Long Scratch .NET 검증은 65/65 통과했고 관련 C# 컴파일을 확인했다.
+후속 2026-10-11 통합 검증에서는 최신 Start/Middle·outgoing 곡선·Second Point와
+Game/Maker의 공유 Material·cursor 제거를 포함한 집중 검사 89/89, Pause/Retry/실패 수명
+검사 15/15, 격리 전용 계약 probe 3/3과 두 제품 독립 빌드·상대 제품 DLL 제외를 확인했다.
+Game 씬 Main Camera의 1280×720 대표 경로 렌더도 확인했다. 전체 suite, 실제 곡 플레이·
+물리 키·청음·Pause/Retry UI·최종 외관 승인은 미검수이며 과거 횟수를 최신 검사에 합산하지 않는다.
+최종 원본 대조의 1,954파일은 manifest와 일치했으나 격리 Unity가 설정 5개를 자동
+재직렬화한 뒤 빌드했다. 원본 settings까지 완전히 일치한 빌드로 기록하지 않는다.
+이번 문서 마무리는 검증 후 수정이다. 상세 범위와 실행 근거는 [TASKS.md](TASKS.md) 및
+[2026-10-11 통합 보고서](../../Logs/IntegrationBaseline/20261011-knob-integration/README.md)에 둔다.
 
 ReMind는 현재 구조 개편 중이다.
 
-### 중앙 Tap / Knob v2 시작 전 Step 포함 구현·고정 검증본 검사 완료 (2026-10-08)
+### 과거 기록: 중앙 Tap / Knob v2 시작 전 Step 포함 구현·고정 검증본 검사 완료 (2026-10-08)
 
 기존 v1 좌우 채보와 레인 `0`~`9`는 무변환 보존한다. 새 중앙 레인 `10`의
 `CenterTap`/`Knob`을 포함한 경우에만 `.rd`와 Runtime Package가 각각 v2를 사용한다.
@@ -50,7 +88,8 @@ Down 70ms 즉시 이동·시작 시 위치 유지와 미확정 Start/tick의 원
 검증했다. 유효한 조기 입력이 없는 일반 시작은 초기값을 지정한다. `PlayerKnobNoteId`는
 조기 입력부터 실제 cursor의 소유 경로를 지정하고 Reset 시 null이 된다.
 예약은 해당 Knob의 직전 구간에만 적용하며 이동으로 벗어난 다른 Knob은 Miss가 될 수 있다.
-사용자 후속 Game 씬 편집이 계속돼 현재 원본 씬 전체의 빌드는 미검증이다.
+당시 사용자 후속 Game 씬 편집으로 이 10/08 기록은 당시 원본 씬 전체의 빌드 근거가 아니었다.
+현재 snapshot의 빌드·설정 차이 범위는 위 10/11 기록을 따른다.
 자세한 증거·고정 snapshot 범위와 수동 검수는 [TASKS.md](TASKS.md)를 따른다.
 
 아래는 **이전 방향 Hold 모델**의 기록이며 새 위치 추적 규칙의 통과로 승계하지 않는다.
@@ -96,7 +135,7 @@ Effect vertical slice는 ChartMaker Preview와 기존 `DemoPlay`에서 같은 �
 분류하지 않는다. 별도 `Game.unity`는 `i`와 `designant`의 선택·플레이·일시정지·
 실패·결과·재시도 흐름을 연결한다. 로컬 최고 점수·클리어·플레이 횟수·최고 콤보와
 즐겨찾기를 저장하고, Result에 기록 기반 진행을 표시한다. Game 설정도 별도 파일에
-저장한다. 첫 클리어 기억 조각 보상도 기록에서 계산한다. 정식 콘텐츠와 최종 UI
+저장한다. 첫 클리어 기억 조각은 현행 v5 인벤토리에 지급·저장한다. 정식 콘텐츠와 최종 UI
 시각 검수는 후속 작업이다.
 
 `Assets/Scenes/prev/DemoPlay.unity`는 이동 전 씬을 보관한 복사본이다. 현재 회귀
@@ -207,8 +246,17 @@ ChartDocument → ChartCompiler → Snapshot → Preview
   클리어 이력, 플레이 횟수, 최고 콤보와 곡 즐겨찾기를 소유한다. 실패한 플레이도
   횟수에 포함하고 첫 클리어는 저장 전 기록과 비교한다. Auto Play는 저장하지 않는다.
   Result의 기억 영역은 이 사실 기반 기록을 표시한다. 첫 클리어마다 기억 조각
-  1개를 획득하며 보유 수량은 클리어한 곡·난이도 기록의 개수에서 계산한다.
+  1개를 기록·해금과 함께 저장한다. v1~v4의 클리어 이력은 v5 잔액으로 한 번
+  이행하고, 이후 보유 수량은 인벤토리에서 읽는다. 소비 API는 있으나 소비 UI,
   그 외 보상과 곡별 서사 데이터는 아직 없다.
+
+2026-10-11 인벤토리 통합은 [검증 기록](../../Logs/IntegrationBaseline/20261011-item-inventory/README.md)의
+동일 소스 고정본에서 Unity EditMode 전체 **355/355**, 별도 통합 probe **2/2**,
+Game Windows 빌드 성공을 확인했다. 집중 검사 87개는 전체 355개에 포함된다.
+이 문서의 현행화는 검증 뒤 수행했으며 실행 원본의 문서 해시에는 포함되지 않는다.
+실제 사용자 저장 파일은 수정하지 않았다. 격리본의 설정 파일 5개는 Unity가
+재직렬화했으므로 빌드 설정은 원본과 바이트 단위로 동일하지 않다. Bootstrap의
+실제 사용자 저장 경로를 사용하는 Awake, 소비 UI, 곡 전체 플레이는 검증하지 않았다.
 
 ## 5. Known Transitional Risks
 

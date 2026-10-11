@@ -92,7 +92,8 @@ namespace REmind.Charting
                     Command = item.CommandId, Order = item.Order });
             foreach (ChartDocumentNote item in document.Notes)
             {
-                if (item.Kind == ChartNoteKind.CenterTap || item.Kind == ChartNoteKind.Knob)
+                if (item.Kind == ChartNoteKind.CenterTap || item.Kind == ChartNoteKind.CenterHold ||
+                    item.Kind == ChartNoteKind.Knob)
                     dto.Version = CurrentVersion;
                 var note = new NoteDto { Id = item.Id,
                     Kind = (int)item.Kind, Lane = item.Lane,

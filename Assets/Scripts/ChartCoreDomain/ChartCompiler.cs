@@ -805,7 +805,8 @@ namespace REmind.Charting
                 double startTimeMs =
                     timingMap.TimeAtPosition(note.StartPosition);
                 if (!(note.Lane == (int)ChartLane.Center
-                    ? occupiedCenterStarts.Add((startTimeMs, note.Kind))
+                    ? occupiedCenterStarts.Add((startTimeMs, note.Kind == ChartNoteKind.CenterHold
+                        ? ChartNoteKind.CenterTap : note.Kind))
                     : occupiedStarts.Add((startTimeMs, note.Lane))))
                 {
                     issues.Add(new CompileIssue("NOTE_LANE_TIME_COLLISION",
@@ -1001,6 +1002,7 @@ namespace REmind.Charting
                 valid = false;
             }
             bool central = note.Kind == ChartNoteKind.CenterTap ||
+                note.Kind == ChartNoteKind.CenterHold ||
                 note.Kind == ChartNoteKind.Knob;
             if (central != (note.Lane == (int)ChartLane.Center))
             {
@@ -1038,7 +1040,9 @@ namespace REmind.Charting
                 valid = false;
             }
 
-            if ((isLong ? note.Points.Count < 2 : note.Points.Count != 1) ||
+            if ((isLong ? note.Points.Count < 2 ||
+                    (note.Kind == ChartNoteKind.CenterHold && note.Points.Count != 2)
+                    : note.Points.Count != 1) ||
                 note.Points[0] == null ||
                 note.Points[0].Position != note.StartPosition ||
                 note.Points[0].Kind != (isLong
@@ -1118,7 +1122,8 @@ namespace REmind.Charting
         private static bool IsLong(ChartNoteKind kind)
         {
             return kind == ChartNoteKind.Hold ||
-                kind == ChartNoteKind.LongScratch || kind == ChartNoteKind.Knob;
+                kind == ChartNoteKind.LongScratch || kind == ChartNoteKind.Knob ||
+                kind == ChartNoteKind.CenterHold;
         }
 
         private static int CompareNotes(

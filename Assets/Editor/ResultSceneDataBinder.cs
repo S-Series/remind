@@ -53,6 +53,7 @@ public static class ResultSceneDataBinder
             Set<TMP_Text>(serialized, layout, "scoreValue", "03_Score/Score_Value");
             Set<TMP_Text>(serialized, layout, "rankValue", "04_Rank/Rank_Value");
             Set<TMP_Text>(serialized, layout, "rankCaption", "04_Rank/Rank_Caption");
+            Set<TMP_Text>(serialized, layout, "clearTypeValue", "06_Performance/Clear_Type_Value");
             SetArray<TMP_Text>(serialized, layout, "judgementCounts", GradePaths("Count"));
             SetArray<TMP_Text>(serialized, layout, "judgementPercents", GradePaths("Percent"));
             Set<TMP_Text>(serialized, layout, "comboValue", "06_Performance/Combo_Value");
@@ -87,7 +88,7 @@ public static class ResultSceneDataBinder
 
     private static string[] GradePaths(string suffix)
     {
-        string[] names = { "PERFECT", "GREAT", "GOOD", "BAD", "MISS" };
+        string[] names = { "PERFECT_PLUS", "PERFECT", "GREAT", "MISS" };
         var paths = new string[names.Length];
         for (int index = 0; index < names.Length; index++)
             paths[index] = "05_Judgements/" + names[index] + "_" + suffix;

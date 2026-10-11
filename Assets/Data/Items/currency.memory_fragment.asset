@@ -1,0 +1,19 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d291b6935474452197471ed4f4de5556, type: 3}
+  m_Name: currency.memory_fragment
+  m_EditorClassIdentifier: REmind.Gameplay::REmind.Gameplay.Items.ItemDefinitionAsset
+  itemId: currency.memory_fragment
+  displayName: "\uAE30\uC5B5 \uC870\uAC01"
+  icon: {fileID: 21300000, guid: 840bc3011c3aeb04fb8693eae1abc73f, type: 3}
+  kindId: currency
+  maxQuantity: 9223372036854775807

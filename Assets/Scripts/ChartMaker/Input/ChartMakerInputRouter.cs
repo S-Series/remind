@@ -18,7 +18,8 @@ public enum ChartToolType
     SingleAir = 5,
     Eraser = 6,
     CenterTap = 7,
-    Knob = 8
+    Knob = 8,
+    CenterHold = 9
 }
 
 public enum ChartToolShortcut
@@ -192,6 +193,9 @@ public sealed class ChartMakerInputRouter : MonoBehaviour
     {
         SelectTool(ChartToolType.Knob);
     }
+
+    public void SelectFloor() => SelectTool(ChartToolType.CenterTap);
+    public void SelectLongFloor() => SelectTool(ChartToolType.CenterHold);
 
     public void CancelTool()
     {

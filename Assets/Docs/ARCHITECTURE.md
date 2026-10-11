@@ -115,19 +115,45 @@ Validated Runtime Package
 
 ## 5. Application-specific Systems
 
-### 중앙 Tap / Knob 확장 경계 (2026-10-08)
+### 중앙 Floor / FloorLong / Knob 확장 경계 (2026-10-11)
 
-기존 레인 `0`~`9`와 좌우 Scratch/Long Scratch는 보존하며, 별도 `CenterTap`/`Knob`만
+기존 레인 `0`~`9`와 좌우 Scratch/Long Scratch는 보존하며, 별도 `CenterTap`/`CenterHold`/`Knob`을
 중앙 레인 `10`에 추가한다. 제작 형식과 실행 패키지는 새 종류가 있을 때만 v2를 쓴다.
 저장 필드와 위치 추적 규칙은 [ChartFormat.md](ChartFormat.md)의 18.3절을 따른다.
 
+새 Floor 단타는 기존 `CenterTap`, FloorLong은 `CenterHold`다. Maker의 codec과 adapter는
+`holdStart`/`holdEnd`를 실행용 Start/End 두 점으로 투영하며 미완성·순서 오류를 거부한다.
+단타와 롱 Start의 같은 위치는 제작 경계에서, 같은 timestamp는 공용 컴파일러에서 거부한다.
+롱 도중/End의 단타는 허용한다. 기존 좌우 채보는 읽기·편집·저장을 보존한다.
+공용 `PlayableJudgementSession`은 새 Start Down, 중앙 입력의 합집합 유지, 같은 시각 키 교체와
+End 자동 판정을 소유한다. 양수 시간의 해제 유예·재합류·tick은 없으며 Start 등급으로
+점수 단위 한 개를 End에서 확정한다. Knob Step의 Down 우선 소비는 유지한다.
+Game은 NoteType 규칙 문맥과 결과 집계를 연결하며 이 판정 규칙을 다시 구현하지 않는다.
+
+Game/Maker의 중앙 Floor 끝점·롱 구간은 기존 Floor Mesh 프리팹과 재질을 공유한다.
+`FloorNoteGeometry`는 Renderer bounds 기반 길이·클릭 영역 계산만 맡고 입력/판정을 알지 않는다.
+이번 Floor 확장의 독립 검토 수정 후 Unity EditMode 전체 413/413, 집중 제품 소스 149/149,
+수정 씬 연결 probe 2/2와 실행용 v2 패키지의 실제 Game 표시 생성 probe 2/2가 통과했다.
+Game/ChartMaker 독립 빌드와 상대 제품 DLL 제외도 확인했다. 집중 실행 전체는 probe 오류로
+151건 중 150통과·1실패였으며 이를 전체 성공으로 기록하지 않는다. 격리본은 설정·폰트 7개가
+재직렬화되었고 이번 문서 갱신은 검증 후 수정이다. 실제 카메라 픽셀·물리 입력·곡 전체 재생·
+최종 외관 승인은 미검수다. 세부 근거와 snapshot 차이는 [TASKS.md](TASKS.md) 및
+[Floor 통합 보고서](../../Logs/IntegrationBaseline/20261011-center-floor/README.md)를 따른다.
+
+ChartMaker는 Start/Middle 아이콘과 노드의 outgoing `curve`(Linear/Sin/Cos)를 저장한다.
+Middle은 직전 노드와 연결하며 앞에 Start가 없으면 아이콘만 표시한다. adapter가 경로의
+마지막 Middle을 실행용 End로 바꾸고 앞 노드의 곡선을 목적지 incoming 값으로 투영한다.
+같은 줄의 Second Point는 가로 연결을 위한 Step이다. Tab은 곡선 종류를 순환하고,
+Shift+Tab은 Start/Middle을 전환한다. 별도의 End 배치나 Finish 조작은 없다.
+
 방향 Hold 모델을 위치 추적으로 교체했다. 공용 `ChartCompiler`는 목적지 지점의
-`KnobInterpolation`(Linear/Step)과 판정 타깃을 만들고, `KnobPathEvaluator.TargetX`가
+`KnobInterpolation`(Linear/Step/Sin/Cos)과 판정 타깃을 만들고, `KnobPathEvaluator.TargetX`가
 작성 position 보간을 논리 목표 X로 변환한다. `PlayableJudgementSession`과 내부
 `KnobJudgementSession`은 플레이어 위치·입력 소비·보정·예약 결과를 소유한다.
 일반 시작은 시작 위치로 초기화하되 유효한 시작 전 Step 이동이 있으면 그 위치를 유지한다.
-`PlayerKnobX`와 `PlayerKnobNoteId`로 실제 cursor와 소유 경로를 표시한다. 유효한 조기 입력부터
-소유 Knob을 지정하며 Reset 시 소유 ID를 null로 되돌린다.
+`PlayerKnobX`와 `PlayerKnobNoteId`는 실제 논리 위치와 소유 경로를 노출한다. 유효한 조기 입력부터
+소유 Knob을 지정하며 Reset 시 소유 ID를 null로 되돌린다. Game/Maker는 별도 이동 cursor나
+방향 화살표를 생성하지 않는다.
 
 논리 범위 ±2.5, 속도 5 units/s, 공간 허용·사선 보정 ±0.25, 체크 간격 100ms를 쓴다.
 정상 위치 판정은 Perfect+, 실패는 Miss다. Step의 새 방향 Down ±80ms는 위치를 옮기고,
@@ -138,21 +164,32 @@ Validated Runtime Package
 이전 150ms/50ms 유예는 폐기하고 기존 Tap 창·Long Scratch End release는 유지한다.
 
 Game 입력 adapter는 좌/우 논리 입력의 Down/Up·시각을 독립적으로 전달한다.
-Space Tap은 기본 OFF인 Game 설정이며 ON일 때 중앙 Tap에 Space를 추가한다.
+Space Tap은 기본 OFF인 Game 설정이며 ON일 때 중앙 Floor/FloorLong에 Space를 추가한다.
 설정 변경은 다음 플레이부터 적용한다. Space는 노브 위치를 조작하지 않는다.
 다른 레인에 Space가 할당돼 있으면 ON을
 거부하고, ON 상태의 레인 키 변경에서도 Space 중복을 막는다. 설정 내부 버전은 3이며
 v1/v2를 읽을 때 기존 값을 보존하고 Space Tap은 OFF로 이행한다.
 
-공유 표시의 RibbonMesh·실제 cursor 및 Maker 한 경로 지점 편집을 연결했다.
+공유 `KnobPathView`의 RibbonMesh와 Maker 아이콘 편집을 연결했다. Game/Maker 씬의
+`knobPathMaterial`은 모두 `Assets/Art/Rendering/KnobDesignRibbon.mat`을 명시적으로 참조한다.
+전달 Material을 공유하고 텍스처·색상을 덮어쓰지 않는다. 미지정 시 흰 fallback을 사용한다.
+UV는 경로 전체 길이를 0~1로 사용하며, 곡선의 64개 고정 구간 계산은 표시와 판정이 공유한다.
 경로 표시와 판정 계산을 분리하며 사용자 아트 교체는 표시 책임 안에서 진행한다.
 Game의 기존 좌우 위치 ±15와 중앙 Tap X=0은 유지한다. 이전 EditMode 299/299·두 제품
 빌드·씬 probe는 방향 Hold 모델의 기록이며 새 위치 추적 모델의 검증 결과가 아니다.
-시작 전 Step 수정 후 고정 검증본의 집중 EditMode 87/87, 전체 316/316와 두 제품 빌드를
-확인했다. 전체에는 시작 전 독립 probe 1개·Maker 경로 probe 1개·Game 표시 probe 2개가
-포함된다. 이전 0/1 재현은 해결했고 조기 이동 유지·Start/tick 예약과 실제 cursor를 검증했다.
-사용자 후속 Game 씬 편집이 계속돼 현재 원본 씬 전체의 빌드는 미검증이다. 실제 화면·물리 입력·
-청음·전체 세션·밸런스 검수는 남아 있다. 원본 범위와 증거는 [TASKS.md](TASKS.md)에 기록한다.
+2026-10-08 시작 전 Step 수정 후 고정 검증본의 집중 EditMode 87/87, 전체 316/316와 두 제품
+빌드를 확인했다. 전체에는 시작 전 독립 probe 1개·Maker 경로 probe 1개·Game 표시 probe 2개가
+포함된다. 이전 0/1 재현은 해결했고 당시 조기 이동 유지·Start/tick 예약과 실제 cursor를 검증했다.
+이는 이후 Start/Middle·곡선·cursor 제거 및 2026-10-11 머테리얼 연결의 Unity 검증 기록이 아니다.
+2026-10-11 최신 snapshot에서 집중 검사 89/89, Pause/Retry/실패 수명 검사 15/15,
+격리 전용 계약 probe 3/3과 Game/ChartMaker 독립 빌드가 통과했다. 상대 제품 DLL은 제외했다.
+저장·재열기·Preview/Game 동등성, Material 공유·cursor 부재·중복 없는 표시 재생성을 검사했고,
+Game Main Camera의 1280×720 대표 경로 렌더에서 금색 Ribbon 표시를 확인했다.
+최종 원본 대조의 1,954파일은 manifest와 일치했지만, 격리 Unity가 설정 5개를 자동 재직렬화한
+뒤 빌드했으므로 원본 settings까지 완전히 일치한 빌드로 해석하지 않는다. 전체 suite와 실제 곡
+플레이·물리 입력·청음·Pause/Retry UI·최종 외관 승인은 미검수다. 세부 파일·snapshot 범위와
+검증 후 문서 수정은 [TASKS.md](TASKS.md) 및
+[통합 보고서](../../Logs/IntegrationBaseline/20261011-knob-integration/README.md)를 따른다.
 
 ### Game
 
@@ -218,12 +255,14 @@ Game의 기존 좌우 위치 ±15와 중앙 Tap X=0은 유지한다. 이전 Edit
   요약으로 확정한다. `AppRoot`는 이 요약을 Result 씬으로 한 번 전달하고 즉시
   비운다. Result 씬은 곡 카탈로그에서 제목·아티스트·재킷·난이도를 읽어 표시한다.
   곡·난이도별 최고 점수, 클리어 이력, 플레이 횟수, 최고 콤보와 곡 즐겨찾기는
-  Game 전용 로컬 JSON에 저장한다. 저장 v1을 읽을 때 기존 곡 기록과 즐겨찾기를
-  보존해 v2 보유·장착 필드를 채운다. 미지원 미래 버전이나 복구 불가 저장은
+  Game 전용 로컬 JSON에 저장한다. 저장 v1~v4는 기존 기록·즐겨찾기·캐릭터·곡 이용 상태를
+  보존해 v5로 읽는다. 미지원 미래 버전이나 복구 불가 저장은
   새 빈 데이터로 덮어쓰지 않고 시작 오류를 표시한다. Music Select는 최고 점수·즐겨찾기를,
   Result는 확정된 결과와 저장된 진행 기록을 읽는다. Auto Play는 진행에 반영하지
-  않는다. 곡·난이도 첫 클리어마다 기억 조각 1개를 지급하며, 보유 수량은 클리어
-  기록에서 계산한다. Result는 첫 클리어 보상만 표시하고 곡별 서사는 숨긴다.
+  않는다. 곡·난이도 첫 클리어마다 기억 조각 1개를 기록·해금과 함께 저장한다.
+  v1~v4의 클리어 이력은 v5 인벤토리 잔액으로 한 번 이행하며, 이후 보유 수량은
+  저장된 잔액을 읽는다. `AppRoot`의 소비 API는 같은 저장소를 사용한다.
+  Result는 첫 클리어 보상만 표시하고 곡별 서사는 숨긴다.
   기존 `Music` 임시 씬은 제거했고 Home의 MUSIC 버튼은 `MusicSelect`를 연다.
 
 - 해금 도전 선택은 Game 전용 `MusicUnlockLibrary`가 맡는다. Bootstrap의

@@ -5,6 +5,7 @@ using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Text;
 using REmind.Charting;
+using REmind.Gameplay.Items;
 using UnityEngine;
 
 namespace REmind.Gameplay
@@ -33,18 +34,21 @@ namespace REmind.Gameplay
         }
     }
 
-    /// <summary>Local storage for song progress and character ownership.</summary>
+    /// <summary>Local storage for Game-owned player progress.</summary>
     public sealed class LocalPlayerDataStore
     {
+        public const string MemoryFragmentItemId = "currency.memory_fragment";
+
         [Serializable]
         private sealed class SaveDocument
         {
-            public int version = 4;
+            public int version = 5;
             public List<ChartRecord> charts = new List<ChartRecord>();
             public List<string> favoriteMusicIds = new List<string>();
             public List<string> ownedCharacterIds = new List<string>();
             public string equippedCharacterId;
             public List<SongAccessRecord> songAccess = new List<SongAccessRecord>();
+            public List<ItemRecord> inventory = new List<ItemRecord>();
         }
 
         // JsonUtility normalizes missing/null lists to empty lists, hiding damaged saves.
@@ -56,12 +60,27 @@ namespace REmind.Gameplay
             [DataMember] public object[] favoriteMusicIds;
             [DataMember] public object[] ownedCharacterIds;
             [DataMember] public SongAccessProbe[] songAccess;
+            [DataMember] public ItemProbe[] inventory;
         }
 
         [DataContract]
         private sealed class SongAccessProbe
         {
             [DataMember] public object[] unlockedDifficultyIds;
+        }
+
+        [DataContract]
+        private sealed class ItemProbe
+        {
+            [DataMember] public string itemId;
+            [DataMember] public long? quantity;
+        }
+
+        [Serializable]
+        private sealed class ItemRecord
+        {
+            public string itemId;
+            public long quantity;
         }
 
         [Serializable]
@@ -112,6 +131,80 @@ namespace REmind.Gameplay
         public IReadOnlyList<string> OwnedCharacterIds =>
             document.ownedCharacterIds.AsReadOnly();
         public string EquippedCharacterId => document.equippedCharacterId;
+
+        public long GetItemQuantity(string itemId)
+        {
+            if (string.IsNullOrWhiteSpace(itemId))
+                throw new ArgumentException("An item ID is required.",
+                    nameof(itemId));
+            return FindItem(document, itemId)?.quantity ?? 0L;
+        }
+
+        public void GrantItem(ItemCatalog catalog, string itemId,
+            long quantity)
+        {
+            ItemDefinitionAsset definition = RequireItem(catalog, itemId);
+            SaveDocument candidate = CloneDocument();
+            AddItem(candidate, definition, quantity);
+            Persist(candidate);
+            document = candidate;
+        }
+
+        private static void AddItem(SaveDocument candidate,
+            ItemDefinitionAsset definition, long quantity)
+        {
+            if (quantity <= 0)
+                throw new ArgumentOutOfRangeException(nameof(quantity));
+            ItemRecord record = FindItem(candidate, definition.ItemId);
+            long current = record?.quantity ?? 0L;
+            if (quantity > long.MaxValue - current)
+                throw new OverflowException("Item quantity exceeds Int64 range.");
+            long next = current + quantity;
+            if (next > definition.MaxQuantity)
+                throw new InvalidOperationException(
+                    $"Item '{definition.ItemId}' exceeds its quantity limit.");
+            if (record == null)
+                candidate.inventory.Add(new ItemRecord
+                {
+                    itemId = definition.ItemId,
+                    quantity = next
+                });
+            else record.quantity = next;
+        }
+
+        public bool TryConsumeItem(ItemCatalog catalog, string itemId,
+            long quantity)
+        {
+            RequireItem(catalog, itemId);
+            if (quantity <= 0)
+                throw new ArgumentOutOfRangeException(nameof(quantity));
+            if (GetItemQuantity(itemId) < quantity) return false;
+
+            SaveDocument candidate = CloneDocument();
+            ItemRecord record = FindItem(candidate, itemId);
+            record.quantity -= quantity;
+            if (record.quantity == 0) candidate.inventory.Remove(record);
+            Persist(candidate);
+            document = candidate;
+            return true;
+        }
+
+        private static ItemDefinitionAsset RequireItem(ItemCatalog catalog,
+            string itemId)
+        {
+            if (!catalog) throw new ArgumentNullException(nameof(catalog));
+            if (string.IsNullOrWhiteSpace(itemId))
+                throw new ArgumentException("An item ID is required.",
+                    nameof(itemId));
+            if (!catalog.TryGetEntry(itemId, out ItemDefinitionAsset definition))
+                throw new InvalidOperationException(
+                    $"Item '{itemId}' is not in the catalog.");
+            return definition;
+        }
+
+        private static ItemRecord FindItem(SaveDocument source,
+            string itemId) => source.inventory.Find(record =>
+            string.Equals(record.itemId, itemId, StringComparison.Ordinal));
 
         public bool OwnsSong(string musicId) => FindSongAccess(musicId)?.isOwned ?? false;
         public bool IsSongUnlocked(string musicId)
@@ -243,18 +336,8 @@ namespace REmind.Gameplay
             return record != null;
         }
 
-        // One fragment is permanently earned per cleared song/difficulty.
-        // Deriving the balance from chart records avoids a second mutable ledger.
-        public int MemoryFragmentCount
-        {
-            get
-            {
-                int count = 0;
-                foreach (ChartRecord record in document.charts)
-                    if (record.cleared) count++;
-                return count;
-            }
-        }
+        public long MemoryFragmentCount =>
+            GetItemQuantity(MemoryFragmentItemId);
 
         public bool IsFavorite(string musicId) =>
             !string.IsNullOrWhiteSpace(musicId) &&
@@ -300,20 +383,25 @@ namespace REmind.Gameplay
             return newBest;
         }
 
-        /// <summary>Commits the chart result and its earned unlock together.</summary>
+        /// <summary>Commits the result, unlock, and first-clear fragment together.</summary>
         public bool RecordAndSaveResult(GameResultSnapshot result,
-            string unlockTargetMusicId)
+            string unlockTargetMusicId, ItemCatalog itemCatalog)
         {
             if (result == null) throw new ArgumentNullException(nameof(result));
             if (result.IsAutoPlay)
                 throw new ArgumentException("Auto Play results cannot be recorded.",
                     nameof(result));
 
+            bool firstClear = result.IsCleared && !result.IsFailed &&
+                !(FindRecord(result.MusicId, result.DifficultyId)?.cleared ?? false);
             SaveDocument previous = document;
             document = CloneDocument();
             try
             {
                 bool newBest = RecordResult(result);
+                if (firstClear)
+                    AddItem(document,
+                        RequireItem(itemCatalog, MemoryFragmentItemId), 1L);
                 if (result.IsCleared && !result.IsFailed &&
                     !string.IsNullOrEmpty(unlockTargetMusicId))
                 {
@@ -391,6 +479,11 @@ namespace REmind.Gameplay
                 isUnlocked = record.isUnlocked,
                 unlockedDifficultyIds = new List<string>(
                     record.unlockedDifficultyIds)
+            }),
+            inventory = document.inventory.ConvertAll(record => new ItemRecord
+            {
+                itemId = record.itemId,
+                quantity = record.quantity
             })
         };
 
@@ -446,21 +539,27 @@ namespace REmind.Gameplay
                 typeof(VersionProbe)).ReadObject(stream);
             if (header == null || header.version < 1)
                 throw new FormatException("Player data version is missing or invalid.");
-            if (header.version > 4)
+            if (header.version > 5)
                 throw new UnsupportedSaveVersionException(header.version);
             if (header.charts == null || header.favoriteMusicIds == null ||
                 (header.version >= 2 && header.ownedCharacterIds == null) ||
-                (header.version >= 3 && header.songAccess == null))
+                (header.version >= 3 && header.songAccess == null) ||
+                (header.version >= 5 && header.inventory == null))
                 throw new FormatException("Player data fields are missing.");
             if (header.version >= 4)
                 foreach (SongAccessProbe access in header.songAccess)
                     if (access == null || access.unlockedDifficultyIds == null)
                         throw new FormatException(
                             "Song difficulty unlock list is missing.");
+            if (header.version >= 5)
+                foreach (ItemProbe item in header.inventory)
+                    if (item == null || string.IsNullOrWhiteSpace(item.itemId) ||
+                        !item.quantity.HasValue || item.quantity.Value < 0)
+                        throw new FormatException("Invalid item quantity.");
             SaveDocument document = JsonUtility.FromJson<SaveDocument>(json);
             if (document == null)
                 throw new FormatException("Player data is empty or malformed.");
-            if (document.version < 1 || document.version > 4 ||
+            if (document.version < 1 || document.version > 5 ||
                 document.charts == null ||
                 document.favoriteMusicIds == null)
                 throw new FormatException("Unsupported player data format.");
@@ -504,7 +603,27 @@ namespace REmind.Gameplay
                         throw new FormatException(
                             "Invalid or duplicate song difficulty unlock.");
             }
-            document.version = 4;
+            if (document.version < 5)
+            {
+                document.inventory = new List<ItemRecord>();
+                long fragments = 0L;
+                foreach (ChartRecord record in document.charts)
+                    if (record.cleared) fragments++;
+                if (fragments > 0L)
+                    document.inventory.Add(new ItemRecord
+                    {
+                        itemId = MemoryFragmentItemId,
+                        quantity = fragments
+                    });
+            }
+            if (document.inventory == null)
+                throw new FormatException("Invalid inventory list.");
+            var itemIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (ItemRecord item in document.inventory)
+                if (item == null || string.IsNullOrWhiteSpace(item.itemId) ||
+                    item.quantity < 0 || !itemIds.Add(item.itemId))
+                    throw new FormatException("Invalid or duplicate item record.");
+            document.version = 5;
             return document;
         }
 

@@ -43,7 +43,8 @@ namespace REmind.Charting
         LongScratch = 3,
         Air = 4,
         CenterTap = 5,
-        Knob = 6
+        Knob = 6,
+        CenterHold = 7
     }
 
     public enum ChartKnobDirection { None = 0, Left = 1, Right = 2 }

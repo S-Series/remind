@@ -895,9 +895,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8d63408caf2c8d444b0030b8113cfa8d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ChartPlacementController
-  centerTapNotePrefab: {fileID: 7256374167690495269, guid: e6e09ee44b1b0ac45a4f3c4a90725dc3, type: 3}
+  centerTapNotePrefab: {fileID: 7861649489109115994, guid: e6cb0ebdac4a5fd47ade33d4a2c4bae7, type: 3}
+  centerHoldNotePrefab: {fileID: 7861649489109115994, guid: e6cb0ebdac4a5fd47ade33d4a2c4bae7, type: 3}
   knobNotePrefab: {fileID: 7673451636091737856, guid: 88622a41c7e9426b9256f5d5dc3bb5e0, type: 3}
-  chartPreviewCenterTapNotePrefab: {fileID: 7256374167690495269, guid: ef722f8fe35a808468de9c43ee1ca0a2, type: 3}
+  chartPreviewCenterTapNotePrefab: {fileID: 7861649489109115994, guid: e6cb0ebdac4a5fd47ade33d4a2c4bae7, type: 3}
+  chartPreviewCenterHoldNotePrefab: {fileID: 7861649489109115994, guid: e6cb0ebdac4a5fd47ade33d4a2c4bae7, type: 3}
   chartPreviewKnobNotePrefab: {fileID: 7673451636091737856, guid: 88622a41c7e9426b9256f5d5dc3bb5e0, type: 3}
   knobPathMaterial: {fileID: 2100000, guid: cec1e7117b3c483196814b2f395a2fb4, type: 2}
   previewField: {fileID: 901814115}
@@ -9168,7 +9170,7 @@ GameObject:
   - component: {fileID: 1639479037}
   - component: {fileID: 1639479036}
   m_Layer: 5
-  m_Name: Scratch
+  m_Name: Floor
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -9240,7 +9242,7 @@ MonoBehaviour:
       m_Calls:
       - m_Target: {fileID: 182934949}
         m_TargetAssemblyTypeName: ChartMakerInputRouter, Assembly-CSharp
-        m_MethodName: SelectSingleScratch
+        m_MethodName: SelectFloor
         m_Mode: 1
         m_Arguments:
           m_ObjectArgument: {fileID: 0}
@@ -12327,7 +12329,7 @@ GameObject:
   - component: {fileID: 2122141647}
   - component: {fileID: 2122141646}
   m_Layer: 5
-  m_Name: Scratch Long
+  m_Name: Floor Long
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -12399,7 +12401,7 @@ MonoBehaviour:
       m_Calls:
       - m_Target: {fileID: 182934949}
         m_TargetAssemblyTypeName: ChartMakerInputRouter, Assembly-CSharp
-        m_MethodName: SelectLongScratch
+        m_MethodName: SelectLongFloor
         m_Mode: 1
         m_Arguments:
           m_ObjectArgument: {fileID: 0}

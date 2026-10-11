@@ -7,12 +7,15 @@ using REmind.Charting;
 using REmind.Presentation;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.SceneManagement;
+using UnityEngine.TestTools;
 
 namespace REmind.ChartMaker.Tests
 {
     public sealed class KnobPresentationTests
     {
         private const BindingFlags Hidden = BindingFlags.NonPublic | BindingFlags.Instance;
+        private bool secondPointPlayModeEntered;
 
         [Test]
         public void Ribbon_PreservesAssignedMaterialAndUpdatesMeshWithoutCreatingCursor()
@@ -57,17 +60,32 @@ namespace REmind.ChartMaker.Tests
         public void EditingPoint_IsOneByOneSpriteWithMatchingClickAreaAndScaleCompensation()
         {
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(
-                "Assets/Prefabs/Notes/Preview/KnobPoint.prefab");
+                "Assets/Prefabs/Notes/Legacy/Preview/KnobPoint.prefab");
             Assert.That(prefab, Is.Not.Null);
             GameObject point = Object.Instantiate(prefab);
             try
             {
                 SpriteRenderer renderer = point.GetComponent<SpriteRenderer>();
+                BoxCollider2D collider = point.GetComponent<BoxCollider2D>();
                 Assert.That(renderer.sprite, Is.Not.Null);
-                Assert.That(renderer.sprite.rect.width, Is.EqualTo(renderer.sprite.rect.height));
+                // Sliced display size owns the shape, not the source image's pixel ratio.
                 Assert.That(renderer.drawMode, Is.EqualTo(SpriteDrawMode.Sliced));
-                Assert.That(renderer.size, Is.EqualTo(Vector2.one));
-                Assert.That(point.GetComponent<BoxCollider2D>().size, Is.EqualTo(Vector2.one));
+                Assert.That(renderer.size.x, Is.GreaterThan(0));
+                Assert.That(renderer.size.y, Is.EqualTo(renderer.size.x).Within(0.001));
+                Assert.That(collider.size.x, Is.GreaterThan(0));
+                Assert.That(collider.size.y, Is.EqualTo(collider.size.x).Within(0.001));
+                float displayWidth = renderer.size.x, clickWidth = collider.size.x;
+                void AssertDisplayAndClickBounds()
+                {
+                    Physics2D.SyncTransforms();
+                    Assert.That(renderer.bounds.size.x, Is.EqualTo(displayWidth).Within(0.001));
+                    Assert.That(renderer.bounds.size.y, Is.EqualTo(displayWidth).Within(0.001));
+                    Assert.That(collider.bounds.size.x, Is.EqualTo(clickWidth).Within(0.001));
+                    Assert.That(collider.bounds.size.y, Is.EqualTo(clickWidth).Within(0.001));
+                    Assert.That(collider.bounds.center.x, Is.EqualTo(renderer.bounds.center.x).Within(0.001));
+                    Assert.That(collider.bounds.center.y, Is.EqualTo(renderer.bounds.center.y).Within(0.001));
+                }
+                AssertDisplayAndClickBounds();
                 Assert.That(point.transform.childCount, Is.Zero, "A point must not contain Floor/arrow visuals.");
                 var parent = new GameObject("Editing Field");
                 try
@@ -77,7 +95,9 @@ namespace REmind.ChartMaker.Tests
                     Component noteView = point.GetComponent("NoteView");
                     noteView.GetType().GetMethod("SetVerticalDisplayScale").Invoke(noteView,
                         new object[] { 4f });
-                    Assert.That(renderer.bounds.size.x, Is.EqualTo(renderer.bounds.size.y).Within(0.001));
+                    AssertDisplayAndClickBounds();
+                    Assert.That(noteView.GetType().GetMethod("ContainsClickCollider").Invoke(noteView,
+                        new object[] { collider }), Is.True);
                 }
                 finally { Object.DestroyImmediate(parent); }
             }
@@ -95,7 +115,7 @@ namespace REmind.ChartMaker.Tests
                 var field = new GameObject("Editing Field");
                 field.transform.SetParent(obj.transform, false);
                 GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(
-                    "Assets/Prefabs/Notes/Preview/KnobPoint.prefab");
+                    "Assets/Prefabs/Notes/Legacy/Preview/KnobPoint.prefab");
                 GameObject first = Object.Instantiate(prefab, field.transform);
                 GameObject second = Object.Instantiate(prefab, field.transform);
                 var start = new ChartHolder(0, 0) { hasKnobPoint = true,
@@ -135,9 +155,17 @@ namespace REmind.ChartMaker.Tests
             finally { Object.DestroyImmediate(obj); }
         }
 
-        [Test]
-        public void SecondPoint_PlacementEditingDeletionAndPreviewPreserveHorizontalOrder()
+        [UnityTest]
+        public IEnumerator SecondPoint_PlacementEditingDeletionAndPreviewPreserveHorizontalOrder()
         {
+            Assert.That(EditorApplication.isPlaying, Is.False);
+            Assert.That(SceneManager.GetActiveScene().path, Is.Empty,
+                "Run this fixture from the Test Runner bootstrap scene.");
+            Assert.That(ChartManager.ChartHolders, Is.Empty,
+                "Do not enter PlayMode with a live ChartMaker document.");
+            yield return new EnterPlayMode();
+            secondPointPlayModeEntered = true;
+            Assert.That(Application.isPlaying, Is.True);
             var statics = BindingFlags.NonPublic | BindingFlags.Static;
             var rows = (IList)typeof(ChartManager).GetField("ChartHolderList", statics).GetValue(null);
             object[] original = rows.Cast<object>().ToArray();
@@ -156,7 +184,7 @@ namespace REmind.ChartMaker.Tests
                 var field = new GameObject("Preview");
                 field.transform.SetParent(obj.transform, false);
                 GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(
-                    "Assets/Prefabs/Notes/Preview/KnobPoint.prefab");
+                    "Assets/Prefabs/Notes/Legacy/Preview/KnobPoint.prefab");
                 void Set(string name, object value) => typeof(ChartPlacementController)
                     .GetField(name, Hidden).SetValue(placement, value);
                 Set("middleNoteField", field.transform);
@@ -223,15 +251,26 @@ namespace REmind.ChartMaker.Tests
                 Assert.That(pair.secondKnobPoint, Is.Null);
                 Assert.That(ChartManager.ChartHolders.Single(h => h.AbsoluteChartPosition == 1800).knobX,
                     Is.EqualTo(0.75));
+                GameObject[] deletedSecond = ChartManager.ChartHolders.Single(h => h.AbsoluteChartPosition == 1800)
+                    .knobPointObjects.ToArray();
                 Assert.That(ChartManager.DeleteNote(secondIcon), Is.True);
+                yield return null;
+                Assert.That(deletedSecond.All(view => !view), Is.True);
                 Place(1200, 0.75f);
                 secondIcon = pair.secondKnobPoint.knobPointObjects[0];
+                GameObject[] deletedFirst = pair.knobPointObjects.ToArray();
                 Assert.That(ChartManager.DeleteNote(pair.knobPointObjects[0]), Is.True);
                 Assert.That(pair.secondKnobPoint, Is.Null);
                 Assert.That(pair.knobX, Is.EqualTo(0.75));
                 Assert.That(pair.knobPointObjects[0], Is.SameAs(secondIcon));
+                yield return null;
+                Assert.That(deletedFirst.All(view => !view), Is.True);
+                Assert.That((bool)secondIcon, Is.True, "Deleting First must preserve the promoted Second icon.");
+                GameObject[] deletedRemaining = pair.knobPointObjects.ToArray();
                 Assert.That(ChartManager.DeleteNote(secondIcon), Is.True);
                 Assert.That(pair.hasKnobPoint, Is.False);
+                yield return null;
+                Assert.That(deletedRemaining.All(view => !view), Is.True);
             }
             finally
             {
@@ -240,8 +279,23 @@ namespace REmind.ChartMaker.Tests
                 foreach (object item in oldUndo) undo.Add(item);
                 foreach (object item in oldRedo) redo.Add(item);
                 eventField.SetValue(null, listeners);
-                Object.DestroyImmediate(obj);
+                Object.Destroy(obj);
             }
+            yield return null;
+            Assert.That((bool)obj, Is.False);
+            yield return new ExitPlayMode();
+            secondPointPlayModeEntered = false;
+        }
+
+        [UnityTearDown]
+        public IEnumerator ExitPlayModeAfterSecondPointCheck()
+        {
+            if (secondPointPlayModeEntered && EditorApplication.isPlayingOrWillChangePlaymode)
+            {
+                yield return null;
+                yield return new ExitPlayMode();
+            }
+            secondPointPlayModeEntered = false;
         }
 
         [Test]
@@ -268,7 +322,7 @@ namespace REmind.ChartMaker.Tests
                 var field = new GameObject("Placement Field");
                 field.transform.SetParent(obj.transform, false);
                 GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(
-                    "Assets/Prefabs/Notes/Preview/KnobPoint.prefab");
+                    "Assets/Prefabs/Notes/Legacy/Preview/KnobPoint.prefab");
                 void Set(string name, object value) => typeof(ChartPlacementController)
                     .GetField(name, Hidden).SetValue(placement, value);
                 void Invoke(string name, params object[] values) => typeof(ChartPlacementController)

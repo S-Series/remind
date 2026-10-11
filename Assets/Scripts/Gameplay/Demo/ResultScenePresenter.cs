@@ -19,8 +19,9 @@ namespace REmind.Gameplay.Demo
         [SerializeField] private TMP_Text scoreValue;
         [SerializeField] private TMP_Text rankValue;
         [SerializeField] private TMP_Text rankCaption;
-        [SerializeField] private TMP_Text[] judgementCounts = new TMP_Text[5];
-        [SerializeField] private TMP_Text[] judgementPercents = new TMP_Text[5];
+        [SerializeField] private TMP_Text clearTypeValue;
+        [SerializeField] private TMP_Text[] judgementCounts = new TMP_Text[4];
+        [SerializeField] private TMP_Text[] judgementPercents = new TMP_Text[4];
         [SerializeField] private TMP_Text comboValue;
         [SerializeField] private TMP_Text accuracyValue;
         [SerializeField] private Image accuracyFill;
@@ -91,9 +92,11 @@ namespace REmind.Gameplay.Demo
             UpdateDifficulty(entry, result.DifficultyId);
             Set(scoreValue, Math.Round(result.Score).ToString("N0", CultureInfo.InvariantCulture));
             Set(rankValue, result.Rank.ToString());
-            Set(rankCaption, result.IsAutoPlay ? "AUTO PLAY" :
+            string caption = result.IsAutoPlay ? "AUTO PLAY" :
                 result.IsAllPerfect ? "ALL PERFECT" :
-                result.IsFailed ? "FAILED" : result.IsCleared ? "CLEAR" : "FINISHED");
+                result.IsFailed ? "FAILED" : result.IsCleared ? "CLEAR" : "FINISHED";
+            Set(rankCaption, caption);
+            Set(clearTypeValue, caption);
 
             int[] counts = { result.PerfectPlus, result.Perfect,
                 result.Great, result.Miss };
@@ -163,20 +166,18 @@ namespace REmind.Gameplay.Demo
                     selectedId == MusicDifficultySlots.GetId(entry?.Difficulties, 4))
                     id = selectedId;
                 MusicDifficultyEntry difficulty = id == null ? null : entry?.FindDifficulty(id);
-                bool available = id != null && (difficulty != null || id == selectedId);
-                label.gameObject.SetActive(available);
-                if (!available) continue;
+                bool selected = id != null && id == selectedId;
+                label.gameObject.SetActive(selected);
+                if (!selected) continue;
                 string level = difficulty != null && difficulty.Level > 0
                     ? difficulty.Level.ToString(CultureInfo.InvariantCulture) : "—";
                 label.text = (difficulty?.DisplayName ?? id.ToUpperInvariant()) + "   " + level;
-                bool selected = id == selectedId;
-                label.color = selected ? new Color(.91f, .93f, 1f) :
-                    new Color(.65f, .71f, .87f);
-                if (selected && selectedDifficulty)
+                label.color = new Color(.91f, .93f, 1f);
+                if (selectedDifficulty)
                 {
                     RectTransform marker = selectedDifficulty.rectTransform;
-                    Vector2 position = marker.anchoredPosition;
-                    position.x = label.rectTransform.anchoredPosition.x - 14f;
+                    Vector2 position = label.rectTransform.anchoredPosition;
+                    position.x -= 14f;
                     marker.anchoredPosition = position;
                     selectedDifficulty.gameObject.SetActive(true);
                 }
@@ -192,7 +193,8 @@ namespace REmind.Gameplay.Demo
             Set(scoreValue, "—");
             Set(rankValue, "—");
             Set(rankCaption, string.Empty);
-            for (int index = 0; index < 5; index++)
+            Set(clearTypeValue, "—");
+            for (int index = 0; index < 4; index++)
             {
                 SetAt(judgementCounts, index, "—");
                 SetAt(judgementPercents, index, "—");

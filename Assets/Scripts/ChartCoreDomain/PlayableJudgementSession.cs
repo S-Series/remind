@@ -53,6 +53,7 @@ namespace REmind.Charting
             public bool Held;
             public bool JoinAttempted;
             public ChartJudgementGrade JoinGrade;
+            public double? CenterReleaseTimeMs;
         }
 
         private readonly List<Entry> entries = new List<Entry>();
@@ -114,6 +115,7 @@ namespace REmind.Charting
                 entry.Held = false;
                 entry.JoinAttempted = false;
                 entry.JoinGrade = ChartJudgementGrade.None;
+                entry.CenterReleaseTimeMs = null;
             }
         }
 
@@ -123,13 +125,16 @@ namespace REmind.Charting
             if (isPressed == null) throw new ArgumentNullException(nameof(isPressed));
             if (halted) return;
             knobs.SynchronizeHeld(isPressed, chartTimeMs);
+            UpdateCenterHolds(chartTimeMs ?? 0d);
             foreach (Entry entry in entries)
                 if (!entry.Complete && entry.Held &&
-                    !isPressed(entry.Note.Lane))
+                    !(entry.Note.Kind == ChartNoteKind.CenterHold
+                        ? knobs.IsCentralInputHeld : isPressed(entry.Note.Lane)))
                 {
                     entry.Held = false;
                     entry.Joined = false;
                     entry.PendingMidJoin = false;
+                    entry.CenterReleaseTimeMs = null;
                 }
         }
 
@@ -138,16 +143,20 @@ namespace REmind.Charting
             if (halted || double.IsNaN(chartTimeMs) ||
                 double.IsInfinity(chartTimeMs)) return;
             int currentGeneration = generation;
+            FlushCenterReleasesBefore(chartTimeMs);
             bool freshPress = knobs.UpdateInput(lane, chartTimeMs, pressed);
             if (currentGeneration != generation) return;
+            UpdateCenterHolds(chartTimeMs);
             if (pressed && freshPress && knobs.TryConsumePress(lane, chartTimeMs)) return;
             foreach (Entry entry in entries)
             {
                 bool centralTap = entry.Note.Kind == ChartNoteKind.CenterTap;
-                if (entry.Complete || (centralTap
+                bool centralHold = entry.Note.Kind == ChartNoteKind.CenterHold;
+                if (entry.Complete || (centralTap || centralHold
                     ? lane < (int)ChartLane.GroundLeft || lane > (int)ChartLane.Center ||
                         !freshPress
                     : entry.Note.Lane != lane)) continue;
+                if (centralHold && !pressed) continue;
                 PlayableNoteSnapshot note = entry.Note;
                 if (note.Points.Count == 1)
                 {
@@ -176,6 +185,7 @@ namespace REmind.Charting
                         entry.Held = true;
                         entry.JoinAttempted = true;
                         entry.JoinGrade = grade;
+                        entry.CenterReleaseTimeMs = null;
                         return;
                     }
                     if (index + 1 < note.Points.Count - 1 && !entry.Held)
@@ -238,7 +248,7 @@ namespace REmind.Charting
                     int endIndex = entry.SegmentIndex + 1;
                     bool isEnd = endIndex == note.Points.Count - 1;
                     double time = note.Points[endIndex].TimeMs + userOffsetMs +
-                        (autoPlay || !isEnd ? 0d :
+                        (autoPlay || !isEnd || note.Kind == ChartNoteKind.CenterHold ? 0d :
                             missWindow(note, endIndex) + 0.000001d);
                     next = Math.Min(next, time);
                 }
@@ -250,6 +260,7 @@ namespace REmind.Charting
         {
             if (halted) return;
             int currentGeneration = generation;
+            FlushCenterReleasesBefore(timeMs);
             knobs.ProcessAutomatic(timeMs, autoPlay);
             if (currentGeneration != generation) return;
             foreach (Entry entry in entries)
@@ -262,7 +273,7 @@ namespace REmind.Charting
                 bool isEnd = endIndex == note.Points.Count - 1;
                 double target = note.Points[endIndex].TimeMs;
                 double deadline = target + userOffsetMs +
-                    (autoPlay || !isEnd ? 0d :
+                    (autoPlay || !isEnd || note.Kind == ChartNoteKind.CenterHold ? 0d :
                         missWindow(note, endIndex) + 0.000001d);
                 if (timeMs < deadline) continue;
 
@@ -278,7 +289,7 @@ namespace REmind.Charting
 
                 ChartJudgementGrade grade = autoPlay
                     ? ChartJudgementGrade.PerfectPlus
-                    : !isEnd && entry.Joined && entry.Held
+                    : (!isEnd || note.Kind == ChartNoteKind.CenterHold) && entry.Joined && entry.Held
                         ? entry.JoinGrade
                         : ChartJudgementGrade.Miss;
                 Emit(entry, index, grade, timeMs - userOffsetMs - target,
@@ -314,7 +325,37 @@ namespace REmind.Charting
             double evaluated, bool automaticMiss)
         {
             resolved(new ChartJudgementResolution(entry.Note, segmentIndex,
-                grade, offset, target, evaluated, automaticMiss));
+                grade, offset, target, evaluated, automaticMiss, targetKind:
+                    entry.Note.Kind == ChartNoteKind.CenterHold
+                        ? JudgementTargetKind.HoldEnd : (JudgementTargetKind?)null));
+        }
+
+        private void UpdateCenterHolds(double timeMs)
+        {
+            foreach (Entry entry in entries)
+            {
+                if (entry.Complete || entry.Note.Kind != ChartNoteKind.CenterHold || !entry.Joined) continue;
+                if (knobs.IsCentralInputHeld)
+                {
+                    entry.Held = true;
+                    entry.CenterReleaseTimeMs = null;
+                }
+                else if (!entry.CenterReleaseTimeMs.HasValue)
+                    entry.CenterReleaseTimeMs = timeMs;
+            }
+        }
+
+        private void FlushCenterReleasesBefore(double timeMs)
+        {
+            foreach (Entry entry in entries)
+            {
+                if (entry.Complete || !entry.CenterReleaseTimeMs.HasValue ||
+                    entry.CenterReleaseTimeMs.Value >= timeMs) continue;
+                // Equal-time Up/Down is a continuous swap, with no positive-duration release grace.
+                entry.Held = false;
+                entry.Joined = false;
+                entry.CenterReleaseTimeMs = null;
+            }
         }
     }
 }

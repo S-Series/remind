@@ -39,6 +39,7 @@ namespace REmind.Gameplay.Demo
         [SerializeField] private GameObject longScratchNotePrefab;
         [SerializeField] private GameObject airNotePrefab;
         [SerializeField] private GameObject centerTapNotePrefab;
+        [SerializeField] private GameObject centerHoldNotePrefab;
         [SerializeField] private Material knobPathMaterial;
         [SerializeField] private Transform noteField;
         [SerializeField] private bool playOnReady = true;
@@ -300,6 +301,12 @@ namespace REmind.Gameplay.Demo
                             (float)((start.FloorPosition +
                                 end.FloorPosition) * 0.5d),
                             note.Lane >= 4 && note.Lane < 8 ? -2f : 0f);
+                        if (note.Kind == ChartNoteKind.CenterHold)
+                        {
+                            FloorNoteGeometry.SetSegmentLength(ribbon,
+                                (float)Math.Abs(end.FloorPosition - start.FloorPosition));
+                            continue;
+                        }
                         SpriteRenderer sprite = ribbon.GetComponent<SpriteRenderer>();
                         if (sprite && sprite.sprite)
                         {
@@ -344,6 +351,8 @@ namespace REmind.Gameplay.Demo
             {
                 case ChartNoteKind.CenterTap:
                     return centerTapNotePrefab ? centerTapNotePrefab : tapNotePrefab;
+                case ChartNoteKind.CenterHold:
+                    return centerHoldNotePrefab ? centerHoldNotePrefab : centerTapNotePrefab ? centerTapNotePrefab : tapNotePrefab;
                 case ChartNoteKind.Scratch:
                     return scratchNotePrefab ? scratchNotePrefab : tapNotePrefab;
                 case ChartNoteKind.Hold:

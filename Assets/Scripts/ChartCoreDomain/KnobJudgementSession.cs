@@ -46,6 +46,7 @@ namespace REmind.Charting
         public double PlayerX => double.IsNegativeInfinity(displayTime) ? playerX :
             CalculatePosition(Math.Max(displayTime, lastTime), displayAutoPlay, false);
         public string PlayerNoteId => cursorOwner?.Note.Id;
+        public bool IsCentralInputHeld => held[0] || held[1] || held[2];
 
         public int PendingNoteCount
         {

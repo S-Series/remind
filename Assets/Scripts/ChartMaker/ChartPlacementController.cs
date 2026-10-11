@@ -465,9 +465,9 @@ public sealed partial class ChartPlacementController : MonoBehaviour
                     : NoteType.Tap);
                 break;
             case ChartToolShortcut.Scratch:
-                SetCurrentNoteType(currentNoteType == NoteType.Scratch
-                    ? NoteType.LongScratch
-                    : NoteType.Scratch);
+                SetCurrentNoteType(currentNoteType == NoteType.CenterTap
+                    ? NoteType.CenterHold
+                    : NoteType.CenterTap);
                 break;
             case ChartToolShortcut.Eraser:
                 SetCurrentTool(ChartToolType.Eraser);
@@ -625,7 +625,7 @@ public sealed partial class ChartPlacementController : MonoBehaviour
             noteObject.transform.SetParent(targetParent, false);
             noteObject.transform.localPosition = dragTargetPosition;
         }
-        if (draggedNoteType == NoteType.Knob) RefreshKnobPaths();
+        if (draggedNoteType is NoteType.Knob or NoteType.CenterHold) RefreshKnobPaths();
     }
 
     /// <summary>드래그 결과를 두 ChartHolder 사이의 단일 편집 작업으로 확정합니다.</summary>
@@ -637,7 +637,8 @@ public sealed partial class ChartPlacementController : MonoBehaviour
                     out ChartHolder holder, out _, out _, out _, out _) ||
                 !TryEditCenterNote(dragAnchor,
                     ChartHolder.WorldYToAbsolutePosition(dragTargetPosition.y),
-                    holder.knobPointKind, dragTargetPosition.x / PreviewMaxX, out _))
+                    draggedNoteType == NoteType.CenterHold ? holder.centerHoldPointKind : holder.knobPointKind,
+                    dragTargetPosition.x / PreviewMaxX, out _))
                 RestoreDragTransforms();
             FinishNoteDrag();
             return;
@@ -731,7 +732,7 @@ public sealed partial class ChartPlacementController : MonoBehaviour
 
     private void FinishNoteDrag()
     {
-        bool wasKnobDrag = draggedNoteType == NoteType.Knob;
+        bool wasKnobDrag = draggedNoteType is NoteType.Knob or NoteType.CenterHold;
         isDraggingNote = false;
         dragAnchor = null;
         draggedNoteType = NoteType.Unknown;
@@ -2199,6 +2200,7 @@ public sealed partial class ChartPlacementController : MonoBehaviour
             ApplyEditingVisualDisplayScale(holder.cameraNoteObjects, scale);
             ApplyEditingVisualDisplayScale(holder.markerNoteObjects, scale);
             ApplyEditingVisualDisplayScale(holder.centerTapObjects, scale);
+            ApplyEditingVisualDisplayScale(holder.centerHoldObjects, scale);
             ApplyEditingVisualDisplayScale(holder.knobPointObjects, scale);
             ApplyEditingVisualDisplayScale(holder.secondKnobPoint?.knobPointObjects, scale);
         }
@@ -2531,6 +2533,9 @@ public sealed partial class ChartPlacementController : MonoBehaviour
             case ChartToolType.CenterTap:
                 SetCurrentNoteType(NoteType.CenterTap);
                 break;
+            case ChartToolType.CenterHold:
+                SetCurrentNoteType(NoteType.CenterHold);
+                break;
             case ChartToolType.Knob:
                 SelectKnobPath();
                 break;
@@ -2643,6 +2648,7 @@ public sealed partial class ChartPlacementController : MonoBehaviour
         return noteType switch
         {
             NoteType.CenterTap => ChartToolType.CenterTap,
+            NoteType.CenterHold => ChartToolType.CenterHold,
             NoteType.Knob => ChartToolType.Knob,
             NoteType.Tap => ChartToolType.SingleTap,
             NoteType.LongTap => ChartToolType.LongTap,
@@ -2746,7 +2752,7 @@ public sealed partial class ChartPlacementController : MonoBehaviour
         if (noteType.IsCenter()) positionCorrection = null;
         float clampedNormalizedX = noteType == NoteType.Knob
             ? Mathf.Clamp(normalizedX, -1f, 1f)
-            : noteType == NoteType.CenterTap ? 0f : ClampX(
+            : noteType is NoteType.CenterTap or NoteType.CenterHold ? 0f : ClampX(
             normalizedX,
             GetXClampValues(noteType));
         if (noteType == NoteType.Knob && SnapKnobX)
@@ -2907,6 +2913,7 @@ public sealed partial class ChartPlacementController : MonoBehaviour
         return noteType switch
         {
             NoteType.CenterTap => centerTapNotePrefab,
+            NoteType.CenterHold => centerHoldNotePrefab,
             NoteType.Knob => knobNotePrefab,
             NoteType.Tap => tapNotePrefab,
             NoteType.LongTap => longTapNotePrefab,
@@ -2928,6 +2935,7 @@ public sealed partial class ChartPlacementController : MonoBehaviour
         return noteType switch
         {
             NoteType.CenterTap => chartPreviewCenterTapNotePrefab,
+            NoteType.CenterHold => chartPreviewCenterHoldNotePrefab,
             NoteType.Knob => chartPreviewKnobNotePrefab,
             NoteType.Tap => chartPreviewTapNotePrefab,
             NoteType.LongTap => chartPreviewLongTapNotePrefab,

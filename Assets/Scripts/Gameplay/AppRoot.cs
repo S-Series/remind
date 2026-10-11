@@ -3,6 +3,7 @@ using REmind.Charting;
 using REmind.Common.UI;
 using REmind.Gameplay.Characters;
 using REmind.Gameplay.Demo;
+using REmind.Gameplay.Items;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -43,6 +44,7 @@ namespace REmind.Gameplay
         [SerializeField] private SettingsMenuController settingsOverlay;
         [SerializeField] private CharacterOverlayController characterOverlay;
         [SerializeField] private CharacterCatalog characterCatalog;
+        [SerializeField] private ItemCatalog itemCatalog;
         [SerializeField] private MusicUnlockLibrary musicUnlockLibrary;
         [SerializeField] private bool autoEnterHomeOnStart = true;
         private bool duplicate;
@@ -50,7 +52,15 @@ namespace REmind.Gameplay
 
         public bool LastResultIsNewRecord { get; private set; }
         public bool LastResultWasFirstClear { get; private set; }
-        public int MemoryFragmentCount => playerData?.MemoryFragmentCount ?? 0;
+        public long MemoryFragmentCount => playerData?.MemoryFragmentCount ?? 0L;
+        public bool TrySpendMemoryFragments(long quantity)
+        {
+            if (playerData == null || !string.IsNullOrEmpty(playerDataError))
+                throw new InvalidOperationException(
+                    "Player data is unavailable; items cannot be spent.");
+            return playerData.TryConsumeItem(itemCatalog,
+                LocalPlayerDataStore.MemoryFragmentItemId, quantity);
+        }
         public string PlayerDataError => playerDataError;
         public string EquippedCharacterId => playerData?.EquippedCharacterId;
         public LocalGameSettingsStore Settings => settings;
@@ -402,7 +412,7 @@ namespace REmind.Gameplay
                 result.DifficultyId, out ChartProgressSnapshot previous) &&
                 previous.Cleared;
             bool newRecord = playerData.RecordAndSaveResult(result,
-                result.AttemptStart?.UnlockTargetMusicId);
+                result.AttemptStart?.UnlockTargetMusicId, itemCatalog);
             activeAttempt = null;
             pendingResult = result;
             LastResultWasFirstClear = result.IsCleared && !result.IsFailed &&
@@ -467,6 +477,10 @@ namespace REmind.Gameplay
                 playerData = LocalPlayerDataStore.Load(
                     System.IO.Path.Combine(Application.persistentDataPath,
                         "player-progress-v1.json"));
+                if (!itemCatalog || !itemCatalog.TryGetEntry(
+                    LocalPlayerDataStore.MemoryFragmentItemId, out _))
+                    throw new InvalidOperationException(
+                        "Bootstrap AppRoot has no memory fragment item definition.");
                 if (!characterCatalog)
                     throw new InvalidOperationException(
                         "Bootstrap AppRoot has no character catalog.");
@@ -483,8 +497,7 @@ namespace REmind.Gameplay
             }
             catch (Exception exception)
             {
-                playerDataError =
-                    "플레이어 또는 기본 캐릭터 데이터를 불러오지 못했습니다.";
+                playerDataError = "플레이어 데이터를 불러오지 못했습니다.";
                 Debug.LogError("Player startup data failed: " +
                     exception, this);
             }

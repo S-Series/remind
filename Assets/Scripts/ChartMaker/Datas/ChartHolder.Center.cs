@@ -7,6 +7,8 @@ using UnityEngine;
 public partial class ChartHolder
 {
     public bool hasCenterTap;
+    public bool hasCenterHold;
+    public ChartNotePointKind centerHoldPointKind = ChartNotePointKind.Start;
     public bool hasKnobPoint;
     public ChartNotePointKind knobPointKind = ChartNotePointKind.Start;
     public double knobX;
@@ -43,16 +45,20 @@ public partial class ChartHolder
     }
 
     [NonSerialized] public GameObject[] centerTapObjects;
+    [NonSerialized] public GameObject[] centerHoldObjects;
     [NonSerialized] public GameObject[] knobPointObjects;
 
     public GameObject[] GetCenterObjects(NoteType type) =>
-        type == NoteType.CenterTap ? centerTapObjects : knobPointObjects;
+        type == NoteType.CenterTap ? centerTapObjects :
+        type == NoteType.CenterHold ? centerHoldObjects : knobPointObjects;
 
     internal NoteType FindCenterNote(GameObject obj)
     {
         if (!obj) return NoteType.Unknown;
         if (hasCenterTap && FindNoteObject(centerTapObjects, obj))
             return NoteType.CenterTap;
+        if (hasCenterHold && FindNoteObject(centerHoldObjects, obj))
+            return NoteType.CenterHold;
         if (hasKnobPoint && (FindNoteObject(knobPointObjects, obj) || IsSecondKnobObject(obj)))
             return NoteType.Knob;
         return NoteType.Unknown;
@@ -70,7 +76,7 @@ public partial class ChartHolder
         }
         else
         {
-            DestroyNoteObjects(centerTapObjects);
+            DestroyNoteObjects(GetCenterObjects(type));
             ClearCenterNote(type);
         }
         return true;
@@ -82,6 +88,12 @@ public partial class ChartHolder
         {
             hasCenterTap = false;
             centerTapObjects = null;
+        }
+        else if (type == NoteType.CenterHold)
+        {
+            hasCenterHold = false;
+            centerHoldObjects = null;
+            centerHoldPointKind = ChartNotePointKind.Start;
         }
         else
         {

@@ -202,6 +202,7 @@ namespace REmind.Gameplay
                         type = NoteType.LongScratch; break;
                     case ChartNoteKind.Air: type = NoteType.Air; break;
                     case ChartNoteKind.CenterTap: type = NoteType.CenterTap; break;
+                    case ChartNoteKind.CenterHold: type = NoteType.CenterHold; break;
                     case ChartNoteKind.Knob: type = NoteType.Knob; break;
                 }
             }

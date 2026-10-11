@@ -593,6 +593,7 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
         switch (selectedNoteType)
         {
             case NoteType.CenterTap:
+            case NoteType.CenterHold:
             case NoteType.Knob:
                 succeeded = TryApplyCenterEdit(out error);
                 break;
@@ -633,6 +634,18 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
 
     private bool TryApplyCenterEdit(out string error)
     {
+        if (selectedNoteType != NoteType.Knob)
+        {
+            if (!ChartManager.TryGetNoteData(selectedNoteObject, out ChartHolder holder,
+                out _, out _, out _, out _))
+            { error = "Select a Floor note."; return false; }
+            if (measureField.value < 0 || measureField.value > ChartHolder.MaximumMeasureNumber ||
+                positionField.value < 0 || positionField.value >= ChartHolder.PositionUnitsPerMeasure)
+            { error = "Use measure 0..999 and position 0..4799."; return false; }
+            return placementController.TryEditCenterNote(selectedNoteObject,
+                measureField.value * ChartHolder.PositionUnitsPerMeasure + positionField.value,
+                holder.centerHoldPointKind, 0, out error);
+        }
         if (measureField.value < 0 || measureField.value > ChartHolder.MaximumMeasureNumber ||
             positionField.value < 0 || positionField.value >= ChartHolder.PositionUnitsPerMeasure)
         { error = "Use measure 0..999 and position 0..4799."; return false; }
@@ -915,6 +928,8 @@ public sealed class ChartNoteEditPopupController : MonoBehaviour
             NoteType.LongTap => "Long Tap Note",
             NoteType.Scratch => "Scratch Note",
             NoteType.LongScratch => "Long Scratch Note",
+            NoteType.CenterTap => "Floor Note",
+            NoteType.CenterHold => "Long Floor Note",
             NoteType.Air => "Air Note",
             NoteType.Camera => "Camera Note",
             NoteType.Speed => "Line Speed",

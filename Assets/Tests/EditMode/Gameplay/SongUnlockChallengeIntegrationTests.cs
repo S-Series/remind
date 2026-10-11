@@ -8,6 +8,7 @@ using REmind.Charting;
 using REmind.Gameplay.Chart;
 using REmind.Gameplay.Characters;
 using REmind.Gameplay.Demo;
+using REmind.Gameplay.Items;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -427,7 +428,7 @@ namespace REmind.Gameplay.Tests
                     CharacterGaugeRuleSnapshot.Capture(fixture.HardRule),
                     null, "designant");
                 store.RecordAndSaveResult(Result(normalAttempt, true, false, false),
-                    "designant");
+                    "designant", fixture.Items);
                 store = LocalPlayerDataStore.Load(fixture.SavePath);
                 Assert.IsTrue(store.IsSongDifficultyUnlocked("designant", "hard"));
                 Assert.IsFalse(store.IsSongDifficultyUnlocked("designant", "chaos"));
@@ -751,6 +752,9 @@ namespace REmind.Gameplay.Tests
                 ScriptableObject.CreateInstance<CharacterDefinitionAsset>();
             public readonly CharacterCatalog Catalog =
                 ScriptableObject.CreateInstance<CharacterCatalog>();
+            public readonly ItemCatalog Items =
+                AssetDatabase.LoadAssetAtPath<ItemCatalog>(
+                    "Assets/Data/Items/ItemCatalog.asset");
             public readonly SongUnlockChallengeDefinition Challenge =
                 ScriptableObject.CreateInstance<SongUnlockChallengeDefinition>();
             public readonly SongUnlockChallengeDefinition SecondChallenge =
@@ -791,6 +795,7 @@ namespace REmind.Gameplay.Tests
                     Catalog.TryResolve(id, out _, out _));
                 SetField(App, "playerData", store);
                 SetField(App, "characterCatalog", Catalog);
+                SetField(App, "itemCatalog", Items);
                 SetField(App, "musicUnlockLibrary", Library);
                 typeof(AppRoot).GetProperty(nameof(AppRoot.Current))
                     .SetValue(null, App);

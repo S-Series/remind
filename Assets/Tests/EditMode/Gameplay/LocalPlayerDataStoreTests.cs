@@ -1,12 +1,17 @@
 using System;
 using System.IO;
 using NUnit.Framework;
+using REmind.Gameplay.Items;
+using UnityEditor;
 
 namespace REmind.Gameplay.Tests
 {
     public sealed class LocalPlayerDataStoreTests
     {
         private string path;
+        private static ItemCatalog MemoryCatalog =>
+            AssetDatabase.LoadAssetAtPath<ItemCatalog>(
+                "Assets/Data/Items/ItemCatalog.asset");
 
         [SetUp]
         public void SetUp() => path = Path.Combine(Path.GetTempPath(),
@@ -40,9 +45,11 @@ namespace REmind.Gameplay.Tests
             Assert.AreEqual(750000d, progress.BestScore);
             Assert.IsTrue(progress.Cleared);
             Assert.AreEqual(2, progress.PlayCount);
-            StringAssert.Contains("\"version\": 4", File.ReadAllText(path));
+            StringAssert.Contains("\"version\": 5", File.ReadAllText(path));
+            Assert.AreEqual(1L, reloaded.MemoryFragmentCount);
             Assert.IsFalse(reloaded.OwnsSong("song"));
             Assert.IsFalse(reloaded.IsSongUnlocked("song"));
+            Assert.AreEqual(1L, reloaded.GetItemQuantity("currency.memory_fragment"));
         }
 
         [Test]
@@ -61,7 +68,8 @@ namespace REmind.Gameplay.Tests
             Assert.AreEqual("non", reloaded.EquippedCharacterId);
             Assert.IsFalse(reloaded.OwnsSong("song"));
             Assert.IsFalse(reloaded.IsSongUnlocked("song"));
-            StringAssert.Contains("\"version\": 4", File.ReadAllText(path));
+            Assert.AreEqual(0L, reloaded.GetItemQuantity("currency.memory_fragment"));
+            StringAssert.Contains("\"version\": 5", File.ReadAllText(path));
         }
 
         [TestCase(true)]
@@ -88,7 +96,8 @@ namespace REmind.Gameplay.Tests
             Assert.IsTrue(store.OwnsSong("designant"));
             Assert.AreEqual(unlocked,
                 store.IsSongDifficultyUnlocked("designant", "extra"));
-            StringAssert.Contains("\"version\": 4", File.ReadAllText(path));
+            Assert.AreEqual(0L, store.GetItemQuantity("currency.memory_fragment"));
+            StringAssert.Contains("\"version\": 5", File.ReadAllText(path));
         }
 
         [Test]
@@ -97,7 +106,8 @@ namespace REmind.Gameplay.Tests
             LocalPlayerDataStore store = LocalPlayerDataStore.Load(path);
             store.RecordAndSaveResult(new GameResultSnapshot(
                 "lament_rain", "normal", 1000d, 1_000_000, RankGrade.D,
-                1, 0, 0, 0, 1, 1, true, false), "designant");
+                1, 0, 0, 0, 1, 1, true, false), "designant",
+                MemoryCatalog);
             store.SetSongOwned("designant", true);
             store.SetSongOwned("designant", false);
 
@@ -323,14 +333,16 @@ namespace REmind.Gameplay.Tests
         public void MemoryFragmentsAreEarnedOncePerChartFirstClear()
         {
             LocalPlayerDataStore store = LocalPlayerDataStore.Load(path);
-            store.RecordResult(Result("hard", 0d, RankGrade.D,
-                cleared: false, combo: 0));
+            store.RecordAndSaveResult(Result("hard", 0d, RankGrade.D,
+                cleared: false, combo: 0), null, MemoryCatalog);
             Assert.AreEqual(0, store.MemoryFragmentCount);
-            store.RecordResult(Result("hard", 700000d, RankGrade.B));
-            store.RecordResult(Result("hard", 800000d, RankGrade.A));
-            store.RecordResult(Result("easy", 500000d, RankGrade.C));
+            store.RecordAndSaveResult(Result("hard", 700000d, RankGrade.B),
+                null, MemoryCatalog);
+            store.RecordAndSaveResult(Result("hard", 800000d, RankGrade.A),
+                null, MemoryCatalog);
+            store.RecordAndSaveResult(Result("easy", 500000d, RankGrade.C),
+                null, MemoryCatalog);
             Assert.AreEqual(2, store.MemoryFragmentCount);
-            store.Save();
             Assert.AreEqual(2, LocalPlayerDataStore.Load(path)
                 .MemoryFragmentCount);
         }

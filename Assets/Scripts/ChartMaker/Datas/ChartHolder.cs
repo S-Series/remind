@@ -77,7 +77,7 @@ public partial class ChartHolder
         {
             EnsureStorage();
 
-            if (hasCenterTap || hasKnobPoint) return true;
+            if (hasCenterTap || hasCenterHold || hasKnobPoint) return true;
 
             for (int i = 0; i < noteTypes.Length; i++)
             {
@@ -952,9 +952,11 @@ public partial class ChartHolder
     {
         EnsureStorage();
         DestroyNoteObjects(centerTapObjects);
+        DestroyNoteObjects(centerHoldObjects);
         DestroyNoteObjects(knobPointObjects);
         secondKnobPoint?.DestroyAllNoteObjects();
         centerTapObjects = null;
+        centerHoldObjects = null;
         knobPointObjects = null;
 
         for (int i = 0; i < tapNoteObjectGroups.Length; i++)
@@ -1301,6 +1303,8 @@ public partial class ChartHolder
         ChartHolder clone = new ChartHolder(ChartNumber, ChartPos)
         {
             hasCenterTap = hasCenterTap,
+            hasCenterHold = hasCenterHold,
+            centerHoldPointKind = centerHoldPointKind,
             hasKnobPoint = hasKnobPoint,
             secondKnobPoint = secondKnobPoint?.CloneData(),
             knobPointKind = knobPointKind,

@@ -10,7 +10,7 @@ public static partial class ChartFileCodec
     private static bool HasCenterNotes(IReadOnlyList<ChartHolder> holders)
     {
         foreach (ChartHolder holder in holders)
-            if (holder != null && (holder.hasCenterTap || holder.hasKnobPoint)) return true;
+            if (holder != null && (holder.hasCenterTap || holder.hasCenterHold || holder.hasKnobPoint)) return true;
         return false;
     }
 
@@ -24,9 +24,11 @@ public static partial class ChartFileCodec
         foreach (ChartHolder holder in source)
         {
             if (holder == null) continue;
-            if (!holder.hasCenterTap && !holder.hasKnobPoint) continue;
+            if (!holder.hasCenterTap && !holder.hasCenterHold && !holder.hasKnobPoint) continue;
             ChartHolder target = byPosition[holder.AbsoluteChartPosition];
             target.hasCenterTap = holder.hasCenterTap;
+            target.hasCenterHold = holder.hasCenterHold;
+            target.centerHoldPointKind = holder.centerHoldPointKind;
             target.hasKnobPoint = holder.hasKnobPoint;
             target.knobPointKind = holder.knobPointKind;
             target.knobX = holder.knobX;
@@ -38,12 +40,16 @@ public static partial class ChartFileCodec
 
     private static XElement WriteCenterNotes(IReadOnlyList<ChartHolder> holders)
     {
+        ValidateCenterHoldPairs(holders);
         var entries = new List<CenterNoteRow>();
         foreach (ChartHolder holder in holders)
         {
             if (holder.hasCenterTap)
                 entries.Add(new CenterNoteRow { position = holder.AbsoluteChartPosition,
                     kind = "tap" });
+            if (holder.hasCenterHold)
+                entries.Add(new CenterNoteRow { position = holder.AbsoluteChartPosition,
+                    kind = holder.centerHoldPointKind == ChartNotePointKind.Start ? "holdStart" : "holdEnd" });
             foreach (ChartHolder point in ChartHolder.KnobPoints(new[] { holder }))
             {
                 bool second = point != holder;
@@ -80,7 +86,7 @@ public static partial class ChartFileCodec
         foreach (XElement entry in result.Elements())
         {
             if (entry.Element("second")?.Value == "false") entry.Element("second").Remove();
-            if (ChartEffectJsonCodec.String(entry, "kind") == "tap")
+            if (ChartEffectJsonCodec.String(entry, "kind") is "tap" or "holdStart" or "holdEnd")
             {
                 entry.Element("interpolation")?.Remove();
                 entry.Element("curve")?.Remove();
@@ -122,12 +128,18 @@ public static partial class ChartFileCodec
                     throw new FormatException("Second Point marker must be boolean.");
             }
             string kind = ChartEffectJsonCodec.String(entry, "kind");
-            if (kind == "tap")
+            if (kind is "tap" or "holdStart" or "holdEnd")
             {
                 if (second || entry.Element("interpolation") != null || entry.Element("curve") != null)
-                    throw new FormatException("Center Tap cannot have Knob interpolation.");
-                if (holder.hasCenterTap) throw new FormatException("Duplicate center Tap position.");
-                holder.hasCenterTap = true;
+                    throw new FormatException("Floor notes cannot have Knob interpolation.");
+                if ((kind == "tap" && holder.hasCenterTap) || (kind != "tap" && holder.hasCenterHold))
+                    throw new FormatException("Duplicate Floor note position.");
+                if (kind == "tap") holder.hasCenterTap = true;
+                else
+                {
+                    holder.hasCenterHold = true;
+                    holder.centerHoldPointKind = kind == "holdStart" ? ChartNotePointKind.Start : ChartNotePointKind.End;
+                }
                 continue;
             }
             ChartHolder first = holder;
@@ -175,7 +187,27 @@ public static partial class ChartFileCodec
                 holder.knobInterpolation != ChartKnobInterpolation.Step))
                 throw new FormatException("Second Point must be a distinct horizontal Step in the same Knob path.");
         }
-        return new List<ChartHolder>(rows.Values).ToArray();
+        var result = new List<ChartHolder>(rows.Values).ToArray();
+        ValidateCenterHoldPairs(result);
+        return result;
+    }
+
+    private static void ValidateCenterHoldPairs(IReadOnlyList<ChartHolder> holders)
+    {
+        ChartHolder start = null;
+        var ordered = new List<ChartHolder>(holders);
+        ordered.Sort((left, right) => left.AbsoluteChartPosition.CompareTo(right.AbsoluteChartPosition));
+        foreach (ChartHolder holder in ordered)
+        {
+            if (!holder.hasCenterHold) continue;
+            if (holder.hasCenterTap && holder.centerHoldPointKind == ChartNotePointKind.Start)
+                throw new FormatException("Floor Tap and Long Floor Start cannot share the same position.");
+            if (holder.centerHoldPointKind == ChartNotePointKind.Start && start == null) start = holder;
+            else if (holder.centerHoldPointKind == ChartNotePointKind.End && start != null &&
+                holder.AbsoluteChartPosition > start.AbsoluteChartPosition) start = null;
+            else throw new FormatException("Long Floor requires an ordered Start/End pair.");
+        }
+        if (start != null) throw new FormatException("Finish the Long Floor with an End point before saving.");
     }
 
     private static void ValidateKnobX(double x)

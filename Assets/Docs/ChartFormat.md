@@ -1,6 +1,6 @@
 # Chart Format
 
-> 현행 계약 검토: 2026-10-08. 시작 전 Step을 포함한 구현·고정 검증본 검사/빌드를 완료했다. 사용자 후속 씬 편집과 수동 검수는 별도다.
+> 현행 계약 검토: 2026-10-11. 중앙 Floor/FloorLong 추가 후 수정본의 Unity EditMode 413/413과 두 제품 독립 빌드를 확인했다. 집중 검사·별도 probe·snapshot 차이와 미검수 범위는 [TASKS.md](TASKS.md) 및 [통합 보고서](../../Logs/IntegrationBaseline/20261011-center-floor/README.md)를 따른다. 이번 문서 갱신은 검증 후 수정이다.
 > 제작 원본: `REmindChart` JSON `formatVersion: 1`, 중앙 노트 포함 시 `2` (`.rd`).
 > Game 전달 파일: Runtime Package `Version: 1`, 중앙 노트 포함 시 `2` (`.rmp.json`).
 
@@ -247,10 +247,11 @@ native v1, v2와 버전 헤더가 없는 파일은 기존 `1600 units/measure`�
 레거시 `TempChartData` JSON의 `NotePos`도 기존 1600 단위로 해석한다. 이 경로는
 불러오기 호환용이며 저장할 때는 현재 ChartMaker Editor JSON으로 변환한다.
 
-### 18.3 중앙 Tap / Knob 노드 버전 2
+### 18.3 중앙 Floor / FloorLong / Knob 노드 버전 2
 
 기존 v1의 좌우 Scratch/Long Scratch, 레인 `0`~`9`, 기존 종류 값 `0`~`4`는 유지한다.
-`CenterTap`(종류 값 `5`)과 `Knob`(종류 값 `6`)만 중앙 레인 `10`을 사용한다.
+`CenterTap`(종류 값 `5`), `Knob`(종류 값 `6`), `CenterHold`(종류 값 `7`)는 중앙 레인 `10`을 사용한다.
+새 Floor 단타는 `CenterTap`, 새 FloorLong은 `CenterHold`다. 기존 좌우 노트를 변환하지 않는다.
 새 중앙 노트가 없는 채보는 계속 v1으로 저장한다. v2는 기존 `notes`의 9열과
 `eventDictionary`를 유지하고 최상위 `centerNotes` 배열을 추가한다.
 
@@ -258,7 +259,9 @@ native v1, v2와 버전 헤더가 없는 파일은 기존 `1600 units/measure`�
 {
   "formatVersion": 2,
   "centerNotes": [
-    { "position": 0, "kind": "tap", "x": 0 },
+    { "position": 0, "kind": "tap" },
+    { "position": 2400, "kind": "holdStart" },
+    { "position": 3600, "kind": "holdEnd" },
     { "position": 4800, "kind": "knobStart", "x": -0.5, "curve": "sin" },
     { "position": 7200, "kind": "knobMiddle", "x": 0.5, "curve": "cos" },
     { "position": 7200, "kind": "knobMiddle", "x": -0.5, "second": true, "curve": "linear" },
@@ -268,7 +271,13 @@ native v1, v2와 버전 헤더가 없는 파일은 기존 `1600 units/measure`�
 ```
 
 - `position`은 `measure * 4800 + position`의 절대 정수 위치이며 채보 범위 안이어야 한다.
-  Knob의 `x`는 유한한 `[-1, 1]` 값이다. Tap은 중앙 고정이며 `x`를 판정에 사용하지 않는다.
+  Knob의 `x`는 유한한 `[-1, 1]` 값이다. Floor/FloorLong은 중앙 고정이며 `x`를 판정에 사용하지 않는다.
+  새 Floor 저장은 `position`과 `kind`만 기록한다. `second: true`, `curve`, `interpolation`은 Floor에 허용하지 않는다.
+- FloorLong은 `holdStart` → 이후 위치의 `holdEnd` 쌍이다. Maker는 시간 순으로 쌍을 만들며
+  중첩 Start, 앞선 Start 없는 End, 같은 위치의 양 끝점, 미완성 Start는 Maker 읽기·저장·adapter 실행 준비에서
+  오류다. 실행용 노트는 Start/End 정확히 두 점을 가지며 Mid를 추가하지 않는다.
+  단타와 FloorLong Start의 같은 위치는 거부하며 공용 컴파일러도 같은 timestamp를 오류로 처리한다.
+  롱 유지 도중 및 End 시각의 단타는 허용한다. Knob과의 같은 위치 및 기존 좌우 동시 노트는 유지한다.
 - ChartMaker의 Knob 노드는 **Start / Middle** 두 종류다. 새 저장에는 `knobStart`,
   `knobMiddle`만 기록하며 End는 기록하지 않는다. Start는 이전 노드와 연결하지 않는다.
   Middle은 직전 노드와 연결하고, 해당 노드 이전에 Start가 없으면 선을 그리지 않는다.
@@ -305,8 +314,12 @@ ChartMaker의 기존 Eraser 위치에 있는 **Knob** 버튼으로 배치를 시
 Edit 메뉴의 Start/Middle, Linear/Sin/Cos 선택과 중간 노드 삽입, X 스냅은 유지한다.
 배치 중 Middle은 이전 노드에서 마우스까지 앞 노드의 곡선으로 연결을 미리 표시한다.
 
-편집 노드는 `Assets/Prefabs/Notes/Preview/KnobPoint.prefab`의 작은 1:1 Sprite 아이콘이다.
-SpriteRenderer의 Sprite를 교체하며 현재 이미지는 임시 원형 표시다. 배치·선택·이동·삭제의
+편집 노드는 `Assets/Prefabs/Notes/Legacy/Preview/KnobPoint.prefab`의 1:1 비율 Sprite 아이콘이다.
+SpriteRenderer의 Sprite는 교체할 수 있으며 원본 이미지의 종횡비를 제한하지 않는다.
+Sliced 표시와 클릭 영역은 각각 정사각형으로 유지한다. 현재 프리팹 디자인 설정은 표시 7×7,
+클릭 영역 5×5이며 영구 고정 규칙이 아니다. 크기는 프리팹에서 조정할 수 있다. 테스트는
+프리팹에 설정된 크기·정사각형 비율·실제 bounds·중심 정렬·세로 배율 보정의 보존을 검증한다.
+배치·선택·이동·삭제의
 단위는 이 아이콘이고 Knob 경로는 저장된 노드를 연결하는 표시다. 같은 줄에 추가하면
 Second Point가 되며, 이후 경로는 Second에서 이어진다. First를 삭제하면 남은 Second의
 Start/Middle 종류와 곡선은 유지한다. 아이콘 드래그 중에도 선을 갱신하며 저장 좌표는
@@ -317,9 +330,28 @@ Game과 Maker에는 별도의 이동 커서나 방향 화살표가 없다. `knob
 흰색 경로를 표시하며 코드에서 Tint를 지정하지 않는다. 저장·출력·Preview 검사의 범위와
 수동 검수는 [TASKS.md](TASKS.md)에 둔다.
 
-Game 중앙 Tap은 논리 좌/우 Shift 입력을 받는다. Space Tap 설정이 ON이면 Space도
+ChartMaker의 **Floor / Floor Long** 버튼은 중앙 단타 / 중앙 롱을 배치한다. 롱은 첫 배치가
+Start, 그 이후 위치의 다음 배치가 End다. 양 끝점은 선택·시간 이동·삭제·Undo 대상이며
+드래그 중 구간 표시를 갱신한다. 기존 좌우 Scratch/Long Scratch는 읽기·편집·저장을 유지한다.
+
+Game/Maker의 중앙 단타·롱 끝점과 구간은 기존 `Assets/Prefabs/Notes/Ingame/Floor.prefab`의
+MeshRenderer·재질을 사용한다. 구간은 중앙 X=0에서 양 끝점의 FloorPosition 사이에 생성한다.
+공용 `FloorNoteGeometry`가 자식 Renderer의 로컬 bounds로 구간 길이를 맞추고 Maker 클릭 영역을
+보완한다. 구간 생성과 길이 조정은 원래 Mesh·재질을 유지한다. 실제 화면 외관 검수는 별도다.
+
+Game 중앙 Floor/FloorLong은 논리 좌/우 Shift 입력을 받는다. Space Tap 설정이 ON이면 Space도
 추가로 받지만 노브 위치 조작은 계속 논리 좌/우 입력만 사용한다. Space Tap은 기본 OFF이며
 Home→Settings→Controls에서 변경하고 다음 플레이부터 적용한다.
+
+FloorLong Start에는 판정 창 안의 새 Down이 필요하다. 이미 누른 키만 유지하는 것으로
+시작할 수 없다. 이후 Shift 좌/우와 활성화된 Space 중 하나라도 눌려 있으면 유지한다.
+같은 timestamp의 Up→Down 및 Down→Up 교체는 연속 유지로 인정한다. 양수 시간의 입력 공백은
+구간을 끊으며 해제 유예·재합류·추가 tick은 없다. End에서 정확한 Up 없이 자동 판정하고,
+유지 성공이면 Start 등급을 보존해 구간 점수를 1회 확정한다. 미합류·끊긴 유지·Start Miss는
+End에서 Miss다. End 시각의 Up은 허용하며 그 이전의 입력 공백은 실패다.
+유효한 Knob Step은 새 Down을 먼저 소비하므로 같은 Down으로 새 FloorLong을 시작할 수 없다.
+이미 시작한 FloorLong의 유지에는 그 키의 실제 눌림 상태를 반영한다. 기존 일반 Hold와
+좌우 Long Scratch의 End release 규칙은 바꾸지 않는다.
 
 위치 추적 Knob의 확정 규칙은 다음과 같다. 기존 Tap의 네 등급 판정 창과 Long Scratch의
 End release 규칙은 변경하지 않는다.
@@ -336,7 +368,7 @@ End release 규칙은 변경하지 않는다.
 - 정상 시작·위치 추적·세로·사선 판정은 `Perfect+`, 실패는 `Miss`다.
   이전 겹침/교대 `150ms`·짧은 해제 `50ms` 유예는 이 모델에 재사용하지 않는다.
 - Step 목적지 시각의 `±80ms` 안에서 올바른 방향의 새 Down을 받으면 즉시 목적지 X로
-  이동한다. 이 입력은 중앙 Tap보다 먼저 소비하며, 소비하지 않은 Shift Down은 Tap에 쓸 수 있다.
+  이동한다. 이 입력은 중앙 Floor/FloorLong Start보다 먼저 소비하며, 소비하지 않은 Shift Down은 Floor에 쓸 수 있다.
   `±80ms`는 Knob 시작 전에도 양쪽 경계를 포함해 허용한다. 시작 100ms·Step 150ms의
   Down 70ms는 70ms에 목적지로 이동하고 100ms에도 그 위치를 유지한다.
 - 조기 Step 입력은 직전 구간의 남은 판정만 `Perfect+`로 예약하고 각각의 원래 timestamp에
@@ -367,11 +399,15 @@ Effect별 필드, 범위, ChartMaker 작업 순서, 실행·정리·Preview 제�
 `ChartMakerRuntimePackageExporter`가 편집 데이터에서 공용 `ChartDocument`를
 구성하고 `RuntimeChartPackageCodec.Export`로 컴파일·직렬화한다.
 
-중앙 노트가 없는 Package는 `Version: 1`, CenterTap/Knob을 포함하면 `Version: 2`를
+중앙 노트가 없는 Package는 `Version: 1`, CenterTap/CenterHold/Knob을 포함하면 `Version: 2`를
 사용한다. `.rd`의 `formatVersion`과는 별개의 계약이며 필드도
 `MusicId`, `DifficultyId`, `ChartOffsetMs`, `Notes`, `Effects`,
 `Parameters` 등 PascalCase다. 노트 위치·Timing·Line Speed·Camera·Scratch Tilt와
 Effect 정의/파라미터를 포함하며, Game 전용 UI나 사용자 진행 데이터를 포함하지 않는다.
+
+CenterHold는 `Kind: 7`, `Lane: 10`과 기존 Start/End 지점 필드만 사용한다. 새 DTO 필드를
+추가하지 않으며 컴파일 결과는 HoldStart/HoldEnd 판정 타깃 두 개와 점수 단위 한 개다.
+공용 `NoteType.CenterHold` 값은 `12`이며 Runtime Package의 Kind 값과 구분한다.
 
 v2의 Knob 지점에는 `KnobX`, `KnobDirection`과 선택적 `KnobInterpolation`을 포함한다.
 `KnobInterpolation`은 목적지 incoming 구간의 정수 enum이며 생략하면 `Linear=0`이다.

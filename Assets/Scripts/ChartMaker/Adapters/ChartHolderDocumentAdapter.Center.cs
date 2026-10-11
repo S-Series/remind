@@ -8,6 +8,7 @@ public static partial class ChartHolderDocumentAdapter
         ChartDocument document, Dictionary<string, ChartNoteViewBinding> bindings,
         List<CompileIssue> issues)
     {
+        AddCenterHolds(holders, document, bindings, issues);
         List<ChartHolder> pending = null;
         int unconnectedIndex = 0;
         foreach (ChartHolder holder in holders)
@@ -90,5 +91,42 @@ public static partial class ChartHolderDocumentAdapter
                 allObjects.ToArray(), views.ToArray()));
             pending = null;
         }
+    }
+
+    private static void AddCenterHolds(IReadOnlyList<ChartHolder> holders,
+        ChartDocument document, Dictionary<string, ChartNoteViewBinding> bindings,
+        List<CompileIssue> issues)
+    {
+        ChartHolder start = null;
+        foreach (ChartHolder holder in holders)
+        {
+            if (holder?.hasCenterHold != true) continue;
+            if (holder.hasCenterTap && holder.centerHoldPointKind == ChartNotePointKind.Start)
+            {
+                issues.Add(new CompileIssue("ADAPTER_CENTER_HOLD_SLOT", "Floor Tap and Long Floor Start cannot share the same position."));
+                continue;
+            }
+            if (holder.centerHoldPointKind == ChartNotePointKind.Start && start == null)
+            { start = holder; continue; }
+            if (holder.centerHoldPointKind != ChartNotePointKind.End || start == null ||
+                holder.AbsoluteChartPosition <= start.AbsoluteChartPosition)
+            {
+                issues.Add(new CompileIssue("ADAPTER_CENTER_HOLD_PAIR", "Long Floor requires an ordered Start/End pair."));
+                continue;
+            }
+            string id = CreateNoteId("center-hold", (int)ChartLane.Center, start.AbsoluteChartPosition);
+            var note = new ChartDocumentNote(id, ChartNoteKind.CenterHold, (int)ChartLane.Center,
+                start.AbsoluteChartPosition, holder.AbsoluteChartPosition);
+            document.Notes.Add(note);
+            var objects = new List<GameObject>();
+            if (start.centerHoldObjects != null) objects.AddRange(start.centerHoldObjects);
+            if (holder.centerHoldObjects != null) objects.AddRange(holder.centerHoldObjects);
+            bindings.Add(id, new ChartNoteViewBinding(start.centerHoldObjects, objects.ToArray(),
+                new[] { new ChartNoteViewPointBinding(start.AbsoluteChartPosition, start.centerHoldObjects),
+                    new ChartNoteViewPointBinding(holder.AbsoluteChartPosition, holder.centerHoldObjects) }));
+            start = null;
+        }
+        if (start != null)
+            issues.Add(new CompileIssue("ADAPTER_CENTER_HOLD_END", "Long Floor is missing its End point."));
     }
 }
